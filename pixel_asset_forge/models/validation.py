@@ -82,9 +82,15 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     # 验证过**。等阈值校准（任务 #37）拿到更多数据再谈要不要升级成阻断项。
     "beat_signature": Severity.MEDIUM,
     # 播放时极刺眼，静态看单帧却完全正常 —— 每帧都是合格的角色，只是朝向反了。
-    # 判据很硬（只比几何、且只对够手性的帧下结论），实测 30 个样本检出 4 个真缺陷、
-    # 零误报，所以敢给 HIGH：它该拦住放行。
-    "mirror_flip": Severity.HIGH,
+    #
+    # **MEDIUM 而不是 HIGH。** 逐图核对过：确有真阳性（法杖/剑换侧），
+    # 也确有误报（正常的受击后仰被报出来）。真阳性 -0.03~-0.10、
+    # 误报 -0.020~-0.024，两组只隔 0.006，而且判据在低手性角色
+    # （方正的石魔、浑圆的史莱姆）上根本不成立。
+    #
+    # 报出来让人去看 contact sheet，但不阻断 —— 一个会误报的阻断项，
+    # 最终一定会被开发者关掉（PLAN §9.1）。
+    "mirror_flip": Severity.MEDIUM,
     "anchor_drift": Severity.HIGH,
     "height_variation": Severity.MEDIUM,
     "silhouette_variation": Severity.MEDIUM,
