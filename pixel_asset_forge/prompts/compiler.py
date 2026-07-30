@@ -17,7 +17,7 @@ from ..constants import Direction
 from ..models.request import AssetRequest
 from ..planning.grid_layout import GridLayout
 from .negative_rules import negative_block
-from .poses import PoseCycle, cycle_from_beats, numbered_poses
+from .poses import FRONTAL_DIRECTIONS, PoseCycle, cycle_from_beats, numbered_poses
 
 #: prompt 里要求的边距。**判定按 8%**（PLAN §2.3.2）。
 #:
@@ -87,6 +87,36 @@ _LIGHTING = {
     "fixed_top_right": "the light source fixed at the top-right",
     "none": "no directional lighting, the subject is self-lit",
 }
+
+
+def _stride_rule(direction: str | None) -> str:
+    """跨步幅度的写法**必须分视角**，否则会写出一个正面看的侧视姿势。
+
+    原来这条对所有视角都写"striding 的格子里两脚间距至少一个肩宽"。肩宽的
+    左右间距在侧视里是跨步，在正视里是**劈叉** —— 模型为了同时满足"正对镜头"
+    和"两脚拉开一肩宽"，只能把躯干画成正面、把腿画成侧视，出来是个拼接怪物。
+    用户看到的就是"走路朝向怎么是侧着的"。
+
+    正视里跨步是**朝镜头方向**的，画面上表现为抬脚、脚在画布上更低更靠前、
+    以及整个身体的上下起伏 —— 横向间距始终不超过胯宽。
+    """
+    if direction in FRONTAL_DIRECTIONS:
+        return (
+            "- this is a FRONT/BACK view: a step travels TOWARDS or AWAY from the camera, "
+            "not sideways across the cell. Show it by lifting one foot clear of the ground "
+            "and drawing it lower on the canvas (nearer the viewer) than the planted foot, "
+            "plus the up-and-down bob of the whole body\n"
+            "- the two feet NEVER separate sideways by more than the character's hips. "
+            "A wide sideways stance is a side view; drawing one here gives a front-facing "
+            "torso on side-facing legs, which is the worst artefact this sheet can have\n"
+            "- both feet keep their toes pointing at the camera in every cell. No cell may "
+            "show a leg, knee or foot in profile\n"
+        )
+    return (
+        "- this is a SIDE view: in the cells where the legs are described as striding, "
+        "the gap between the two feet must be at least as wide as the character's "
+        "shoulders\n"
+    )
 
 
 def _custom_cycle(request: AssetRequest, action: str) -> PoseCycle | None:
@@ -274,9 +304,8 @@ def compile_animation_prompt(
         "What is LOCKED is the orientation, NOT the motion. The limbs must move a lot:\n"
         "- the pose difference between neighbouring cells must be obvious at a glance "
         "when the cells are seen side by side\n"
-        "- in the cells where the legs are described as striding, the gap between the "
-        "two feet must be at least as wide as the character's shoulders\n"
-        "- do not draw a row of near-identical standing poses with only tiny "
+        + _stride_rule(direction)
+        + "- do not draw a row of near-identical standing poses with only tiny "
         "differences — that is the single most common way this comes out wrong\n"
         "\n"
         "Sidedness — a pose that involves ONE arm, ONE leg or ONE shoulder must use "

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Final, Literal
 
@@ -68,11 +69,20 @@ _LOCOMOTION_HINTS: Final[tuple[tuple[Locomotion, tuple[str, ...]], ...]] = (
 
 
 def infer_locomotion(description: str) -> Locomotion:
-    """从描述里猜移动形态。猜不出回落 ``biped``。"""
+    """从描述里猜移动形态。猜不出回落 ``biped``。
+
+    拉丁词按**整词**匹配，不能用子串 —— ``bear`` 命中过 "white bear**d**"，
+    把一个拄杖的老法师判成了四足动物，走路节拍于是要求它用对角腿交替。
+    中日韩没有词边界，仍按子串匹配。
+    """
     lowered = description.lower()
     for kind, words in _LOCOMOTION_HINTS:
-        if any(word in lowered for word in words):
-            return kind
+        for word in words:
+            if word.isascii():
+                if re.search(rf"\b{re.escape(word)}\b", lowered):
+                    return kind
+            elif word in lowered:
+                return kind
     return "biped"
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
+from pixel_asset_forge.constants import ALLOWED_FRAME_COUNTS
 from pixel_asset_forge.errors import PlanError
 from pixel_asset_forge.models import load_request, parse_request
 from pixel_asset_forge.models.request import infer_locomotion
@@ -317,13 +318,18 @@ def test_the_prompt_demands_visible_motion_not_just_consistency(knight) -> None:
     """朝向锁死是为了不摇摆，但锁过头模型会交出一排几乎一样的站姿 ——
     Sprint 0 踩过一次，加了连续性约束后又踩了一次。必须有反向配重。
     """
-    prompt = compile_animation_prompt(
-        knight, action="walk", direction="down", frames=6,
-        layout=layout_for_frames(6), key_color="#FF00FF",
-    ).text
-    assert "What is LOCKED is the orientation, NOT the motion" in prompt
-    assert "at least as wide as the character's shoulders" in prompt
-    assert "row of near-identical standing poses" in prompt
+    for direction, counterweight in [
+        # 反向配重的**写法分视角**：侧视是拉开跨步，正视是抬脚加起伏
+        ("left", "at least as wide as the character's shoulders"),
+        ("down", "lifting one foot clear of the ground"),
+    ]:
+        prompt = compile_animation_prompt(
+            knight, action="walk", direction=direction, frames=6,
+            layout=layout_for_frames(6), key_color="#FF00FF",
+        ).text
+        assert "What is LOCKED is the orientation, NOT the motion" in prompt
+        assert counterweight in prompt, direction
+        assert "row of near-identical standing poses" in prompt
 
 
 def test_a_leg_swap_is_not_a_mirror(knight) -> None:
@@ -496,3 +502,62 @@ def test_the_frontal_walk_states_the_body_height_every_beat() -> None:
     cues = ("lowest", "highest", "mid height", "lower")
     stated = [b for b in beats if any(cue in b.lower() for cue in cues)]
     assert len(stated) == len(beats), beats
+
+
+# -- 正视步态不能用侧视措辞 --------------------------------------------------
+#
+# 用户报「走路朝向怎么是侧着的」：躯干、头、翅膀正对镜头，腿却是侧视的，
+# 一条腿甩到身侧老远、脚尖朝外。成因是两条指令都在要求水平位移。
+
+
+@pytest.mark.parametrize("direction", ["down", "up"])
+def test_a_frontal_walk_never_asks_for_horizontal_travel(direction) -> None:
+    """"向前迈""在后""跨到最开"都是**侧视**才成立的说法。
+
+    正面看，往前迈是朝镜头走，画面上没有水平位移。要求它，模型只能把躯干
+    画成正面、把腿画成侧视劈开。
+    """
+    text = " ".join(pose_sequence("walk", 6, direction)).lower()
+    for banned in ("far forward", "far back", "steps forward", "well behind", "widest"):
+        assert banned not in text, f"正视步态里出现了侧视措辞 {banned!r}"
+
+
+def test_a_frontal_walk_pins_the_feet_inside_the_body(knight) -> None:
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    ).text.lower()
+    assert "never separate sideways by more than the character's hips" in prompt
+    assert "toes pointing at the camera" in prompt
+    # 那条"两脚拉开一肩宽"的规则只该出现在侧视里
+    assert "at least as wide as the character's shoulders" not in prompt
+
+
+def test_a_side_walk_still_demands_a_wide_stride(knight) -> None:
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="left", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    ).text.lower()
+    assert "at least as wide as the character's shoulders" in prompt
+    assert "never separate sideways" not in prompt
+
+
+def test_the_frontal_walk_still_reads_as_walking() -> None:
+    """去掉水平位移之后，抬脚与起伏这两条线索必须还在 —— 否则就成了原地站着。"""
+    text = " ".join(pose_sequence("walk", 6, "down")).lower()
+    assert "lifts clear of the ground" in text
+    assert "lowest" in text and "highest" in text
+
+
+@pytest.mark.parametrize("locomotion", ["biped", "legless", "floating", "quadruped"])
+@pytest.mark.parametrize("direction", ["down", "up", "left", "right"])
+@pytest.mark.parametrize("frames", ALLOWED_FRAME_COUNTS)
+def test_every_locomotion_produces_unique_poses(locomotion, direction, frames) -> None:
+    """每个移动形态 × 每个方向 × 每个帧数档位都不能出现重复描述。
+
+    ``half_cycle`` 的后半周期靠左右互换生成 —— 描述里一个 left/right 都没有的
+    节拍，互换后与原文一字不差。实测四足的 NEUTRAL 与 SUSPEND 两拍都踩过，
+    ``create-animation`` 直接报错。这条参数化就是为了别再靠人去逐拍检查。
+    """
+    poses = pose_sequence("walk", frames, direction, None, locomotion)
+    assert len(set(poses)) == len(poses) == frames

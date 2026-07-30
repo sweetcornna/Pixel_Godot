@@ -151,24 +151,34 @@ POSE_CYCLES: dict[str, PoseCycle] = {
             # 这一拍必须带方位线索。half_cycle 靠左右互换生成后半周期，
             # 描述里一个 left/right 都没有的话，互换后与原文一字不差 ——
             # 与 "no two cells may be identical" 直接冲突。
-            # 每一拍都点名**身体的高度**。正面走路的主线索是上下起伏，不是左右
-            # 摆动 —— 不写高度，模型就拿"身体略偏左 / 略偏右"来制造帧间差异，
-            # 播放起来就是用户报的"走路鬼畜、突然镜像"。
-            ("NEUTRAL", "both feet together directly under the body, the right foot "
-                        "having just come level with the left, the body at mid height, "
-                        "standing squarely, arms hanging relaxed at the sides"),
-            ("STEP", "the left foot steps forward and is planted flat on the ground, "
-                     "the right foot stays back, the whole body one or two pixels LOWER "
-                     "than in the neutral cell, the left arm swings back and the right "
-                     "arm swings forward"),
-            ("STRIDE", "the left foot is far forward taking the weight and the right heel "
-                       "is lifted well behind, the stride at its widest, the body at its "
-                       "LOWEST point, the shoulders staying level and square to the camera"),
+            # 两条铁律，缺一条就出怪物：
+            #
+            # 1. **每一拍点名身体的高度。** 正面走路的主线索是上下起伏。不写高度，
+            #    模型就拿"身体略偏左 / 略偏右"制造帧间差异 —— 播起来就是"鬼畜"。
+            # 2. **一个"前"字都不能写。** "迈向前方""后脚在后"是**侧视**的概念；
+            #    正面看，往前迈是朝镜头走，画面上根本没有水平位移。写了"far forward"，
+            #    模型只能把躯干画成正面、把腿画成侧视劈开 —— 用户报的
+            #    "走路朝向怎么是侧着的"就是这么来的。正视里抬脚靠三样东西表达：
+            #    脚离地、脚在画布上更低（更靠近镜头）、以及整个身体的起伏。
+            ("NEUTRAL", "both feet flat on the ground side by side, no further apart than "
+                        "the hips, both toes pointing straight at the camera, the right "
+                        "foot having just come level with the left, the body at mid "
+                        "height, arms hanging relaxed at the sides"),
+            ("STEP", "the left foot lifts clear of the ground and swings towards the "
+                     "camera — draw it slightly LOWER on the canvas than the planted right "
+                     "foot, still directly under the left hip and never outside the body's "
+                     "width; the whole body one or two pixels LOWER than in the neutral "
+                     "cell; the left arm swings back and the right arm swings forward"),
+            ("STRIDE", "the left foot is at the near end of its swing, at its lowest on the "
+                       "canvas and overlapping the right shin, the right leg straight and "
+                       "carrying the full weight, the body at its LOWEST point, both toes "
+                       "still pointing at the camera and the feet no wider apart than the "
+                       "hips, the shoulders level and square to the camera"),
             # 第四拍让 8 帧（每半 4 帧）也走"只挑不插"，不必再生成
             # "NEUTRAL→STEP 约 33%" 那种模型画不出来的插值描述。
-            ("RECOVER", "the right foot swings forward off the ground on its way to meet "
-                        "the left, the left foot still planted, the whole body at its "
-                        "HIGHEST point riding over the planted leg, the arms swinging back "
+            ("RECOVER", "the left foot plants flat again and the right foot lifts clear of "
+                        "the ground to start its own swing, the whole body at its HIGHEST "
+                        "point riding over the planted left leg, the arms swinging back "
                         "towards neutral"),
         ),
         beats=_beats(
@@ -337,17 +347,23 @@ LOCOMOTION_CYCLES: dict[str, dict[str, PoseCycle]] = {
         "walk": PoseCycle(
             half_cycle=True,
             frontal_beats=_beats(
-                ("NEUTRAL", "all four legs directly under the body, the two front paws "
-                            "level with each other, the body at mid height, head square "
-                            "to the camera"),
-                ("STEP", "the front-left paw steps forward and is planted, the rear-right "
-                         "paw follows it, the other two legs stay back, the body one or "
-                         "two pixels LOWER, the head staying level"),
-                ("STRIDE", "the front-left leg is far forward and the rear-left leg far "
-                           "back, the stride at its widest, the body at its LOWEST point, "
-                           "the shoulders level and square to the camera"),
-                ("RECOVER", "the front-right paw swings forward off the ground towards the "
-                            "front-left, the front-left paw still planted, the body at its "
+                # 同样一个"前"字都不能写，理由见双足那套的注释。
+                # 和双足那一拍同理：描述里必须带左右，否则左右互换之后与原文
+                # 一字不差，与 "no two cells may be identical" 直接冲突。
+                ("NEUTRAL", "all four legs directly under the body, the front-right paw "
+                            "having just come level with the front-left, the paws no wider "
+                            "apart than the chest, the body at mid height, head square to "
+                            "the camera"),
+                ("STEP", "the front-left paw lifts clear of the ground and swings towards "
+                         "the camera — drawn slightly LOWER on the canvas than the planted "
+                         "front-right paw, still under its own shoulder; the body one or "
+                         "two pixels LOWER; the head staying level"),
+                ("STRIDE", "the front-left paw is at the near end of its swing, at its "
+                           "lowest on the canvas and overlapping the front-right leg, the "
+                           "body at its LOWEST point, the paws no wider apart than the "
+                           "chest, the shoulders level and square to the camera"),
+                ("RECOVER", "the front-left paw plants again and the front-right paw lifts "
+                            "clear of the ground to start its own swing, the body at its "
                             "HIGHEST point, returning towards neutral"),
             ),
             beats=_beats(
@@ -355,8 +371,10 @@ LOCOMOTION_CYCLES: dict[str, dict[str, PoseCycle]] = {
                           "the front-right and rear-left legs push back, the spine level"),
                 ("PLANT", "the front-left paw plants and takes the weight, the body at its "
                           "lowest, the head dipping slightly"),
+                # 同样必须带左右：这一拍原本一个方位词都没有，镜像后与自己重复。
                 ("SUSPEND", "the diagonal pairs swap through underneath the body, all four "
-                            "legs gathered under the chest, the body at mid height"),
+                            "legs gathered under the chest with the front-left leg passing "
+                            "inside the front-right, the body at mid height"),
                 ("LIFT", "the body is at its highest, pushing off the rear-left leg, the "
                          "front-right leg reaching forward"),
             ),
