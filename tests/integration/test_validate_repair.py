@@ -67,9 +67,13 @@ def test_report_is_schema_valid(asset: ArtifactStore, tmp_path: Path) -> None:
     assert payload["summary"]["total"] > 0
 
 
-def test_report_admits_the_thresholds_are_uncalibrated(asset: ArtifactStore) -> None:
-    """报告必须诚实地说明"中低严重度告警可能是误报"（PLAN §9.1）。"""
-    assert validate_asset(asset.root).thresholds_calibrated is False
+def test_report_states_the_calibration_status(asset: ArtifactStore) -> None:
+    """校准状态必须写进报告 —— 用户据此决定中低严重度告警要不要当真。
+
+    五个角色动作已用 6 角色 × 5 动作的真实样本校准
+    （docs/threshold-calibration.md）；cast / travel / impact / loop 仍是初始值。
+    """
+    assert validate_asset(asset.root).thresholds_calibrated is True
 
 
 def test_frame_order_is_reported_but_never_blocks(asset: ArtifactStore) -> None:

@@ -210,12 +210,17 @@ class ActionThresholds:
 
 ACTION_THRESHOLDS: Final[dict[str, ActionThresholds]] = {
     #                        高度变化   轮廓面积变化  锚点漂移
-    "idle":   ActionThresholds(0.06, 0.10, 1),
-    "walk":   ActionThresholds(0.12, 0.20, 1),
-    "attack": ActionThresholds(0.30, 0.45, 3),
-    "hurt":   ActionThresholds(0.25, 0.35, 2),
+    # 2026-07-30 用 6 角色 × 5 动作 = 30 个真实样本校准（docs/threshold-calibration.md）。
+    # 调整策略是**不对称**的，理由见文件末尾 THRESHOLDS_CALIBRATED 的说明。
+    "idle":   ActionThresholds(0.14, 0.12, 1),   # 高度 0.06→0.14：史莱姆的挤压回弹
+    "walk":   ActionThresholds(0.12, 0.20, 1),   # 实测远低于此，不动
+    "attack": ActionThresholds(0.30, 0.45, 1),   # 锚点 3→1
+    "hurt":   ActionThresholds(0.30, 0.35, 1),   # 高度 0.25→0.30、锚点 2→1
     # 倒地是形变的极端情况，几何检查无意义 —— 只做人工审核（PLAN §9.1）。
+    # 实测 6 个样本的高度变化 0.818~1.419，比任何角色动作高一个量级，
+    # 定阈值只能定到 1.7 上下，那种数字拦不住任何真实缺陷。维持豁免。
     "death":  ActionThresholds(None, None, None),
+    # 以下四项**没有校准样本**，仍是初始值。
     "cast":   ActionThresholds(0.30, 0.45, 3),
     # 特效类：飞行/爆炸形变剧烈，用角色阈值会全面误报。
     "travel": ActionThresholds(0.40, 0.60, 4),
@@ -237,20 +242,37 @@ PALETTE_OVERFLOW_MAX: Final = 0.02
 FRAME_ORDER_JUMP_MAX: Final = 1
 """帧序连续性：允许的差异突变点数上限。仅对 loop=true 的动作启用。"""
 
-THRESHOLDS_CALIBRATED: Final = False
-"""上面的阈值仍是**初始值**（PLAN §9.1）。
+THRESHOLDS_CALIBRATED: Final = True
+"""五个角色动作的阈值已用真实样本校准（2026-07-30）。
 
-Sprint 5 尝试过校准，未完成 —— 真实样本只有 3 组、其中合格的只有 2 组，
-而 P95 需要的是分布。详见 `docs/threshold-calibration.md`。
+样本：6 个刻意选取轮廓差异极大的角色（骑士 / 史莱姆 / 法师 / 弓手 / 石魔 / 小恶魔）
+× 5 个动作 = 30 个动作，全部人工审核通过。详见 `docs/threshold-calibration.md`。
 
-已知的两处疑点（证据不足以支撑改动，但足以指出下次该往哪看）：
+## 调整策略是**不对称**的
 
-- ``silhouette_variation ≤ 0.20`` 在一个**人工判定合格**的样本上实测 0.222，
-  已经在误报；
-- ``up`` 方向的 ×1.3 修正系数方向可能相反 —— 实测背面在三个指标上都更稳。
+放宽与收紧的风险不对等：**误报会让开发者关掉验证器**（PLAN §9.1 拒绝统一
+阈值时给的就是这个理由），漏报只是少抓一个缺陷。6 个样本足以证明"某个阈值
+太紧"，但不足以证明"某个阈值可以收多紧"。所以：
 
-写入 validation-report.thresholds_calibrated。为 False 时中低严重度告警
-可能是误报，以人眼判断为准。
+- **有证据就放宽。** 一个**完全正确**的史莱姆待机（挤压回弹 68→73→76→68）
+  实测高度变化 0.112，而阈值是 0.06 —— 它会被判失败。人形调出来的阈值
+  对非人形误报，这是本次校准最有价值的发现。``hurt`` 的高度变化实测 0.248、
+  阈值 0.25，只差 1%，同样放宽。
+- **不轻易收紧。** ``walk`` 的轮廓变化实测最大 0.078、阈值 0.20，看着可以
+  收到 0.09 —— 但那是拿 6 个样本去赌第 7 个角色。留着。
+- **锚点漂移例外，可以收。** 它是绝对像素量，**与角色形状无关**，
+  30 个样本全部落在 0.18~0.66。原来 attack 给 3px、hurt 给 2px，
+  比实测宽 3~6 倍。统一收到 1px 仍有 1.5 倍余量。
+
+## 仍未校准的部分
+
+``cast`` / ``travel`` / ``impact`` / ``loop`` **没有样本**，维持初始值。
+``death`` 维持豁免（实测高度变化 0.818~1.419，比角色动作高一个量级，
+能定出的阈值只有 1.7 上下，那种数字拦不住任何真实缺陷）。
+
+``up`` 方向的 ×1.3 修正系数也**没有验证** —— 本次样本全是 ``down``。
+
+写入 validation-report.thresholds_calibrated。
 """
 
 

@@ -1,0 +1,212 @@
+[
+  {
+    "asset": "cal_archer",
+    "key": "attack_down",
+    "anchor_drift": 0.3,
+    "height_variation": 0.0842,
+    "silhouette_variation": 0.0581
+  },
+  {
+    "asset": "cal_archer",
+    "key": "death_down",
+    "anchor_drift": 0.4358288770053491,
+    "height_variation": 1.4194,
+    "silhouette_variation": 0.7534
+  },
+  {
+    "asset": "cal_archer",
+    "key": "hurt_down",
+    "anchor_drift": 0.41,
+    "height_variation": 0.189,
+    "silhouette_variation": 0.1845
+  },
+  {
+    "asset": "cal_archer",
+    "key": "idle_down",
+    "anchor_drift": 0.48,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.0081
+  },
+  {
+    "asset": "cal_archer",
+    "key": "walk_down",
+    "anchor_drift": 0.49,
+    "height_variation": 0.0142,
+    "silhouette_variation": 0.0763
+  },
+  {
+    "asset": "cal_golem",
+    "key": "attack_down",
+    "anchor_drift": 0.28,
+    "height_variation": 0.104,
+    "silhouette_variation": 0.1217
+  },
+  {
+    "asset": "cal_golem",
+    "key": "death_down",
+    "anchor_drift": 0.44770468528159313,
+    "height_variation": 1.1452,
+    "silhouette_variation": 0.9652
+  },
+  {
+    "asset": "cal_golem",
+    "key": "hurt_down",
+    "anchor_drift": 0.18,
+    "height_variation": 0.1465,
+    "silhouette_variation": 0.1753
+  },
+  {
+    "asset": "cal_golem",
+    "key": "idle_down",
+    "anchor_drift": 0.44,
+    "height_variation": 0.0318,
+    "silhouette_variation": 0.0383
+  },
+  {
+    "asset": "cal_golem",
+    "key": "walk_down",
+    "anchor_drift": 0.47,
+    "height_variation": 0.0464,
+    "silhouette_variation": 0.0445
+  },
+  {
+    "asset": "cal_imp",
+    "key": "attack_down",
+    "anchor_drift": 0.36,
+    "height_variation": 0.0381,
+    "silhouette_variation": 0.041
+  },
+  {
+    "asset": "cal_imp",
+    "key": "death_down",
+    "anchor_drift": 0.49003984063745065,
+    "height_variation": 1.0411,
+    "silhouette_variation": 0.7955
+  },
+  {
+    "asset": "cal_imp",
+    "key": "hurt_down",
+    "anchor_drift": 0.45,
+    "height_variation": 0.037,
+    "silhouette_variation": 0.1074
+  },
+  {
+    "asset": "cal_imp",
+    "key": "idle_down",
+    "anchor_drift": 0.22,
+    "height_variation": 0.017,
+    "silhouette_variation": 0.0247
+  },
+  {
+    "asset": "cal_imp",
+    "key": "walk_down",
+    "anchor_drift": 0.41,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.0677
+  },
+  {
+    "asset": "cal_knight",
+    "key": "attack_down",
+    "anchor_drift": 0.42,
+    "height_variation": 0.012,
+    "silhouette_variation": 0.1721
+  },
+  {
+    "asset": "cal_knight",
+    "key": "death_down",
+    "anchor_drift": 0.48780487804877737,
+    "height_variation": 1.1549,
+    "silhouette_variation": 0.9392
+  },
+  {
+    "asset": "cal_knight",
+    "key": "hurt_down",
+    "anchor_drift": 0.44,
+    "height_variation": 0.2485,
+    "silhouette_variation": 0.1994
+  },
+  {
+    "asset": "cal_knight",
+    "key": "idle_down",
+    "anchor_drift": 0.47,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.0144
+  },
+  {
+    "asset": "cal_knight",
+    "key": "walk_down",
+    "anchor_drift": 0.42,
+    "height_variation": 0.0229,
+    "silhouette_variation": 0.0777
+  },
+  {
+    "asset": "cal_mage",
+    "key": "attack_down",
+    "anchor_drift": 0.44,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.132
+  },
+  {
+    "asset": "cal_mage",
+    "key": "death_down",
+    "anchor_drift": 0.476379910492291,
+    "height_variation": 1.1739,
+    "silhouette_variation": 0.9211
+  },
+  {
+    "asset": "cal_mage",
+    "key": "hurt_down",
+    "anchor_drift": 0.25,
+    "height_variation": 0.1098,
+    "silhouette_variation": 0.129
+  },
+  {
+    "asset": "cal_mage",
+    "key": "idle_down",
+    "anchor_drift": 0.37,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.0075
+  },
+  {
+    "asset": "cal_mage",
+    "key": "walk_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.0212,
+    "silhouette_variation": 0.05
+  },
+  {
+    "asset": "cal_slime",
+    "key": "attack_down",
+    "anchor_drift": 0.66,
+    "height_variation": 0.2008,
+    "silhouette_variation": 0.1537
+  },
+  {
+    "asset": "cal_slime",
+    "key": "death_down",
+    "anchor_drift": 0.4786359901396864,
+    "height_variation": 0.8182,
+    "silhouette_variation": 0.5849
+  },
+  {
+    "asset": "cal_slime",
+    "key": "hurt_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.1681,
+    "silhouette_variation": 0.2364
+  },
+  {
+    "asset": "cal_slime",
+    "key": "idle_down",
+    "anchor_drift": 0.4,
+    "height_variation": 0.1123,
+    "silhouette_variation": 0.0966
+  },
+  {
+    "asset": "cal_slime",
+    "key": "walk_down",
+    "anchor_drift": 0.48,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.0478
+  }
+]

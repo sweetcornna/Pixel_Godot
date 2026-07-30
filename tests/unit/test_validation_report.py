@@ -98,19 +98,28 @@ def test_report_is_schema_valid_when_saved(tmp_path: Path) -> None:
     assert payload["summary"]["failed"] == 1
 
 
-def test_thresholds_are_not_yet_calibrated() -> None:
-    """Sprint 4 前阈值没有真实数据支撑，报告必须诚实地说明这一点。"""
-    assert report().thresholds_calibrated is False
+def test_the_report_states_the_calibration_status() -> None:
+    """阈值有没有真实数据支撑，报告必须诚实地说明 —— 用户据此决定
+    中低严重度告警要不要当真。
+    """
+    assert report().thresholds_calibrated is True
 
 
 # -- per-action 阈值 -------------------------------------------------------
 
 
-def test_idle_is_stricter_than_walk() -> None:
-    assert (
-        thresholds_for("idle")["height_variation_max"]
-        < thresholds_for("walk")["height_variation_max"]
-    )
+def test_a_non_humanoid_idle_may_vary_more_than_a_walk() -> None:
+    """**这条关系被实测推翻过。**
+
+    直觉上待机该比走路稳，最初的阈值也是这么定的（idle 0.06 < walk 0.12）。
+    可史莱姆的待机是挤压回弹（68→73→76→68），高度变化实测 0.112 ——
+    一个完全正确的产出会被 0.06 判失败。而走路的上下起伏反而更小。
+
+    人形调出来的阈值对非人形误报（docs/threshold-calibration.md）。
+    """
+    idle = thresholds_for("idle")["height_variation_max"]
+    assert idle >= 0.112, "史莱姆的挤压回弹会被误报"
+    assert idle > thresholds_for("walk")["height_variation_max"]
 
 
 def test_attack_is_looser_than_walk() -> None:
@@ -119,7 +128,9 @@ def test_attack_is_looser_than_walk() -> None:
         thresholds_for("attack")["height_variation_max"]
         > thresholds_for("walk")["height_variation_max"]
     )
-    assert thresholds_for("attack")["anchor_drift_max_px"] == 3
+    # 锚点漂移是**绝对像素量、与角色形状无关**，30 个校准样本全落在
+    # 0.18~0.66。原来给 attack 3px 是实测的 4.5 倍，收到 1px 仍有 1.5 倍余量。
+    assert thresholds_for("attack")["anchor_drift_max_px"] == 1
 
 
 def test_death_disables_geometry_checks() -> None:
