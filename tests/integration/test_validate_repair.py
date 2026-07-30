@@ -1,0 +1,249 @@
+"""validate / repair 的端到端行为（Sprint 5 退出门槛）。"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PIL import Image
+from typer.testing import CliRunner
+
+from pixel_asset_forge.cli import EXIT_OK, EXIT_VALIDATION_FAILED, app
+from pixel_asset_forge.config import Config
+from pixel_asset_forge.models.manifest import AssetManifest
+from pixel_asset_forge.pipelines import approve_seed, create_animation, create_character
+from pixel_asset_forge.repair import RepairAction, execute_plan, plan_repairs, rounds_used
+from pixel_asset_forge.storage import ArtifactStore
+from pixel_asset_forge.validation import validate_asset
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def config(tmp_path: Path) -> Config:
+    return Config(
+        provider="mock",
+        model="mock-image",
+        output_dir=tmp_path / "outputs",
+        cache_dir=tmp_path / "cache",
+        max_repair_rounds=2,
+    )
+
+
+@pytest.fixture
+def asset(config: Config, tmp_path: Path, examples_dir: Path) -> ArtifactStore:
+    request = tmp_path / "knight.yaml"
+    request.write_text((examples_dir / "knight.yaml").read_text(encoding="utf-8"),
+                       encoding="utf-8")
+    create_character(request, config)
+    store = ArtifactStore.for_asset(config.output_dir, "knight_01")
+    approve_seed(store.root)
+    create_animation(store.root, action="walk", direction="down", config=config)
+    return store
+
+
+# -- 正常产出 --------------------------------------------------------------
+
+
+def test_clean_asset_passes(asset: ArtifactStore) -> None:
+    """判据是"没有阻断项"，不是"零失败项"。
+
+    中低严重度的几何变化量是拿**未校准阈值**判的（PLAN §9.1），
+    断言它们必须全绿，等于把"合成数据恰好落在某个未校准阈值之下"当成不变量 ——
+    阈值一调、缩放取整方式一改就会假失败。
+    """
+    report = validate_asset(asset.root)
+    assert report.passed is True
+    assert not report.blocking_checks
+
+
+def test_report_is_schema_valid(asset: ArtifactStore, tmp_path: Path) -> None:
+    report = validate_asset(asset.root)
+    path = report.save(tmp_path / "validation-report.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["passed"] is True
+    assert payload["summary"]["total"] > 0
+
+
+def test_report_admits_the_thresholds_are_uncalibrated(asset: ArtifactStore) -> None:
+    """报告必须诚实地说明"中低严重度告警可能是误报"（PLAN §9.1）。"""
+    assert validate_asset(asset.root).thresholds_calibrated is False
+
+
+def test_frame_order_is_reported_but_never_blocks(asset: ArtifactStore) -> None:
+    report = validate_asset(asset.root)
+    order = [c for c in report.checks if c.id == "frame_order_continuity"]
+    assert order, "缺了帧序检查项 —— 这条防线是缺的，必须在报告里可见"
+    assert all(c.result.value == "skip" for c in order)
+    assert "无法自动判定" in (order[0].message or "")
+
+
+# -- 注入缺陷 --------------------------------------------------------------
+
+
+def _corrupt(store: ArtifactStore, key: str, mutate) -> None:  # type: ignore[no-untyped-def]
+    for path in sorted(store.frames_of(key).glob("*.png")):
+        arr = np.array(Image.open(path).convert("RGBA"))
+        Image.fromarray(mutate(arr), "RGBA").save(path)
+
+
+def test_transparent_rgb_residue_is_caught_and_locally_repairable(
+    asset: ArtifactStore,
+) -> None:
+    def mutate(arr: np.ndarray) -> np.ndarray:
+        arr = arr.copy()
+        arr[0, 0, :3] = (7, 7, 7)  # 透明却带 RGB
+        return arr
+
+    _corrupt(asset, "walk_down", mutate)
+    report = validate_asset(asset.root)
+    assert report.passed is False
+
+    plan = plan_repairs(report)
+    assert plan.steps[0].action is RepairAction.REPROCESS
+    assert plan.api_calls == 0, "本地可修的问题不该重新调用 API"
+
+
+def test_blank_frame_is_fatal(asset: ArtifactStore) -> None:
+    path = next(iter(sorted(asset.frames_of("walk_down").glob("*.png"))))
+    Image.fromarray(np.zeros((32, 32, 4), dtype=np.uint8), "RGBA").save(path)
+
+    report = validate_asset(asset.root)
+    blank = next(c for c in report.checks if c.id == "blank_frame")
+    assert blank.result.value == "fail"
+    assert report.passed is False
+
+
+def test_missing_frame_file_is_caught(asset: ArtifactStore) -> None:
+    next(iter(sorted(asset.frames_of("walk_down").glob("*.png")))).unlink()
+    report = validate_asset(asset.root)
+    assert report.passed is False
+
+
+def test_frame_count_mismatch_requires_regeneration(asset: ArtifactStore) -> None:
+    manifest = AssetManifest.load(asset.manifest_path)
+    entry = manifest.animations["walk_down"]
+    entry.frames = entry.frames[:5]
+    manifest.save(asset.manifest_path)
+
+    report = validate_asset(asset.root)
+    assert report.passed is False
+    plan = plan_repairs(report)
+    assert plan.steps[0].action is RepairAction.REGENERATE_GRID
+
+
+# -- 修复执行 --------------------------------------------------------------
+
+
+def test_local_repair_runs_without_api(asset: ArtifactStore, config: Config) -> None:
+    def mutate(arr: np.ndarray) -> np.ndarray:
+        arr = arr.copy()
+        arr[0, 0, :3] = (7, 7, 7)
+        return arr
+
+    _corrupt(asset, "walk_down", mutate)
+    plan = plan_repairs(validate_asset(asset.root))
+
+    outcomes = execute_plan(asset.root, plan, config, allow_api=False)
+    assert outcomes[0].performed is True
+    assert validate_asset(asset.root).passed is True, "离线重跑应当修好它"
+
+
+def test_regeneration_is_withheld_without_explicit_consent(
+    asset: ArtifactStore, config: Config
+) -> None:
+    """花钱的动作必须由用户显式同意，不该因为跑了一次 repair 就悄悄发生。"""
+    manifest = AssetManifest.load(asset.manifest_path)
+    manifest.animations["walk_down"].frames = manifest.animations["walk_down"].frames[:5]
+    manifest.save(asset.manifest_path)
+
+    plan = plan_repairs(validate_asset(asset.root))
+    outcomes = execute_plan(asset.root, plan, config, allow_api=False)
+    assert outcomes[0].performed is False
+    assert "--allow-api" in outcomes[0].detail
+
+
+def test_every_repair_is_logged(asset: ArtifactStore, config: Config) -> None:
+    """修复是"系统自己改自己的产物"，不留痕就分不清当前产物是第几轮的结果。"""
+    _corrupt(asset, "walk_down", lambda a: np.where(a == a, a, a))  # 无害改写，触发计划
+    manifest = AssetManifest.load(asset.manifest_path)
+    manifest.animations["walk_down"].frames = manifest.animations["walk_down"].frames[:5]
+    manifest.save(asset.manifest_path)
+
+    plan = plan_repairs(validate_asset(asset.root))
+    execute_plan(asset.root, plan, config, allow_api=False)
+
+    log = json.loads((asset.root / "repair-log.json").read_text(encoding="utf-8"))
+    assert log[0]["round"] == 1
+    assert log[0]["outcomes"][0]["target"] == "walk_down"
+    assert rounds_used(asset.root) == 1
+
+
+def test_repair_budget_is_enforced(asset: ArtifactStore, config: Config) -> None:
+    from pixel_asset_forge.errors import RepairLimitExceededError
+
+    manifest = AssetManifest.load(asset.manifest_path)
+    manifest.animations["walk_down"].frames = manifest.animations["walk_down"].frames[:5]
+    manifest.save(asset.manifest_path)
+
+    report = validate_asset(asset.root)
+    for _ in range(2):
+        execute_plan(asset.root, plan_repairs(report), config, allow_api=False)
+
+    exhausted = plan_repairs(report, rounds_used=2, max_rounds=2)
+    assert exhausted.exhausted
+    with pytest.raises(RepairLimitExceededError):
+        execute_plan(asset.root, exhausted, config, allow_api=False)
+
+
+# -- CLI ------------------------------------------------------------------
+
+
+def test_cli_validate_exits_nonzero_on_failure(
+    asset: ArtifactStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**验证失败时绝不标记为成功** —— 退出码必须能被脚本感知。"""
+    monkeypatch.chdir(tmp_path)
+    path = next(iter(sorted(asset.frames_of("walk_down").glob("*.png"))))
+    Image.fromarray(np.zeros((32, 32, 4), dtype=np.uint8), "RGBA").save(path)
+
+    result = runner.invoke(app, ["validate", str(asset.root)])
+    assert result.exit_code == EXIT_VALIDATION_FAILED
+    assert "未通过" in result.stdout
+
+
+def test_cli_validate_passes_on_clean_asset(
+    asset: ArtifactStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["validate", str(asset.root)])
+    assert result.exit_code == EXIT_OK
+    assert (asset.root / "validation-report.json").exists()
+
+
+def test_cli_validate_json_is_machine_readable(
+    asset: ArtifactStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["validate", str(asset.root), "--json"])
+    assert result.exit_code == EXIT_OK
+    assert json.loads(result.stdout)["passed"] is True
+
+
+def test_cli_repair_defaults_to_offline_only(
+    asset: ArtifactStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pixel-asset.yaml").write_text(
+        f"provider: mock\nmodel: mock-image\noutput_dir: {asset.root.parent}\n",
+        encoding="utf-8",
+    )
+    manifest = AssetManifest.load(asset.manifest_path)
+    manifest.animations["walk_down"].frames = manifest.animations["walk_down"].frames[:5]
+    manifest.save(asset.manifest_path)
+
+    result = runner.invoke(app, ["repair", str(asset.root)])
+    assert result.exit_code == EXIT_OK
+    assert "跳过" in result.stdout

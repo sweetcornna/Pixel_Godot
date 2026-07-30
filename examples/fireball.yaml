@@ -1,0 +1,58 @@
+# ============================================================
+# fireball_01 — 特效资产（非角色）
+#
+# 覆盖风险：非 character 资产类型 · 无方向动作 · 非循环动作
+#
+# 与角色资产的三点差异：
+#   1. asset_type 不是 character，因此 animations 非必填
+#      （此处仍提供，因为特效确实需要动画）
+#   2. impact 动作没有 directions —— 爆炸是各向同性的
+#   3. impact 的 loop=false，因此不启用帧序连续性检查
+#      （该检查只对循环动作有意义，见 PLAN §11.2）
+#
+# 另注意：特效类资产的验证需要放宽轮廓阈值 —— 火球在飞行中
+# 形变剧烈，用角色的 idle/walk 阈值会全面误报。
+# ============================================================
+
+schema_version: "1.0"
+
+asset_id: fireball_01
+asset_type: projectile
+
+description: >-
+  Small flying fireball projectile, bright orange core with
+  yellow-white center, trailing flame wisps behind it.
+  No character, no background, no ground shadow.
+
+style:
+  perspective: top_down_3_4
+  target_size: [48, 48]
+  max_colors: 16
+  outline: none          # 火焰不描边，硬边缘会显得呆板
+  shading: three_tone
+  antialiasing: false
+  lighting: none         # 自发光物体不受外部光源约束
+
+background:
+  mode: chroma_key
+  # 火球是橙黄色系，与洋红/绿/青均无冲突。
+  color: "#FF00FF"
+
+animations:
+  # 飞行循环 —— 有方向，火焰拖尾朝向与飞行方向相反
+  - name: travel
+    directions: [down, left, right, up]
+    frames: 4
+    fps: 12
+    loop: true
+
+  # 命中爆炸 —— 无方向、不循环
+  - name: impact
+    frames: 6
+    fps: 15
+    loop: false
+
+export:
+  targets:
+    - generic-json
+    - godot

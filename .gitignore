@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+outputs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.env
+
+# 实跑产出与参考仓库都在仓库外（~/.pixel-asset-live），这里只是防手滑
+.pixel-asset-cache/
+refs/

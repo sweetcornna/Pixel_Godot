@@ -1,0 +1,146 @@
+"""Godot 4 SpriteFrames 导出。
+
+产出一张总图 + 一份 ``.tres`` 资源，拖进 ``AnimatedSprite2D`` 即可用。
+
+## 格式要点
+
+Godot 4 的 `SpriteFrames` 资源结构：
+
+```text
+[gd_resource type="SpriteFrames" load_steps=N format=3]
+[ext_resource type="Texture2D" path="res://…png" id="1_atlas"]
+[sub_resource type="AtlasTexture" id="…"]     ← 每帧一个，指向总图上的矩形
+[resource]
+animations = [{ "frames": […], "loop": …, "name": &"walk_down", "speed": … }]
+```
+
+三处容易写错：
+
+1. **动画名要用 `&"name"`（StringName）**，写成普通字符串 Godot 4 读不到。
+2. **`speed` 是每秒帧数**，不是每帧时长；每帧的 `duration` 是**相对倍率**
+   （1.0 = 按 speed 走），不是秒。
+3. **`ext_resource` 的路径必须真的存在**，否则 Godot 直接 Parse Error。
+
+`load_steps` 应当等于 `ext_resource` + `sub_resource` 的总数 + 1。
+这里原本写着"数不对会导致资源加载失败"——**实测证伪**：改成 3（正确值 22）
+之后 Godot 4.3 照样加载成功，它是给加载进度条用的提示，不是硬校验。
+仍然写对它（零成本），但别把它当护栏。
+
+## 验证状态
+
+2026-07-29 已用 **Godot 4.3 真机验证**：载入 SpriteFrames、核对动画名与
+帧数/fps/loop/每帧纹理尺寸，并挂到 `AnimatedSprite2D` 上播放通过。
+PLAN §8 Sprint 6 的退出门槛"用真实 Godot 工程验证，不是理论上兼容"**已达成**。
+
+重跑见 `tools/godot-gate/`。改动本模块时手动跑一次——单元测试只验证
+`.tres` 的结构语法，证明不了 Godot 能加载。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from ..models.manifest import AssetManifest
+from ..processing.spritesheet import save_png
+from .base import AnimationView, Exporter, ExportResult, animation_views, load_frames
+from .generic_json import build_atlas
+
+#: Godot 4 的资源格式版本。
+RESOURCE_FORMAT = 3
+
+
+def _resource_id(prefix: str, index: int) -> str:
+    return f"{prefix}_{index:03d}"
+
+
+def build_spriteframes(
+    manifest: AssetManifest,
+    views: list[AnimationView],
+    regions: dict[str, list[tuple[int, int, int, int]]],
+    texture_path: str,
+) -> str:
+    """生成 ``.tres`` 文本。"""
+    atlas_id = "1_atlas"
+
+    sub_resources: list[str] = []
+    frame_ids: dict[str, list[str]] = {}
+    counter = 0
+    for view in views:
+        ids = []
+        for x, y, width, height in regions[view.key]:
+            rid = _resource_id("AtlasTexture", counter)
+            counter += 1
+            ids.append(rid)
+            sub_resources.append(
+                f'[sub_resource type="AtlasTexture" id="{rid}"]\n'
+                f'atlas = ExtResource("{atlas_id}")\n'
+                f"region = Rect2({x}, {y}, {width}, {height})\n"
+            )
+        frame_ids[view.key] = ids
+
+    animations = []
+    for view in views:
+        frames = ", ".join(
+            f'{{\n"duration": 1.0,\n"texture": SubResource("{rid}")\n}}'
+            for rid in frame_ids[view.key]
+        )
+        animations.append(
+            "{\n"
+            f'"frames": [{frames}],\n'
+            f'"loop": {"true" if view.loop else "false"},\n'
+            f'"name": &"{view.key}",\n'
+            f'"speed": {float(view.fps)}\n'
+            "}"
+        )
+
+    # load_steps = ext_resource 数 + sub_resource 数 + 1（资源本身）
+    load_steps = 1 + len(sub_resources) + 1
+
+    header = (
+        f'[gd_resource type="SpriteFrames" load_steps={load_steps} '
+        f'format={RESOURCE_FORMAT}]\n\n'
+        f'[ext_resource type="Texture2D" path="res://{texture_path}" id="{atlas_id}"]\n\n'
+    )
+    body = "\n".join(sub_resources)
+    tail = "\n[resource]\nanimations = [" + ", ".join(animations) + "]\n"
+    return header + body + tail
+
+
+class GodotExporter(Exporter):
+    target = "godot"
+
+    def export(self, manifest: AssetManifest, root: Path, out_dir: Path) -> ExportResult:
+        views = animation_views(manifest, root)
+        result = ExportResult(target=self.target)
+        if not views:
+            result.notes.append("没有任何动作，跳过 Godot 导出")
+            return result
+
+        self.ensure_dir(out_dir)
+        frames_by_key = {v.key: load_frames(root, v) for v in views}
+        atlas, regions = build_atlas(views, frames_by_key)
+
+        texture_name = f"{manifest.asset_id}.png"
+        result.files.append(save_png(atlas, out_dir / texture_name))
+
+        tres = build_spriteframes(manifest, views, regions, texture_name)
+        tres_path = out_dir / f"{manifest.asset_id}_frames.tres"
+        tres_path.write_text(tres, encoding="utf-8")
+        result.files.append(tres_path)
+
+        result.notes.append(
+            f"把 {out_dir.name}/ 整个目录复制进 Godot 项目，"
+            f"再把 {tres_path.name} 拖到 AnimatedSprite2D 的 Sprite Frames 属性上。"
+        )
+        result.notes.append(
+            "锚点是 bottom-center：AnimatedSprite2D 的 offset 需设为 "
+            f"(0, -{manifest.canvas.height // 2}) 才能让脚底对齐节点原点。"
+        )
+        result.notes.append(
+            "导入时把纹理的 Filter 设为 Nearest，否则 Godot 默认的线性过滤会把像素糊掉。"
+        )
+        result.notes.append(
+            "本格式已在 Godot 4.3 真机验证：载入 SpriteFrames、核对帧数/fps/loop/"
+            "纹理尺寸，并挂到 AnimatedSprite2D 播放。重跑见 tools/godot-gate/。"
+        )
+        return result

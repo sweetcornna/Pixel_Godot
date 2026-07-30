@@ -1,0 +1,32 @@
+"""规划层：请求 → 任务 DAG。"""
+
+from .framerate import FrameBudget, frame_order, plan_inbetweens
+from .grid_layout import (
+    GridLayout,
+    SizeViolation,
+    aspect_mismatch,
+    check_size,
+    grid_for_frames,
+    layout_for_frames,
+    seed_layout,
+    strip_for_frames,
+    supported_batch_sizes,
+)
+from .planner import PlanResult, plan_request
+
+__all__ = [
+    "FrameBudget",
+    "GridLayout",
+    "PlanResult",
+    "SizeViolation",
+    "aspect_mismatch",
+    "check_size",
+    "frame_order",
+    "grid_for_frames",
+    "layout_for_frames",
+    "plan_inbetweens",
+    "plan_request",
+    "seed_layout",
+    "strip_for_frames",
+    "supported_batch_sizes",
+]

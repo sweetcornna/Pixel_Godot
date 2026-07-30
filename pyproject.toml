@@ -1,0 +1,68 @@
+[project]
+name = "pixel-asset-forge"
+version = "0.1.0"
+description = "Manifest 驱动的像素游戏资产编译器 —— 自然语言 → 可直接导入引擎的像素资产"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.9",
+    "typer>=0.15",
+    "pyyaml>=6.0",
+    "jsonschema>=4.23",
+    "pillow>=11.0",
+    "numpy>=2.1",
+    "imagehash>=4.3",
+    "scipy>=1.18.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.60"]
+
+[project.scripts]
+pixel-asset = "pixel_asset_forge.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-jsonschema>=4.26.0.20260518",
+    "types-pyyaml>=6.0.12.20260724",
+    "scipy-stubs>=1.18.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pixel_asset_forge"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas" = "pixel_asset_forge/_schemas"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # 中文全角标点在文档字符串里是有意为之
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["imagehash.*", "PIL.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "live: 需要真实 OpenAI API（默认跳过，须设 RUN_LIVE_IMAGE_TESTS=1）",
+    "golden: golden image 像素级回归测试",
+]

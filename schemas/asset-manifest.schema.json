@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pixel-asset-forge/pixel-asset-forge/schemas/asset-manifest.schema.json",
+  "title": "Pixel Asset Forge — Asset Manifest",
+  "description": "资产的唯一真实来源（ADR-001）。所有导出文件必须能仅凭 Manifest + frames/ 完整重建。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "asset_id",
+    "asset_type",
+    "pipeline_version",
+    "provider",
+    "canvas",
+    "anchor",
+    "background",
+    "palette",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "MAJOR.MINOR，当前 2.0。读取器遇到更高 MAJOR 必须拒绝；更高 MINOR 应忽略未知字段（PLAN §5.4）。1.x → 2.0 的变更：fallback_stage 由序号整数改为具名枚举、grid 增加 requested_size/actual_size、background 增加 key_threshold。迁移由读取器自动完成。",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "asset_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_]*$",
+      "maxLength": 64
+    },
+    "asset_type": {
+      "enum": [
+        "character",
+        "prop",
+        "weapon",
+        "projectile",
+        "impact",
+        "spell",
+        "pickup",
+        "ui_icon",
+        "environment_object",
+        "tileset"
+      ]
+    },
+    "pipeline_version": {
+      "description": "产出该资产的代码版本，用于回归排查。独立于 schema_version。",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "model"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "openai",
+            "mock",
+            "replay"
+          ]
+        },
+        "model": {
+          "description": "实际使用的模型。透明背景降级会切换到 gpt-image-1.5（ADR-004）。",
+          "type": "string"
+        }
+      }
+    },
+    "canvas": {
+      "description": "最终逻辑画布尺寸。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "bottom_center",
+            "center",
+            "top_left"
+          ]
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "background": {
+      "description": "实际生效的背景策略。color_used 与 key_threshold 必须持久化，否则 process 无法离线复现（ADR-004）。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "color_requested",
+        "color_used",
+        "fallback_stage"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "chroma_key",
+            "transparent_model",
+            "rembg"
+          ]
+        },
+        "color_requested": {
+          "$ref": "#/$defs/hex_color"
+        },
+        "color_used": {
+          "description": "与 color_requested 不同即表示触发了冲突降级（PLAN §2.4.1）。",
+          "$ref": "#/$defs/hex_color"
+        },
+        "fallback_stage": {
+          "description": "降级阶梯档位（ADR-004）。schema 2.0 起改用具名标识——序号在增删档位时会整体平移，已落盘的 manifest 会被静默误读。transparent_model 及其之后的档位应在验证报告中告警。",
+          "enum": [
+            "tolerant_key",
+            "alt_key_color",
+            "transparent_model",
+            "rembg",
+            "manual"
+          ]
+        },
+        "key_threshold": {
+          "description": "**种子图**的自适应色键阈值（颜色距离）。各动作的阈值另见 animations[*].key_threshold——阈值逐图求解，不能共用一个（Sprint 0 / A-5）。",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_colors",
+        "colors"
+      ],
+      "properties": {
+        "max_colors": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 256
+        },
+        "colors": {
+          "description": "量化后实际使用的颜色。长度不得超过 max_colors。",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hex_color"
+          }
+        }
+      }
+    },
+    "mirroring": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "source_direction": {
+          "enum": [
+            "left",
+            "right"
+          ]
+        },
+        "strict_lighting": {
+          "type": "boolean"
+        }
+      }
+    },
+    "animations": {
+      "description": "键为 <action>_<direction>，如 walk_down。",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z]+(_[a-z]+)*$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/generated_animation"
+          },
+          {
+            "$ref": "#/$defs/derived_animation"
+          }
+        ]
+      }
+    },
+    "sheets": {
+      "description": "Spritesheet 产物路径，相对 asset 根目录。",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "description": "资产整体状态。取值对应 Job 状态机的终态与关键中间态（PLAN §5.3）。",
+      "enum": [
+        "planned",
+        "generating",
+        "generated",
+        "processing",
+        "processed",
+        "validating",
+        "validated",
+        "validation_failed",
+        "repairing",
+        "awaiting_approval",
+        "approved",
+        "exported",
+        "failed"
+      ]
+    },
+    "scale_profile": {
+      "description": "跨动作缩放基准。由参考动作确立，其余动作复用，使 crouch/hurt/death 的真实姿势尺寸差异不被归一化掉。分母用源图网格单元格高度（与 sprite 画多大无关）。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "subject_ratio",
+        "canvas_fraction"
+      ],
+      "properties": {
+        "reference": {
+          "description": "确立该基准的动作键。",
+          "type": "string"
+        },
+        "subject_ratio": {
+          "description": "参考动作的 内容高度 / 源单元格高度。",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "canvas_fraction": {
+          "description": "参考动作的 输出内容高度 / 目标画布高度。",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hex_color": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "generated_animation": {
+      "description": "由 API 生成的动作。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fps",
+        "loop",
+        "frames"
+      ],
+      "properties": {
+        "fps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "loop": {
+          "type": "boolean"
+        },
+        "grid": {
+          "description": "生成时使用的物理网格布局，用于溯源与重新切帧（ADR-003）。",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cols",
+            "rows",
+            "cell"
+          ],
+          "properties": {
+            "cols": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12,
+              "description": "列数。单行条带把整条帧序列排成一行，6 帧即 6 列。"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "cell": {
+              "description": "**实际**单元格尺寸（actual_size / (cols, rows)），不是名义 512×512。",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "integer",
+                "minimum": 16
+              }
+            },
+            "requested_size": {
+              "description": "提交给 API 的尺寸。与 actual_size 不同即说明端点发生了尺寸吸附（Sprint 0 / A-1）。",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "integer",
+                "minimum": 16
+              }
+            },
+            "actual_size": {
+              "description": "实际返回图尺寸。切帧按比例进行，没有它就无法离线复现当初的格线位置（Sprint 0 / A-1）。",
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "integer",
+                "minimum": 16
+              }
+            }
+          }
+        },
+        "source_image": {
+          "description": "source/ 下的原始生成图路径。永不覆盖。",
+          "type": "string"
+        },
+        "key_threshold": {
+          "description": "本动作原图的自适应色键阈值。**阈值是逐图求解的**，因此必须逐动作记录——只在 background 上存一个资产级阈值，会让除第一张之外的所有图在 process 重跑时改变结果（ADR-004）。",
+          "type": "number",
+          "minimum": 0
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "keyframe_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 2,
+          "description": "这段动作里有多少张是用户给的关键帧（其余是补出来的）"
+        },
+        "keyframe_fps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "关键帧序列自己的帧率。补完后 fps 变成目标帧率，没有这个字段就重算不出补间预算"
+        }
+      }
+    },
+    "derived_animation": {
+      "description": "由其他方向镜像 derive 的动作。不参与身份漂移与轮廓类校验（ADR-006）。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "derived_from",
+        "transform"
+      ],
+      "properties": {
+        "derived_from": {
+          "description": "源动作键，如 walk_left。",
+          "type": "string",
+          "pattern": "^[a-z]+(_[a-z]+)*$"
+        },
+        "transform": {
+          "enum": [
+            "flip_horizontal",
+            "flip_vertical"
+          ]
+        }
+      }
+    }
+  }
+}

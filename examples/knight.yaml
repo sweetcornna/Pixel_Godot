@@ -1,0 +1,56 @@
+# ============================================================
+# knight_01 — 带剑非对称角色
+#
+# 覆盖风险：不可镜像 · 武器身份漂移
+#
+# 这是三个示例中最"标准"的角色，但因为持剑，四个方向必须全部
+# 独立生成（见 ADR-006 的镜像前置条件）。
+# ============================================================
+
+schema_version: "1.0"
+
+asset_id: knight_01
+asset_type: character
+
+description: >-
+  Young forest knight, short brown hair, green cloak,
+  leather armor, short sword held in the right hand.
+  Slim build, no shield, no cape hood.
+
+style:
+  perspective: top_down_3_4
+  target_size: [48, 48]
+  max_colors: 32
+  outline: single_pixel_dark
+  shading: two_tone
+  antialiasing: false
+  lighting: fixed_top_left
+
+background:
+  mode: chroma_key
+  # 绿色斗篷不与洋红冲突，默认键控色可用。
+  color: "#FF00FF"
+
+mirroring:
+  # 手持剑破坏左右对称：镜像会把角色变成左撇子，
+  # 且该错误能通过全部自动验证项（几何检查对此不敏感）。
+  enabled: false
+  reason: "handheld sword breaks left/right symmetry"
+
+animations:
+  - name: idle
+    directions: [down, left, right, up]
+    frames: 4          # 2×2 网格 → 1024×1024
+    fps: 6
+    loop: true
+
+  - name: walk
+    directions: [down, left, right, up]
+    frames: 8          # 4×2 网格 → 2048×1024
+    fps: 10
+    loop: true
+
+export:
+  targets:
+    - generic-json
+    - godot

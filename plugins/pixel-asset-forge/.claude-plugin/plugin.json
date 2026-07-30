@@ -1,0 +1,11 @@
+{
+  "name": "pixel-asset-forge",
+  "description": "Generate commercial-grade pixel-art game assets from a description: character sheets, four-direction animations (idle/walk/attack/hurt/death), props, weapons, FX and tiles. Handles chroma-key background removal, connected-component frame extraction, pixel-grid snapping, cross-action scale profiling, bottom-center anchoring, palette quantization, quality validation and engine export (Godot SpriteFrames / generic JSON). Use for: make a pixel character, generate a walk animation, produce a sprite sheet, export to Godot, fix a broken asset. Requires the user's own OpenAI-compatible API key.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "keywords": [
+    "pixel-art", "sprite", "spritesheet", "game-assets", "animation",
+    "godot", "chroma-key", "gamedev", "2d", "tileset"
+  ],
+  "skills": ["./skills/pixel-asset-forge"]
+}

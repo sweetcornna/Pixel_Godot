@@ -1,0 +1,69 @@
+# ============================================================
+# slime_01 — 对称角色 + 背景色冲突用例
+#
+# 覆盖风险：键控色与角色本体撞色（PLAN §2.4.1，高危）· 镜像可行性
+#
+# 这个示例的主要用途是暴露 v1 规划稿的一个致命缺陷：
+# 把键控色硬编码为 #FF00FF，遇到粉紫色角色时会把角色本体
+# 一起抠掉。史莱姆的洋红渐变体正好落在键控色的颜色距离阈值内。
+#
+# 期望行为：
+#   1. 生成前的冲突预检命中
+#   2. 自动切换到 fallback_colors[0] = #00FF00
+#   3. manifest.background.color_used 记录 "#00FF00"
+#      （与 color_requested 不同 → 说明触发了降级）
+# ============================================================
+
+schema_version: "1.0"
+
+asset_id: slime_01
+asset_type: character
+
+description: >-
+  Small round slime creature, translucent magenta-to-violet
+  gradient body, two simple dark eyes, no limbs, no accessories.
+  Perfectly symmetrical left to right.
+
+style:
+  perspective: top_down_3_4
+  target_size: [48, 48]
+  max_colors: 24
+  outline: single_pixel_dark
+  shading: two_tone
+  antialiasing: false
+  lighting: fixed_top_left
+
+background:
+  mode: chroma_key
+  # 请求默认洋红 —— 但角色本体就是洋红系，运行时必然冲突。
+  # 这正是本示例要验证的路径：不应报错，应自动降级。
+  color: "#FF00FF"
+  fallback_colors:
+    - "#00FF00"
+    - "#00FFFF"
+  conflict_hint: "body is magenta/violet, overlaps default keying color"
+
+mirroring:
+  # 无武器、无盾牌、无单侧饰品、左右完全对称 → 满足全部镜像前置条件。
+  # right 由 left 翻转 derive，两个方向的身份必然完全一致（ADR-006）。
+  enabled: true
+  source_direction: left
+  reason: "fully symmetrical, no handheld items"
+
+animations:
+  - name: idle
+    directions: [down, left, right, up]
+    frames: 4
+    fps: 6
+    loop: true
+
+  - name: walk
+    directions: [down, left, right, up]
+    frames: 6          # 3×2 网格 → 1536×1024；史莱姆弹跳周期 6 帧足够
+    fps: 8
+    loop: true
+
+export:
+  targets:
+    - generic-json
+    - godot

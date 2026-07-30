@@ -1,0 +1,9 @@
+{
+  "name": "godot-prompter",
+  "description": "Agentic skills framework for Godot 4.x — 55 domain skills for GDScript and C#: player controllers, state machines, inventory, save/load, shaders, multiplayer sync, UI, navigation, performance profiling and more, plus 9 specialist agents. Vendored from jame581/GodotPrompter (MIT).",
+  "version": "1.13.0",
+  "author": { "name": "GodotPrompter Contributors" },
+  "license": "MIT",
+  "keywords": ["godot", "gdscript", "csharp", "gamedev", "shaders", "multiplayer"],
+  "homepage": "https://github.com/jame581/GodotPrompter"
+}

@@ -1,0 +1,30 @@
+{
+  "name": "pixel-godot",
+  "description": "Godot 2D 游戏工作站：像素资产生成、Godot 编辑器操作、Godot 领域知识三块拼在一起。",
+  "owner": {
+    "name": "sweetcornna"
+  },
+  "plugins": [
+    {
+      "name": "pixel-asset-forge",
+      "description": "从一句描述生成可直接商用的像素资产：角色标准图、四方向动画、道具与特效。自动完成去背景、连通域抽帧、像素网格吸附、跨动作缩放基准、脚底对齐、调色板量化、质量验证与引擎导出（Godot SpriteFrames / 通用 JSON）。也能导入用户自有素材并补帧到目标帧率。",
+      "author": { "name": "sweetcornna" },
+      "category": "gamedev",
+      "source": "./plugins/pixel-asset-forge"
+    },
+    {
+      "name": "godot-ai",
+      "description": "连接运行中的 Godot 编辑器：建场景、改节点、写脚本、连信号、配 UI 与材质。43 个 MCP 工具、120 余项操作。内置 Godot addon，Python MCP server 从上游安装。",
+      "author": { "name": "Godot AI contributors" },
+      "category": "gamedev",
+      "source": "./plugins/godot-ai"
+    },
+    {
+      "name": "godot-prompter",
+      "description": "Godot 4.x 领域知识：55 个 Skill 覆盖 GDScript / C# / 着色器 / 状态机 / 存档 / 多人同步 / 性能优化等，外加 9 个专职 Agent。",
+      "author": { "name": "GodotPrompter Contributors" },
+      "category": "gamedev",
+      "source": "./plugins/godot-prompter"
+    }
+  ]
+}

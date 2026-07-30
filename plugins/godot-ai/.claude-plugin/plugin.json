@@ -1,0 +1,9 @@
+{
+  "name": "godot-ai",
+  "description": "Connect to a live Godot editor over MCP: build scenes, edit nodes and scripts, wire signals, configure UI, materials, animations, particles, cameras and environments. 43 tools, 120+ ops. Vendored from hi-godot/godot-ai (MIT).",
+  "version": "3.0.7",
+  "author": { "name": "Godot AI contributors" },
+  "license": "MIT",
+  "keywords": ["godot", "mcp", "gamedev", "editor", "scene", "gdscript"],
+  "homepage": "https://github.com/hi-godot/godot-ai"
+}

@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pixel-asset-forge/pixel-asset-forge/schemas/validation-report.schema.json",
+  "title": "Pixel Asset Forge — Validation Report",
+  "description": "验证引擎输出。验证失败时绝不允许把资产标记为成功（PLAN §11）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "asset_id", "pipeline_version", "passed", "checks"],
+
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+
+    "asset_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_]*$"
+    },
+
+    "pipeline_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+
+    "passed": {
+      "description": "总体结论。任一 fatal 或 high 级别失败即为 false。",
+      "type": "boolean"
+    },
+
+    "thresholds_calibrated": {
+      "description": "per-action 阈值是否已用真实数据校准。Sprint 4 之前为 false，此时报告仅供参考（PLAN §11.1）。",
+      "type": "boolean",
+      "default": false
+    },
+
+    "checks": {
+      "description": "逐项检查结果。",
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    },
+
+    "thresholds_used": {
+      "description": "本次验证实际使用的 per-action 阈值，写入报告以保证可复现。",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/action_thresholds" }
+    },
+
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "artifacts": {
+      "description": "供人工审核的辅助产物路径。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contact_sheet": { "type": "string" },
+        "previews": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "severity", "result"],
+      "properties": {
+        "id": {
+          "description": "检查项标识，对应 PLAN §11.2 的验证项清单。",
+          "enum": [
+            "frame_count",
+            "frame_size",
+            "blank_frame",
+            "cell_overflow",
+            "transparent_rgb_residue",
+            "frame_order_continuity",
+            "anchor_drift",
+            "height_variation",
+            "silhouette_variation",
+            "palette_overflow",
+            "duplicate_frame_exact",
+            "duplicate_frame_approx",
+            "static_animation"
+          ]
+        },
+        "target": {
+          "description": "被检查的对象，如 walk_down 或 walk_down/frame_03。",
+          "type": "string"
+        },
+        "action": {
+          "description": "所属动作，用于查 per-action 阈值。",
+          "type": "string"
+        },
+        "direction": {
+          "enum": ["down", "left", "right", "up"]
+        },
+        "severity": {
+          "description": "fatal 与 high 会阻断放行；medium 与 low 只记录。",
+          "enum": ["fatal", "high", "medium", "low"]
+        },
+        "result": {
+          "enum": ["pass", "fail", "warn", "skip"]
+        },
+        "measured": {
+          "description": "实测值。数值型检查填数字，布尔型填 true/false。",
+          "type": ["number", "boolean", "null"]
+        },
+        "threshold": {
+          "description": "本次使用的阈值。",
+          "type": ["number", "boolean", "null"]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "skip_reason": {
+          "description": "跳过原因，例如 derived 方向不参与轮廓校验，或 death 动作不做几何检查。",
+          "enum": [
+            "derived_animation",
+            "action_exempt",
+            "non_looping_animation",
+            "not_applicable",
+            "dependency_failed"
+          ]
+        }
+      }
+    },
+
+    "action_thresholds": {
+      "description": "单个动作的阈值集合。null 表示该项对此动作不检查（如 death 的几何类检查）。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "height_variation_max": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "silhouette_variation_max": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "anchor_drift_max_px": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "palette_overflow_max": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "direction_multiplier": {
+          "description": "方向修正系数。up（背面）方向的轮廓类阈值 × 1.3（PLAN §11.1）。",
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
