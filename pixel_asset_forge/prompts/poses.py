@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..errors import PlanError
@@ -269,19 +270,50 @@ POSE_CYCLES: dict[str, PoseCycle] = {
 FRONTAL_DIRECTIONS = frozenset({"down", "up"})
 
 
-def pose_sequence(action: str, frames: int, direction: str | None = None) -> list[str]:
+def cycle_from_beats(
+    beats: Sequence[tuple[str, str]], kind: str | None = None
+) -> PoseCycle:
+    """把用户给的节拍列表编成 ``PoseCycle``。
+
+    节拍**由调用方给出，不由代码猜**。这条与 ``pose_sequence`` 对未知动作
+    抛错是同一个道理：泛泛的整体描述实测会产出一排几乎一样的站姿
+    （Sprint 0 / A-2），静默兜底等于把已知失败模式请回来。
+
+    ``kind`` 对应 ``PoseCycle`` 的三个开关：
+
+    - ``one_shot`` → ``linear=True``，采样保留首尾
+    - ``gait`` → ``half_cycle=True``，beats 只是半个周期
+    - 其余（含 None）→ 循环采样
+    """
+    made = tuple(Beat(name, f"{name} — {desc}") for name, desc in beats)
+    return PoseCycle(
+        beats=made,
+        linear=kind == "one_shot",
+        half_cycle=kind == "gait",
+    )
+
+
+def pose_sequence(
+    action: str,
+    frames: int,
+    direction: str | None = None,
+    cycle: PoseCycle | None = None,
+) -> list[str]:
     """返回 ``frames`` 条**互不相同**的逐帧姿势描述。
 
     ``direction`` 是正面/背面时，有 ``frontal_beats`` 的动作改用那一套 ——
     侧视行走周期在正面视角下读不出来，见 ``PoseCycle.frontal_beats``。
 
-    找不到动作时报错而不是退回泛泛描述 —— 泛泛描述正是 Sprint 0 里
-    产出 N 张站姿的那个原因，静默退回去等于把已知失败模式请回来。
+    ``cycle`` 显式给出时用它（自定义动作走这条路），否则查内置模板。
+    两者都没有就报错而不是退回泛泛描述。
     """
-    cycle = POSE_CYCLES.get(action)
+    if cycle is None:
+        cycle = POSE_CYCLES.get(action)
     if cycle is None:
         raise PlanError(
-            f"动作 {action!r} 没有姿势模板。可用：{', '.join(sorted(POSE_CYCLES))}。"
+            f"动作 {action!r} 没有姿势模板，也没有给节拍。"
+            f"内置动作：{', '.join(sorted(POSE_CYCLES))}；"
+            f"自定义动作请在 request 的 animations[].beats 里写明每一拍。"
             "不要用泛泛的整体描述兜底 —— 实测那样会产出 N 张几乎一样的站姿。"
         )
 
@@ -305,7 +337,11 @@ def pose_sequence(action: str, frames: int, direction: str | None = None) -> lis
 
 
 def numbered_poses(
-    action: str, frames: int, cols: int, direction: str | None = None
+    action: str,
+    frames: int,
+    cols: int,
+    direction: str | None = None,
+    cycle: PoseCycle | None = None,
 ) -> str:
     """把姿势序列排成带行列号的清单，直接嵌进 prompt。
 
@@ -315,7 +351,7 @@ def numbered_poses(
     ``direction`` 透传给 :func:`pose_sequence` —— 正面与侧面用的是两套步态。
     """
     lines = []
-    for index, beat in enumerate(pose_sequence(action, frames, direction)):
+    for index, beat in enumerate(pose_sequence(action, frames, direction, cycle)):
         col, row = index % cols + 1, index // cols + 1
         lines.append(f"Cell {index + 1} (row {row}, column {col}): {beat}")
     return "\n".join(lines)

@@ -15,12 +15,18 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from ..constants import PALETTE_OVERFLOW_MAX, THRESHOLDS_CALIBRATED, Direction
+from ..constants import (
+    ACTION_THRESHOLDS,
+    PALETTE_OVERFLOW_MAX,
+    THRESHOLDS_CALIBRATED,
+    Direction,
+)
 from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation
 from ..models.validation import (
     Check,
     CheckId,
     CheckResult,
+    SkipReason,
     ValidationReport,
     thresholds_for,
 )
@@ -38,6 +44,23 @@ from .metrics import (
 
 #: 相邻帧差异低于此值即认为"几乎没动"。整组都低于它 → static_animation。
 STATIC_THRESHOLD = 0.01
+
+
+
+def _skip_reason(action: str) -> SkipReason:
+    """几何检查被跳过时，说清楚是**哪一种**跳过。
+
+    两件事长得一样但用户该做的不同：
+
+    - ``action_exempt`` —— ``death`` / ``impact`` 这类**刻意豁免**的动作。
+      倒地时身体形变本就是极端的，几何检查无意义，跳过是设计（PLAN §9.1）。
+    - ``custom_action_unthresholded`` —— 自定义动作，我们**根本没有阈值**。
+      不知道一个 dodge_roll 该有多大高度变化，猜一个数只会产出无意义的红叉。
+      用户要靠 contact sheet 人工看。
+
+    混成一个理由，用户会以为自定义动作也是"设计上不需要查"。
+    """
+    return "action_exempt" if action in ACTION_THRESHOLDS else "custom_action_unthresholded"
 
 
 def _load_frames(root: Path, paths: list[str]) -> list[np.ndarray]:
@@ -139,7 +162,7 @@ def validate_animation(
     anchor = anchor_measurement(frames)
     limit = limits["anchor_drift_max_px"]
     if limit is None:
-        add("anchor_drift", CheckResult.SKIP, skip_reason="action_exempt",
+        add("anchor_drift", CheckResult.SKIP, skip_reason=_skip_reason(action),
             measured=anchor.max_drift_px)
     else:
         add(
@@ -159,7 +182,8 @@ def validate_animation(
     for check_id, value, key_name in variation_checks:
         bound = limits[key_name]
         if bound is None:
-            add(check_id, CheckResult.SKIP, skip_reason="action_exempt", measured=round(value, 4))
+            add(check_id, CheckResult.SKIP, skip_reason=_skip_reason(action),
+                measured=round(value, 4))
         else:
             add(
                 check_id,

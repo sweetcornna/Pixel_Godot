@@ -5,8 +5,13 @@
   "description": "用户提交的资产生成请求。这是整条流水线的输入，由 Planner 编译为任务 DAG。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["asset_id", "asset_type", "description", "style", "export"],
-
+  "required": [
+    "asset_id",
+    "asset_type",
+    "description",
+    "style",
+    "export"
+  ],
   "properties": {
     "schema_version": {
       "description": "请求 Schema 版本。省略时按当前版本解析。",
@@ -14,7 +19,6 @@
       "pattern": "^[0-9]+\\.[0-9]+$",
       "default": "1.0"
     },
-
     "asset_id": {
       "description": "资产唯一标识，同时用作 outputs/ 下的目录名。",
       "type": "string",
@@ -22,7 +26,6 @@
       "minLength": 1,
       "maxLength": 64
     },
-
     "asset_type": {
       "description": "资产类型。character 类型必须提供 animations。",
       "enum": [
@@ -38,78 +41,114 @@
         "tileset"
       ]
     },
-
     "description": {
       "description": "角色/物件的自然语言描述，会被 Prompt Compiler 编译进生成 prompt。",
       "type": "string",
       "minLength": 8,
       "maxLength": 2000
     },
-
-    "style": { "$ref": "#/$defs/style" },
-    "background": { "$ref": "#/$defs/background" },
-    "mirroring": { "$ref": "#/$defs/mirroring" },
-
+    "style": {
+      "$ref": "#/$defs/style"
+    },
+    "background": {
+      "$ref": "#/$defs/background"
+    },
+    "mirroring": {
+      "$ref": "#/$defs/mirroring"
+    },
     "animations": {
       "description": "动作列表。每个 (name, direction) 组合是一个独立 Job。",
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/animation" }
+      "items": {
+        "$ref": "#/$defs/animation"
+      }
     },
-
     "export": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targets"],
+      "required": [
+        "targets"
+      ],
       "properties": {
         "targets": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
           "items": {
-            "enum": ["generic-json", "godot", "phaser", "tiled"]
+            "enum": [
+              "generic-json",
+              "godot",
+              "phaser",
+              "tiled"
+            ]
           }
         }
       }
     }
   },
-
   "allOf": [
     {
       "description": "character 类型必须声明至少一个动作。",
       "if": {
-        "properties": { "asset_type": { "const": "character" } },
-        "required": ["asset_type"]
+        "properties": {
+          "asset_type": {
+            "const": "character"
+          }
+        },
+        "required": [
+          "asset_type"
+        ]
       },
-      "then": { "required": ["animations"] }
+      "then": {
+        "required": [
+          "animations"
+        ]
+      }
     }
   ],
-
   "$defs": {
     "hex_color": {
       "type": "string",
       "pattern": "^#[0-9A-Fa-f]{6}$"
     },
-
     "logical_size": {
       "description": "最终逻辑像素尺寸。取值受限于 512×512 单元格可精确下采样的档位（PLAN §2.3）。",
-      "enum": [16, 24, 32, 48, 64, 96, 128]
+      "enum": [
+        16,
+        24,
+        32,
+        48,
+        64,
+        96,
+        128
+      ]
     },
-
     "style": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["perspective", "target_size", "max_colors"],
+      "required": [
+        "perspective",
+        "target_size",
+        "max_colors"
+      ],
       "properties": {
         "perspective": {
-          "enum": ["top_down_3_4", "top_down", "side_view", "isometric"]
+          "enum": [
+            "top_down_3_4",
+            "top_down",
+            "side_view",
+            "isometric"
+          ]
         },
         "target_size": {
           "description": "[宽, 高] 逻辑像素尺寸。",
           "type": "array",
           "minItems": 2,
           "maxItems": 2,
-          "items": { "$ref": "#/$defs/logical_size" }
+          "items": {
+            "$ref": "#/$defs/logical_size"
+          }
         },
         "max_colors": {
           "description": "调色板上限。量化后越界率必须 ≤ 2%（PLAN §11.2）。",
@@ -118,11 +157,19 @@
           "maximum": 256
         },
         "outline": {
-          "enum": ["none", "single_pixel_dark", "single_pixel_colored"],
+          "enum": [
+            "none",
+            "single_pixel_dark",
+            "single_pixel_colored"
+          ],
           "default": "single_pixel_dark"
         },
         "shading": {
-          "enum": ["flat", "two_tone", "three_tone"],
+          "enum": [
+            "flat",
+            "two_tone",
+            "three_tone"
+          ],
           "default": "two_tone"
         },
         "antialiasing": {
@@ -131,7 +178,12 @@
           "default": false
         },
         "lighting": {
-          "enum": ["fixed_top_left", "fixed_top", "fixed_top_right", "none"],
+          "enum": [
+            "fixed_top_left",
+            "fixed_top",
+            "fixed_top_right",
+            "none"
+          ],
           "default": "fixed_top_left"
         },
         "strict_lighting": {
@@ -145,14 +197,17 @@
         }
       }
     },
-
     "background": {
       "description": "背景与透明化策略。gpt-image-2 不支持透明背景，故默认走色键（ADR-004）。",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "mode": {
-          "enum": ["chroma_key", "transparent_model", "rembg"],
+          "enum": [
+            "chroma_key",
+            "transparent_model",
+            "rembg"
+          ],
           "default": "chroma_key"
         },
         "color": {
@@ -164,8 +219,13 @@
           "description": "冲突时按序尝试的备用键控色（PLAN §2.4.1）。",
           "type": "array",
           "maxItems": 4,
-          "items": { "$ref": "#/$defs/hex_color" },
-          "default": ["#00FF00", "#00FFFF"]
+          "items": {
+            "$ref": "#/$defs/hex_color"
+          },
+          "default": [
+            "#00FF00",
+            "#00FFFF"
+          ]
         },
         "conflict_hint": {
           "description": "已知会与默认键控色冲突的颜色描述，用于提高冲突预检的准确度。",
@@ -174,17 +234,23 @@
         }
       }
     },
-
     "mirroring": {
       "description": "左右镜像。仅当角色无手持武器、无盾牌、无单侧饰品且服装左右对称时可启用（ADR-006）。第一版不做自动推断，由用户显式声明。",
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "source_direction": {
           "description": "镜像源方向，另一侧由其翻转 derive。",
-          "enum": ["left", "right"],
+          "enum": [
+            "left",
+            "right"
+          ],
           "default": "left"
         },
         "reason": {
@@ -194,15 +260,19 @@
         }
       }
     },
-
     "animation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "frames", "fps"],
+      "required": [
+        "name",
+        "frames",
+        "fps"
+      ],
       "properties": {
         "name": {
-          "description": "动作名。per-action 验证阈值按此字段查表（PLAN §11.1）。",
-          "enum": ["idle", "walk", "attack", "hurt", "death", "cast", "travel", "impact", "loop"]
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "动作名。内置的 idle/walk/attack/hurt/death/cast/travel/impact/loop 自带姿势模板与 per-action 验证阈值；其余名字是自定义动作，必须给 beats。只能用小写字母数字下划线 —— 动作键是 {action}_{direction}，名字里再有分隔符就反解不出方向了。"
         },
         "directions": {
           "description": "方向列表。非角色资产可省略。",
@@ -210,11 +280,24 @@
           "minItems": 1,
           "maxItems": 4,
           "uniqueItems": true,
-          "items": { "enum": ["down", "left", "right", "up"] }
+          "items": {
+            "enum": [
+              "down",
+              "left",
+              "right",
+              "up"
+            ]
+          }
         },
         "frames": {
           "description": "帧数。取值受限于 PLAN §2.3 的合规网格档位。",
-          "enum": [4, 6, 8, 9, 12]
+          "enum": [
+            4,
+            6,
+            8,
+            9,
+            12
+          ]
         },
         "fps": {
           "type": "integer",
@@ -225,6 +308,41 @@
           "description": "是否循环。仅 loop=true 的动作启用帧序连续性检查（PLAN §11.2）。",
           "type": "boolean",
           "default": true
+        },
+        "beats": {
+          "type": "array",
+          "minItems": 2,
+          "description": "自定义动作的节拍序列。内置动作不要给（它们已有模板）。",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "description"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "description": "节拍名，如 WINDUP。原样出现在 prompt 里。"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 8,
+                "description": "这一拍身体在做什么，必须具体到肢体。"
+              }
+            }
+          }
+        },
+        "cycle": {
+          "type": "string",
+          "enum": [
+            "one_shot",
+            "loop",
+            "gait"
+          ],
+          "description": "节拍怎么展开成帧。one_shot 保留首尾；loop 循环采样；gait 的 beats 只描述半个周期，另一半由左右互换生成。"
         }
       }
     }

@@ -42,6 +42,7 @@ CheckId = Literal[
 SkipReason = Literal[
     "derived_animation",
     "action_exempt",
+    "custom_action_unthresholded",
     "non_looping_animation",
     "not_applicable",
     "dependency_failed",
@@ -146,6 +147,9 @@ def thresholds_for(action: str, direction: Direction | None = None) -> Threshold
     """
     base = ACTION_THRESHOLDS.get(action)
     if base is None:
+        # 自定义动作没有 per-action 阈值 —— 我们不知道一个 dodge_roll 该有
+        # 多大的高度变化，猜一个数只会产出一堆无意义的红叉或绿勾。
+        # 几何检查跳过，但**必须让用户看见**（skip_reason 分开记，见调用方）。
         return {
             "height_variation_max": None,
             "silhouette_variation_max": None,

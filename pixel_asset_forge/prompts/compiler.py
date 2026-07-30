@@ -17,7 +17,7 @@ from ..constants import Direction
 from ..models.request import AssetRequest
 from ..planning.grid_layout import GridLayout
 from .negative_rules import negative_block
-from .poses import numbered_poses
+from .poses import PoseCycle, cycle_from_beats, numbered_poses
 
 #: prompt 里要求的边距。**判定按 8%**（PLAN §2.3.2）。
 #:
@@ -87,6 +87,16 @@ _LIGHTING = {
     "fixed_top_right": "the light source fixed at the top-right",
     "none": "no directional lighting, the subject is self-lit",
 }
+
+
+def _custom_cycle(request: AssetRequest, action: str) -> PoseCycle | None:
+    """取该动作在 request 里自带的节拍。内置动作返回 None（用内置模板）。"""
+    for spec in request.animation_list():
+        if spec.name == action and spec.beats:
+            return cycle_from_beats(
+                [(beat.name, beat.description) for beat in spec.beats], spec.cycle
+            )
+    return None
 
 
 def _orientation_block(direction: Direction | None, perspective: str) -> str:
@@ -177,8 +187,12 @@ def compile_animation_prompt(
     """动作网格的 prompt。
 
     包含 PLAN §8 Sprint 4 的全部固定约束，外加 Sprint 0 追加的逐帧姿势清单。
+
+    自定义动作（request 里带 ``beats`` 的）走同一条编译链 —— 只是节拍来自
+    请求而不是内置模板。逐帧写死姿势这条约束对它们同样成立。
     """
     style = request.style
+    cycle = _custom_cycle(request, action)
 
     identity = (
         "Identity constraints — these must be IDENTICAL in every single cell:\n"
@@ -257,7 +271,7 @@ def compile_animation_prompt(
         f"The {frames} cells must show these DIFFERENT poses. "
         "This is an animation, not a set of standing portraits — "
         "the body must visibly change between cells:\n"
-        + numbered_poses(action, frames, layout.cols, direction)
+        + numbered_poses(action, frames, layout.cols, direction, cycle)
     )
 
     text = "\n\n".join(

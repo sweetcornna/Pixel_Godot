@@ -12,10 +12,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .. import REQUEST_SCHEMA_VERSION
 from ..constants import (
@@ -35,9 +42,19 @@ AssetType = Literal[
     "spell", "pickup", "ui_icon", "environment_object", "tileset",
 ]
 
-ActionName = Literal[
-    "idle", "walk", "attack", "hurt", "death", "cast", "travel", "impact", "loop"
-]
+#: 内置动作。它们自带姿势模板与 per-action 验证阈值。
+BUILTIN_ACTIONS: Final = (
+    "idle", "walk", "attack", "hurt", "death", "cast", "travel", "impact", "loop",
+)
+
+#: 自定义动作名的形状：小写字母、数字、下划线。
+#:
+#: 不能带 ``_`` 之外的分隔符 —— 动作键是 ``{action}_{direction}``，
+#: 名字里再有分隔符就没法反解出方向了。
+ACTION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
+
+#: 自定义动作的循环方式。对应 ``PoseCycle`` 的三个开关。
+CycleKind = Literal["one_shot", "loop", "gait"]
 
 ExportTarget = Literal["generic-json", "godot", "phaser", "tiled"]
 
@@ -82,12 +99,43 @@ class MirroringSpec(_Base):
     reason: str | None = None
 
 
+class BeatSpec(_Base):
+    """自定义动作的一拍。"""
+
+    name: str = Field(min_length=1, max_length=32)
+    """节拍名，如 ``WINDUP``。会原样出现在 prompt 里，用大写更醒目。"""
+
+    description: str = Field(min_length=8)
+    """这一拍身体在做什么。**必须具体到肢体**。
+
+    "准备攻击"这种描述模型不会自己拆解成姿势 —— Sprint 0 / A-2 实测
+    整体描述会产出 N 张几乎一样的站姿。写成"重心压到后脚、武器拉到肩后、
+    身体蓄力"才画得出来。
+    """
+
+
 class AnimationSpec(_Base):
-    name: ActionName
+    name: str = Field(pattern=ACTION_NAME_PATTERN)
     directions: tuple[Direction, ...] | None = None
     frames: int
     fps: int = Field(ge=1, le=60)
     loop: bool = True
+
+    beats: tuple[BeatSpec, ...] | None = None
+    """自定义动作的节拍序列。内置动作留空即可（用内置模板）。
+
+    **模板外的动作必须给 beats。** 代码不猜 —— 静默退回泛泛描述正是
+    Sprint 0 里产出一排站姿的原因，把已知失败模式请回来没有意义。
+    """
+
+    cycle: CycleKind | None = None
+    """节拍怎么展开成帧。只对自定义动作有效。
+
+    - ``one_shot`` —— 一次性动作（挥砍、倒地）。采样保留首尾，丢了起手或收势就不成立。
+    - ``loop`` —— 循环动作（待机、悬浮）。循环采样，不重复首尾。
+    - ``gait`` —— 步态。beats 描述**半个**周期，另一半由左右互换生成，
+      所以每一拍都必须带 left/right 字样，否则互换后与原文一字不差。
+    """
 
     @field_validator("frames")
     @classmethod
@@ -97,6 +145,44 @@ class AnimationSpec(_Base):
                 f"帧数只支持 {ALLOWED_FRAME_COUNTS}（可映射到合规网格的档位），收到 {value}"
             )
         return value
+
+    @model_validator(mode="after")
+    def _custom_actions_need_beats(self) -> AnimationSpec:
+        """模板外的动作必须自带节拍。
+
+        这条与 ``pose_sequence`` 对未知动作抛错是同一条原则：拿不准就报错，
+        不要猜。静默退回"画一个 dodge_roll 动画"这种整体描述，
+        产出的是 N 张几乎一样的站姿（Sprint 0 / A-2）。
+        """
+        if self.name in BUILTIN_ACTIONS:
+            if self.beats is not None:
+                raise ValueError(
+                    f"{self.name} 是内置动作，已有姿势模板 —— 不要再给 beats。"
+                    f"要改它的姿势就换个自定义动作名。"
+                )
+            return self
+        if not self.beats:
+            builtin = " / ".join(BUILTIN_ACTIONS)
+            raise ValueError(
+                f"{self.name!r} 不是内置动作（内置的有 {builtin}），必须给 beats "
+                f"说明每一拍身体在做什么。代码不会替你猜 —— "
+                f"泛泛的整体描述实测会产出一排几乎一样的站姿。"
+            )
+        if len(self.beats) < 2:
+            raise ValueError(f"{self.name} 只给了 1 拍，动画至少要两拍才有变化")
+        if self.cycle == "gait":
+            missing = [
+                beat.name for beat in self.beats
+                if "left" not in beat.description.lower()
+                and "right" not in beat.description.lower()
+            ]
+            if missing:
+                raise ValueError(
+                    f"{self.name} 是 gait，另外半个周期靠左右互换生成，"
+                    f"所以每一拍都要带 left/right 字样。这些拍没有：{missing}。"
+                    f"互换后它们与原文一字不差，与 no two cells may be identical 冲突。"
+                )
+        return self
 
     def resolved_directions(self, asset_type: AssetType) -> tuple[Direction, ...]:
         """未声明 directions 时的补全规则。
