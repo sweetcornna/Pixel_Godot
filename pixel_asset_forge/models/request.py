@@ -168,6 +168,13 @@ class AnimationSpec(_Base):
                 f"说明每一拍身体在做什么。代码不会替你猜 —— "
                 f"泛泛的整体描述实测会产出一排几乎一样的站姿。"
             )
+        if self.name.rsplit("_", 1)[-1] in DIRECTIONS:
+            raise ValueError(
+                f"动作名 {self.name!r} 以方向词结尾 —— 动作键是 {{action}}_{{direction}}，"
+                f"{self.name}_down 与 {self.name.rsplit('_', 1)[0]} 朝 "
+                f"{self.name.rsplit('_', 1)[-1]} 从字符串上分不开。换个名字，"
+                f"比如把 charge_up 叫成 charging。"
+            )
         if len(self.beats) < 2:
             raise ValueError(f"{self.name} 只给了 1 拍，动画至少要两拍才有变化")
         if self.cycle == "gait":

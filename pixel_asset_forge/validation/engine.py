@@ -20,7 +20,9 @@ from ..constants import (
     PALETTE_OVERFLOW_MAX,
     THRESHOLDS_CALIBRATED,
     Direction,
+    split_animation_key,
 )
+from ..errors import PlanError
 from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation
 from ..models.validation import (
     Check,
@@ -31,6 +33,8 @@ from ..models.validation import (
     thresholds_for,
 )
 from ..planning.grid_layout import aspect_mismatch
+from ..prompts.poses import pose_sequence
+from .beat_signature import BeatSignature, check_beat_signature
 from .frame_order import UNDETECTABLE_MESSAGE, measure_frame_order
 from .metrics import (
     anchor_measurement,
@@ -74,15 +78,11 @@ def _load_frames(root: Path, paths: list[str]) -> list[np.ndarray]:
 
 
 def _action_of(key: str) -> str:
-    return key.split("_", 1)[0]
+    return split_animation_key(key)[0]
 
 
 def _direction_of(key: str) -> Direction | None:
-    parts = key.split("_", 1)
-    if len(parts) < 2:
-        return None
-    candidate = parts[1]
-    return candidate if candidate in ("down", "left", "right", "up") else None  # type: ignore[return-value]
+    return split_animation_key(key)[1]
 
 
 def validate_animation(
@@ -238,7 +238,45 @@ def validate_animation(
         message=UNDETECTABLE_MESSAGE,
     )
 
+    # -- 节拍特征（中）——帧序问题上唯一被实测支撑的自动判据 ---------------
+    #
+    # 它问的不是"顺序对不对"（那个测不了），而是"第 N 格画的是不是我要的
+    # 那一拍"。只在特征经得起投影时给结论 —— 详见 beat_signature 模块。
+    signature = _beat_signature_check(frames, action, direction)
+    if not signature.applicable:
+        add("beat_signature", CheckResult.SKIP, skip_reason="not_applicable",
+            message=signature.reason)
+    else:
+        add(
+            "beat_signature",
+            CheckResult.PASS if signature.consistent else CheckResult.FAIL,
+            measured=round(signature.separation, 3),
+            threshold=1.0,
+            message=signature.summary() + (
+                "" if signature.consistent else
+                " —— 要么帧被排错了格子，要么模型没照姿势描述画。看 contact sheet。"
+            ),
+        )
+
     return checks
+
+
+def _beat_signature_check(
+    frames: list[np.ndarray], action: str, direction: Direction | None
+) -> BeatSignature:
+    """取该动作请求的节拍名，与观察到的脚跨度分布对账。
+
+    拿不到节拍（自定义动作没走内置模板、或帧数与节拍对不上）时返回"不适用"，
+    不猜。
+    """
+    try:
+        beats = [
+            line.split(" —")[0]
+            for line in pose_sequence(action, len(frames), direction)
+        ]
+    except PlanError as exc:
+        return BeatSignature(False, f"取不到 {action} 的节拍：{exc}")
+    return check_beat_signature(frames, beats, direction=direction)
 
 
 def _cell_overflow_check(

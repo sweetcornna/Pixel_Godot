@@ -177,3 +177,44 @@ def test_pose_sequence_still_refuses_a_bare_unknown_action() -> None:
     """没有内置模板、也没给节拍时，仍然报错而不是兜底。"""
     with pytest.raises(PlanError, match="也没有给节拍"):
         pose_sequence("moonwalk", 8, "down")
+
+
+# -- 动作键的反解 ----------------------------------------------------------
+
+
+def test_a_custom_action_key_splits_from_the_right() -> None:
+    """**必须从右边切。** 动作键是 ``{action}_{direction}``，而自定义动作名
+    本身允许带下划线（``dodge_roll``）—— 从左切第一个下划线会把它劈成
+    ``("dodge", "roll_down")``，动作名和方向双双解错。
+
+    实测踩过：验证器报出"取不到 dodge 的节拍"，而请求里根本没有 dodge。
+    """
+    from pixel_asset_forge.constants import split_animation_key
+
+    assert split_animation_key("dodge_roll_down") == ("dodge_roll", "down")
+    assert split_animation_key("walk_down") == ("walk", "down")
+    assert split_animation_key("a_b_c_left") == ("a_b_c", "left")
+
+
+def test_a_directionless_key_keeps_its_whole_name() -> None:
+    """从右切可行的前提是方向是**有限集合** —— 最后一段不在集合里，
+    整串就都是动作名（``impact`` 这类各向同性动作）。
+    """
+    from pixel_asset_forge.constants import split_animation_key
+
+    assert split_animation_key("impact") == ("impact", None)
+    assert split_animation_key("seed") == ("seed", None)
+
+
+def test_an_action_name_ending_in_a_direction_is_refused(examples_dir: Path) -> None:
+    """``charge_up`` 是"动作 charge 朝上"还是"动作 charge_up 无方向"？
+
+    光看字符串分不开，而动作键就是字符串。所以从**构造上**消除歧义 ——
+    在请求校验时就拦掉，而不是在反解时猜。
+    """
+    with pytest.raises(RequestValidationError) as exc:
+        parse_request(request_data(examples_dir, {
+            "name": "charge_up", "directions": ["down"], "frames": 4, "fps": 8,
+            "beats": ROLL_BEATS,
+        }))
+    assert "方向词结尾" in repr(exc.value.errors)

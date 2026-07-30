@@ -27,6 +27,7 @@ import numpy as np
 from PIL import Image
 
 from ..config import Config
+from ..constants import split_animation_key
 from ..errors import ProcessingError
 from ..logging_utils import get_logger
 from ..models.manifest import AssetManifest, GeneratedAnimation
@@ -150,8 +151,7 @@ def run_interpolate(
 
     provider = get_provider(config)
     warnings: list[str] = []
-    action = key.split("_", 1)[0]
-    direction = key.split("_", 1)[1] if "_" in key else None
+    action, direction = split_animation_key(key)
 
     # 补一次之后再补到别的帧率，是**合法的重生成**：间隔数与每隔的帧数都变了，
     # 上一轮的网格没有复用价值。但原图永不覆盖，所以先归档。

@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from ..constants import ACTION_DEFAULTS
+from ..constants import ACTION_DEFAULTS, split_animation_key
 from ..errors import ProcessingError
 from ..logging_utils import get_logger
 from ..models.manifest import AssetManifest, GeneratedAnimation, GridInfo
@@ -71,7 +71,7 @@ def _layout_for(
             cell=(grid.cell[0], grid.cell[1]),
         )
 
-    action = key.split("_", 1)[0]
+    action, _direction = split_animation_key(key)
     frames: int | None = None
 
     if request is not None:
@@ -238,7 +238,7 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
             sheet_path = save_png(sheet, store.sheets / f"{key}.png")
             sheets[key] = str(sheet_path.relative_to(store.root))
 
-            action = key.split("_", 1)[0]
+            action, _dir = split_animation_key(key)
             defaults = ACTION_DEFAULTS.get(action)
             fps = defaults.fps if defaults else 10
             loop = defaults.loop if defaults else True

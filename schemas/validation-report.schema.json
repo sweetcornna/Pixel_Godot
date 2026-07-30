@@ -111,6 +111,7 @@
             "cell_overflow",
             "transparent_rgb_residue",
             "frame_order_continuity",
+            "beat_signature",
             "anchor_drift",
             "height_variation",
             "silhouette_variation",

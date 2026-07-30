@@ -30,6 +30,7 @@ CheckId = Literal[
     "cell_overflow",
     "transparent_rgb_residue",
     "frame_order_continuity",
+    "beat_signature",
     "anchor_drift",
     "height_variation",
     "silhouette_variation",
@@ -73,6 +74,12 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     # 实测不可判定（见 validation/frame_order.py）。保留检查项是为了在报告里
     # 显式记录"这条防线是缺的"，而不是让它悄悄消失 —— 但绝不允许它阻断放行。
     "frame_order_continuity": Severity.LOW,
+    # 帧序问题上唯一被实测支撑的自动判据（见 validation/beat_signature.py）。
+    #
+    # 严重度定 MEDIUM 而不是 HIGH：判据本身很准（对正确产出零误报，
+    # 对乱序的放行率 7.0% 已经贴着 6.7% 的组合学下限），但**只在一个真实样本上
+    # 验证过**。等阈值校准（任务 #37）拿到更多数据再谈要不要升级成阻断项。
+    "beat_signature": Severity.MEDIUM,
     "anchor_drift": Severity.HIGH,
     "height_variation": Severity.MEDIUM,
     "silhouette_variation": Severity.MEDIUM,
@@ -98,6 +105,7 @@ REQUIRES_REGENERATION: frozenset[CheckId] = frozenset(
         "cell_overflow",
         "frame_count",
         "frame_order_continuity",
+        "beat_signature",
         "blank_frame",
         "static_animation",
     }

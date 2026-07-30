@@ -287,3 +287,24 @@ DEFAULT_MAX_CONCURRENCY: Final = 3
 DEFAULT_MAX_RETRIES: Final = 4
 DEFAULT_MAX_REPAIR_ROUNDS: Final = 2
 DEFAULT_TIMEOUT_SECONDS: Final = 300
+
+
+def split_animation_key(key: str) -> tuple[str, Direction | None]:
+    """``walk_down`` → ``("walk", "down")``；``dodge_roll_down`` → ``("dodge_roll", "down")``。
+
+    **必须从右边切。** 动作键的形状是 ``{action}_{direction}``，而自定义动作名
+    本身允许带下划线（``dodge_roll``）—— 从左切第一个下划线会把它劈成
+    ``("dodge", "roll_down")``，动作名和方向双双解错。实测踩过：
+    验证器报出"取不到 dodge 的节拍"，而请求里根本没有 dodge 这个动作。
+
+    从右切之所以可行，是因为方向是个**有限集合**：最后一段在集合里才算方向，
+    否则整串都是动作名（无方向资产如 ``impact``）。
+
+    仍有一处**无解的歧义**：``charge_up`` 是"动作 charge 朝上"还是"动作
+    charge_up 无方向"？光看字符串分不开。所以自定义动作名**不许以方向词结尾**，
+    这条在 ``AnimationSpec`` 里拦（从构造上消除歧义，而不是在这里猜）。
+    """
+    head, sep, tail = key.rpartition("_")
+    if sep and tail in DIRECTIONS:
+        return head, tail
+    return key, None

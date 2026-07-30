@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Config
+from ..constants import split_animation_key
 from ..errors import ProcessingError, RepairLimitExceededError
 from ..logging_utils import get_logger
 from ..models.job import JobEvent, JobKind, JobStatus, make_job_id
@@ -35,11 +36,7 @@ class RepairOutcome:
 
 
 def _split_key(key: str) -> tuple[str, str | None]:
-    parts = key.split("_", 1)
-    if len(parts) == 1:
-        return (parts[0], None)
-    direction = parts[1] if parts[1] in ("down", "left", "right", "up") else None
-    return (parts[0], direction)
+    return split_animation_key(key)
 
 
 def execute_plan(
