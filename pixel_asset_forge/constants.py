@@ -228,6 +228,22 @@ ACTION_THRESHOLDS: Final[dict[str, ActionThresholds]] = {
     "loop":   ActionThresholds(0.20, 0.30, 2),
 }
 
+#: 按移动形态改写的阈值。只写**需要改**的动作，其余回落 ``ACTION_THRESHOLDS``。
+#:
+#: 弹跳/浮沉式的走路踩的是与 ``death`` 一样的问题：**形变本身就是动作**。
+#: 实测史莱姆一个弹跳周期高度 24→54px，height_variation 0.82、
+#: silhouette_variation 0.59，都比双足走路的阈值（0.12 / 0.20）高好几倍。
+#: 这不是缺陷，这就是压缩与拉伸。
+#:
+#: 定一个能放过它的上限（1.0 上下）也拦不住任何真实缺陷，所以和 ``death``
+#: 一样明写豁免 —— 一个只会误报的阻断项，最终一定会被开发者整个关掉（PLAN §9.1）。
+#: 锚点漂移仍然管着：弹得再高，落地也该落在同一条线上。
+LOCOMOTION_THRESHOLDS: Final[dict[str, dict[str, ActionThresholds]]] = {
+    "legless":  {"walk": ActionThresholds(None, None, 1)},
+    "floating": {"walk": ActionThresholds(None, None, 1)},
+}
+
+
 #: 各动作相对**站立基准高度**的可信区间。超出的部分判为模型漂移，钳回区间内。
 #:
 #: 跨动作缩放基准的前提是"尺寸差异是真实的姿势差异"，于是它把模型的随机漂移

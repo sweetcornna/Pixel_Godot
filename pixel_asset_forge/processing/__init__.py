@@ -40,7 +40,13 @@ from .palette import (
 )
 from .pipeline import ProcessOptions, ProcessResult, process_grid, process_seed
 from .pixel_cleanup import cleanup_frames, count_isolated, remove_isolated_pixels
-from .resize import fit_within, introduces_new_colors, nearest_resize, resize_to_fit
+from .resize import (
+    block_median_resize,
+    fit_within,
+    introduces_new_colors,
+    nearest_resize,
+    resize_to_fit,
+)
 from .scale_profile import ScaleProfile, derive_profile, scale_for
 from .spritesheet import (
     SheetLayout,
@@ -70,6 +76,7 @@ __all__ = [
     "apply_chroma_key",
     "assert_uniform_size",
     "background_mask",
+    "block_median_resize",
     "cleanup_frames",
     "color_distance",
     "compose_spritesheet",

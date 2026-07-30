@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from PIL import Image
 
@@ -64,3 +66,54 @@ def introduces_new_colors(before: np.ndarray, after: np.ndarray) -> set[tuple[in
         return {tuple(int(v) for v in px[:3]) for px in opaque}
 
     return opaque_colors(after) - opaque_colors(before)
+
+
+#: 超过这个缩小倍数就该用分块中位数而不是最近邻。
+#:
+#: 最近邻缩小 N 倍等于"每 N 个像素只留 1 个"。N 小的时候丢的是冗余，
+#: N 大的时候丢的是**内容** —— 实测补间的中间帧源分辨率是关键帧的两倍
+#: （角色 1250px vs 600px），同样缩到 74px，最近邻把弓采成了一条虚线、
+#: 脸上散着孤立杂点。用户看到的就是"补出来的那几帧形象不清晰"。
+AREA_DOWNSCALE_RATIO = 2.0
+
+
+def block_median_resize(rgba: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """分块取中位色缩小到 ``(width, height)``。
+
+    大比例缩小时**唯一可用的滤镜**。三种做法在同一张补间产出上逐图比过：
+
+    - **最近邻**：点采样。弓缩成一条断续虚线，脸上散着孤立杂点。
+    - **面积平均**：轮廓连续了，但 1px 深色描边和浅色填充被平均成中间调，
+      整张掉对比度，看着发灰。
+    - **分块中位**：取块内的主导色而不是造中间色 —— 轮廓连续、对比度保住、
+      颜色仍然贴着原有色阶。**采用这个。**
+
+    与 ``pixel_grid._rgba_blocks`` 同源（alpha 按多数决、RGB 只统计不透明像素）。
+    那边按探测出的块尺寸还原，这边按目标尺寸缩放，边界处理不同，所以各留一份。
+    """
+    if rgba.ndim != 3 or rgba.shape[2] != 4:
+        raise ProcessingError(f"block_median_resize 需要 RGBA，收到 {rgba.shape}")
+    width, height = size
+    if width < 1 or height < 1:
+        raise ProcessingError(f"目标尺寸非法：{size}")
+
+    block_w = max(1, rgba.shape[1] // width)
+    block_h = max(1, rgba.shape[0] // height)
+    # 先对齐到块的整数倍，块才切得整齐。差额不到一个块，形变可忽略。
+    fitted = nearest_resize(rgba, (width * block_w, height * block_h))
+    blocks = fitted.reshape(height, block_h, width, block_w, 4)
+
+    opaque = blocks[:, :, :, :, 3] > 0
+    keep = opaque.mean(axis=(1, 3)) > 0.5
+
+    values = blocks[:, :, :, :, :3].astype(np.float32)
+    values[~opaque] = np.nan
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+        median = np.nanmedian(values, axis=(1, 3))
+    median = np.nan_to_num(median, nan=0.0)
+
+    out = np.zeros((height, width, 4), dtype=np.uint8)
+    out[keep, :3] = median[keep].astype(np.uint8)
+    out[keep, 3] = 255
+    return out

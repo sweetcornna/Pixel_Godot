@@ -47,6 +47,11 @@
       "minLength": 8,
       "maxLength": 2000
     },
+    "locomotion": {
+      "description": "角色怎么移动。决定行走/待机用哪套姿势节拍。省略时从 description 推断（slime→legless、ghost→floating、wolf→quadruped，其余 biped）。",
+      "type": "string",
+      "enum": ["biped", "legless", "floating", "quadruped"]
+    },
     "style": {
       "$ref": "#/$defs/style"
     },

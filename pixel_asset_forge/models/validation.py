@@ -17,6 +17,7 @@ from .. import PIPELINE_VERSION, REPORT_SCHEMA_VERSION
 from ..constants import (
     ACTION_THRESHOLDS,
     DIRECTION_MULTIPLIER,
+    LOCOMOTION_THRESHOLDS,
     PALETTE_OVERFLOW_MAX,
     THRESHOLDS_CALIBRATED,
     Direction,
@@ -160,12 +161,21 @@ class Check(BaseModel):
 Thresholds = dict[str, float | int | None]
 
 
-def thresholds_for(action: str, direction: Direction | None = None) -> Thresholds:
+def thresholds_for(
+    action: str,
+    direction: Direction | None = None,
+    locomotion: str = "biped",
+) -> Thresholds:
     """查 per-action 阈值，并对 ``up`` 方向做 ×1.3 的轮廓类修正（PLAN §9.1）。
 
     锚点漂移是像素单位的绝对量，不参与方向修正 —— 背面再不稳定，脚也该踩在同一条线上。
+
+    ``locomotion`` 有专用阈值时优先（弹跳式走路的形变量级与双足完全不同，
+    见 ``LOCOMOTION_THRESHOLDS``）。
     """
-    base = ACTION_THRESHOLDS.get(action)
+    base = LOCOMOTION_THRESHOLDS.get(locomotion, {}).get(action) or ACTION_THRESHOLDS.get(
+        action
+    )
     if base is None:
         # 自定义动作没有 per-action 阈值 —— 我们不知道一个 dodge_roll 该有
         # 多大的高度变化，猜一个数只会产出一堆无意义的红叉或绿勾。

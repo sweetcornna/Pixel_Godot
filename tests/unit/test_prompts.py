@@ -10,9 +10,11 @@ prompt 里明写着 no two cells may be identical，再递重复描述就是自�
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from pixel_asset_forge.errors import PlanError
 from pixel_asset_forge.models import load_request, parse_request
+from pixel_asset_forge.models.request import infer_locomotion
 from pixel_asset_forge.planning import grid_for_frames, layout_for_frames
 from pixel_asset_forge.prompts import (
     PROMPT_MARGIN_PERCENT,
@@ -413,3 +415,84 @@ def test_the_neutral_beat_survives_the_left_right_swap() -> None:
     front = pose_sequence("walk", 6, "down")
     assert len(set(front)) == 6
     assert front[0] != front[3]
+
+
+# -- 移动形态 ---------------------------------------------------------------
+#
+# 用户报的"形象不统一"：史莱姆的 idle / attack / hurt / death 都是无腿圆团，
+# 唯独 walk 被模型长出了两条腿和脚 —— 因为 walk 的节拍句句写"左脚 / 右脚"。
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("a small blue slime with a glossy highlight", "legless"),
+        ("一只蓝色史莱姆，圆润有光泽", "legless"),
+        ("a translucent ghost in tattered robes", "floating"),
+        ("a grey wolf with bristling fur", "quadruped"),
+        ("a hooded elf archer with a longbow", "biped"),
+    ],
+)
+def test_locomotion_is_inferred_from_the_description(description, expected) -> None:
+    assert infer_locomotion(description) == expected
+
+
+def test_a_legless_walk_never_asks_for_feet() -> None:
+    """没有腿的角色，走路的描述里就不能出现腿和脚。
+
+    出现了模型就会把腿画出来 —— 这是"同一个角色四个动作一个样、
+    第五个换了物种"的直接成因。
+    """
+    text = " ".join(pose_sequence("walk", 6, "down", None, "legless")).lower()
+    for banned in ("foot", "feet", "leg", "heel", "toe", "knee"):
+        assert banned not in text, f"无腿角色的走路描述里出现了 {banned!r}"
+
+
+def test_a_legless_walk_still_shows_locomotion() -> None:
+    """不能因为去掉了腿就退化成"原地待机"。"""
+    text = " ".join(pose_sequence("walk", 6, "down", None, "legless")).lower()
+    assert "ground" in text
+    assert "squash" in text or "compress" in text
+    assert "stretch" in text
+
+
+def test_explicit_locomotion_beats_the_inferred_one(examples_dir) -> None:
+    raw = yaml.safe_load((examples_dir / "knight.yaml").read_text(encoding="utf-8"))
+    raw["locomotion"] = "legless"
+    request = parse_request(raw)
+    assert request.resolved_locomotion == "legless"
+
+    prompt = compile_animation_prompt(
+        request, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    )
+    assert "squashes" in prompt.text or "SQUASH" in prompt.text
+
+
+def test_the_prompt_forbids_inventing_limbs(knight) -> None:
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    )
+    lowered = prompt.text.lower()
+    assert "only the body parts the character in the template actually has" in lowered
+    assert "do not invent them" in lowered
+
+
+def test_the_prompt_pins_wings_and_cloaks_so_they_do_not_flap(knight) -> None:
+    """小恶魔走路时腿几乎不动、翅膀每格换展幅 —— 播起来就是"鬼畜"。"""
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    )
+    lowered = prompt.text.lower()
+    assert "the legs are what carry the motion" in lowered
+    assert "same span" in lowered
+
+
+def test_the_frontal_walk_states_the_body_height_every_beat() -> None:
+    """正面走路的主线索是上下起伏。不写高度，模型会拿左右偏移凑帧间差异。"""
+    beats = pose_sequence("walk", 4, "down")
+    cues = ("lowest", "highest", "mid height", "lower")
+    stated = [b for b in beats if any(cue in b.lower() for cue in cues)]
+    assert len(stated) == len(beats), beats

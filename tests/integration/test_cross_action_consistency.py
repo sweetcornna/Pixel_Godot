@@ -159,3 +159,33 @@ def test_interpolation_intermediates_are_not_mistaken_for_animations() -> None:
     assert _source_key(Path("walk-down-original.r1.png")) is None
     assert _source_key(Path("hurt-down-gap00-original.png")) is None
     assert _source_key(Path("react-down-key02-original.png")) is None
+
+
+def test_a_hopping_walk_is_judged_by_its_peak_not_its_median() -> None:
+    """史莱姆的弹跳周期高度中位数只有待机的一半 —— 那是动作，不是漂移。
+
+    按中位数钳会把弹跳整个拉平；干脆不钳又放跑了真漂移（实测峰值只有待机的
+    73%，弹到最高点还比站着矮四分之一）。判据是峰值：**最高点该回到站立高度**。
+    """
+    from pixel_asset_forge.pipelines.process import _band_factor
+
+    # 峰值已回到站立高度：不动
+    assert _band_factor(60, "walk_down", 62, "legless") == 1.0
+    assert _band_factor(60, "walk_down", 62, "floating") == 1.0
+    # 峰值还比站立矮四分之一：拉回来
+    assert _band_factor(45, "walk_down", 62, "legless") > 1.0
+    # 有腿的角色照旧按中位数、按窄带钳
+    assert _band_factor(34, "walk_down", 62, "biped") > 1.0
+    # 无腿角色的**其它**动作仍在原来的带里管着
+    assert _band_factor(34, "idle_down", 62, "legless") > 1.0
+
+
+def test_the_peak_height_is_taken_from_the_tallest_frame() -> None:
+    from pixel_asset_forge.pipelines.process import _peak_height
+
+    frames = []
+    for height in (10, 30, 18):
+        frame = np.zeros((40, 20, 4), dtype=np.uint8)
+        frame[40 - height :, 5:15] = 255
+        frames.append(frame)
+    assert _peak_height(frames) == 30

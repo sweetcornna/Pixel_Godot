@@ -95,11 +95,12 @@ def validate_animation(
     expected_size: tuple[int, int],
     max_colors: int,
     key_color: str,
+    locomotion: str = "biped",
 ) -> list[Check]:
     """校验一个生成型动作。"""
     action = _action_of(key)
     direction = _direction_of(key)
-    limits = thresholds_for(action, direction)
+    limits = thresholds_for(action, direction, locomotion)
     checks: list[Check] = []
 
     def add(check_id: CheckId, result: CheckResult, **kwargs: Any) -> None:
@@ -415,10 +416,12 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
 
     request_frames: dict[str, int] = {}
     request_path = root / "request.yaml"
+    locomotion = "biped"
     if request_path.exists():
         from ..models.request import load_request
 
         request = load_request(request_path)
+        locomotion = request.resolved_locomotion
         for spec in request.animation_list():
             request_frames[spec.name] = spec.frames
 
@@ -428,7 +431,12 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
             report.checks.extend(validate_derived(key, entry))
             continue
 
+        # 补过间的动作，帧数**本来就该**多于 request 里写的那个数 ——
+        # request 写的是关键帧数，补间的产出是目标帧率下的帧数。
+        # 不认这一点的话，任何补过间的资产都会挂在 frame_count 这条致命项上。
         expected = request_frames.get(_action_of(key), len(entry.frames))
+        if entry.keyframe_count is not None and len(entry.frames) > entry.keyframe_count:
+            expected = len(entry.frames)
         report.checks.extend(
             validate_animation(
                 root, key, entry,
@@ -436,10 +444,11 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
                 expected_size=expected_size,
                 max_colors=manifest.palette.max_colors,
                 key_color=manifest.background.color_used,
+                locomotion=locomotion,
             )
         )
         report.thresholds_used[_action_of(key)] = thresholds_for(
-            _action_of(key), _direction_of(key)
+            _action_of(key), _direction_of(key), locomotion
         )
 
     return report

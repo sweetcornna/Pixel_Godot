@@ -257,6 +257,19 @@ def compile_animation_prompt(
         "on the same side, and every asymmetric detail stays exactly where it was\n"
         "- the head stays at the same horizontal position in every cell; the character "
         "must not drift sideways from cell to cell\n"
+        # 小恶魔的走路：腿几乎不动，翅膀却每格换一个展幅，播起来就是"鬼畜"。
+        # 模型需要被告知**哪个部件负责表现运动**。
+        "- the LEGS are what carry the motion. Wings, cloak, cape, tail, hair and scarf "
+        "may trail or sway very slightly, but they keep the same span, the same shape "
+        "and the same silhouette in every cell — never spread a wing wide in one cell "
+        "and fold it in the next\n"
+        # 史莱姆的走路：模型照"左脚向前迈"的描述给一团没有腿的身体现编了两条腿。
+        # 同一个角色四个动作是圆团、第五个长出了腿，就是"形象不统一"。
+        "- use ONLY the body parts the character in the template actually has. If it has "
+        "no legs, no arms, no head or no hands, do NOT invent them — express the pose "
+        "with the parts it does have (a legless body squashes, stretches and hops; a "
+        "floating body bobs and tilts). Adding a limb the template does not have is the "
+        "worst failure possible: it turns the sequence into a different character\n"
         "\n"
         "What is LOCKED is the orientation, NOT the motion. The limbs must move a lot:\n"
         "- the pose difference between neighbouring cells must be obvious at a glance "
@@ -277,7 +290,9 @@ def compile_animation_prompt(
         f"The {frames} cells must show these DIFFERENT poses. "
         "This is an animation, not a set of standing portraits — "
         "the body must visibly change between cells:\n"
-        + numbered_poses(action, frames, layout.cols, direction, cycle)
+        + numbered_poses(
+            action, frames, layout.cols, direction, cycle, request.resolved_locomotion
+        )
     )
 
     text = "\n\n".join(

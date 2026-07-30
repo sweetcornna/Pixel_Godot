@@ -21,6 +21,8 @@ from pixel_asset_forge.planning import (
     aspect_mismatch,
     check_size,
     grid_for_frames,
+    layout_for_frames,
+    layout_matching_cell,
     seed_layout,
 )
 
@@ -133,3 +135,34 @@ def test_check_size_flags_each_constraint() -> None:
 
 def test_compliant_size_has_no_violations() -> None:
     assert check_size(2048, 1024) == []
+
+
+# -- 补间网格：格子形状必须跟着关键帧 ----------------------------------------
+
+
+def test_the_gap_grid_copies_the_keyframe_cell_shape() -> None:
+    """关键帧格竖着，间隔格就不能是方的。
+
+    实测弓手关键帧格 543×724，补间却按默认布局要了 1024×1024，
+    模型于是按方格重新取景，把头和兜帽画成一团 —— 用户报的"形象不清晰"。
+    """
+    layout = layout_matching_cell(2, (543, 724))
+    keyframe_aspect = 543 / 724
+    assert abs(layout.cell[0] / layout.cell[1] - keyframe_aspect) < 0.05
+
+
+def test_the_gap_grid_stays_near_the_keyframe_cell_size() -> None:
+    """也不能一味取最大：3000px 的间隔格缩到 74px 画布，糊得比不匹配还厉害。"""
+    layout = layout_matching_cell(2, (543, 724))
+    assert 0.5 < layout.cell[1] / 724 < 2.0
+
+
+def test_the_gap_grid_is_still_api_legal() -> None:
+    for frames in (1, 2, 3, 4, 6):
+        for cell in ((543, 724), (724, 543), (512, 512), (400, 1000)):
+            layout = layout_matching_cell(frames, cell)
+            assert not check_size(layout.width, layout.height), (frames, cell)
+
+
+def test_a_degenerate_keyframe_cell_falls_back_instead_of_crashing() -> None:
+    assert layout_matching_cell(2, (0, 0)).cell == layout_for_frames(2).cell

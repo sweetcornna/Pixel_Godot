@@ -108,7 +108,11 @@ def _draw_pose(
 
     inner_left, inner_right = left + margin_x, right - margin_x
     inner_top, inner_bottom = top + margin_y, bottom - margin_y
-    inner_w = inner_right - inner_left
+
+    # 人形的所有尺寸都以**短边**为基准。以宽为基准的话，格子一旦扁一点
+    # （补间按关键帧格子形状定网格后就会出现），躯干顶就跑到躯干底下面，
+    # Pillow 直接抛 "y1 must be greater than or equal to y0"。
+    inner_w = min(inner_right - inner_left, inner_bottom - inner_top)
 
     # 脚底统一贴在 inner_bottom —— 锚点漂移检查才有基线可比。
     baseline = inner_bottom

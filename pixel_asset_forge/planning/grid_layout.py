@@ -230,3 +230,37 @@ def seed_layout() -> GridLayout:
         detail = "；".join(f"{v.constraint}（{v.detail}）" for v in violations)
         raise GridLayoutError(f"种子图尺寸 {width}×{height} 不合规：{detail}")
     return grid
+
+
+def layout_matching_cell(frames: int, cell: tuple[int, int]) -> GridLayout:
+    """帧数 → 单元格**形状与大小都贴着 ``cell``** 的网格。
+
+    补间专用。中间帧必须与关键帧画在同样形状、同样大小的格子里：
+
+    - **形状不同，模型会重新取景。** 实测弓手关键帧格 543×724（竖），
+      补间却按 ``layout_for_frames`` 要了 1024×1024（方），模型于是把角色
+      按方格重画 —— 头和兜帽被放大成一团，播放时中间帧像换了个人。
+    - **大小不同，缩到画布后的细节密度不同。** 关键帧格 724px 缩到 74px 是
+      9.8×，间隔格 1254px 缩到 74px 是 17×，同一个角色一半清晰一半糊。
+
+    API 的最小总像素约束通常让格子没法真的等于关键帧格（543×724 只有 39 万
+    像素，低于下限 65 万），所以取**合规范围内最接近的**那档，而不是最大的一档
+    —— 最大的一档会把格子推到 3000px 上下，比不匹配更糟。
+    """
+    base = layout_for_frames(frames)
+    target_w, target_h = cell
+    if target_w <= 0 or target_h <= 0:
+        return base
+    aspect = target_w / target_h
+
+    best: GridLayout | None = None
+    best_gap = float("inf")
+    for height in range(SIZE_MULTIPLE, MAX_SIDE + 1, SIZE_MULTIPLE):
+        width = max(SIZE_MULTIPLE, round(height * aspect / SIZE_MULTIPLE) * SIZE_MULTIPLE)
+        candidate = GridLayout(frames=frames, cols=base.cols, rows=base.rows, cell=(width, height))
+        if check_size(candidate.width, candidate.height):
+            continue
+        gap = abs(height - target_h)
+        if gap < best_gap:
+            best, best_gap = candidate, gap
+    return best if best is not None else base

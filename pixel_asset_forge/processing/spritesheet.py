@@ -88,10 +88,20 @@ def save_png(rgba: np.ndarray, path: str | Path) -> Path:
 
 
 def save_frames(frames: list[np.ndarray], directory: str | Path, *, stem: str) -> list[Path]:
-    """逐帧写盘，文件名形如 ``walk_down_00.png``。"""
+    """逐帧写盘，文件名形如 ``walk_down_00.png``。
+
+    **写完要把多出来的旧帧删掉。** 帧数变少时（补到更低帧率、改帧数重跑）
+    只写不删会在目录里留下孤儿：Manifest 不认它们，但按目录读帧的代码认 ——
+    补间后的尺寸归一就是按目录 glob 的，会把上一轮的残帧一起算进去。
+    """
     target = Path(directory)
     target.mkdir(parents=True, exist_ok=True)
-    return [save_png(f, target / f"{stem}_{i:02d}.png") for i, f in enumerate(frames)]
+    written = [save_png(f, target / f"{stem}_{i:02d}.png") for i, f in enumerate(frames)]
+    keep = {path.name for path in written}
+    for stale in target.glob(f"{stem}_*.png"):
+        if stale.name not in keep:
+            stale.unlink()
+    return written
 
 
 def save_gif(

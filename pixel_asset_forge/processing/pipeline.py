@@ -110,6 +110,11 @@ class ProcessResult:
     grid_snap: GridSnap | None = None
     """像素网格吸附结果。``block_size`` 必须写进 Manifest 才能离线复现。"""
     output_content_height: int = 0
+    """产出帧内容高度的**跨帧中位数**。
+
+    不能只量首帧 —— 攻击的第一格是蓄力下蹲、走路的第一格是触地，拿它代表整个
+    动作会系统性偏矮（实测弓手因此把站立基准算成 75px，实际是 85px）。
+    """
     split: SplitResult | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -260,8 +265,14 @@ def process_grid(
 
     drift = anchor_drift(frames, anchor=opts.anchor)
 
-    ys = np.nonzero(frames[0][:, :, 3])[0]
-    output_height = int(ys.max() - ys.min() + 1) if ys.size else 0
+    # 跨帧中位数，不是首帧：单帧代表不了一个动作的"身高"，
+    # 而中位数对个别极端姿势（前冲、蜷缩）免疫。
+    per_frame = []
+    for frame in frames:
+        rows = np.nonzero(frame[:, :, 3].any(axis=1))[0]
+        if rows.size:
+            per_frame.append(int(rows.max() - rows.min() + 1))
+    output_height = int(np.median(per_frame)) if per_frame else 0
 
     # 目标尺寸是否把模型产出丢掉太多 —— 这是"资产不可用"最常见的单一原因。
     native_note = resolution_warning(content_h, opts.target_size[1])
