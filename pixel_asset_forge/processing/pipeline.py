@@ -36,6 +36,7 @@ from .frame_split import assert_uniform_size, normalize_cell_sizes
 from .palette import PaletteResult, quantize_frames
 from .pixel_cleanup import cleanup_frames
 from .pixel_grid import (
+    KEY_RESIDUE_WARN_RATIO,
     GridSnap,
     resolution_warning,
     snap_rgba_to_grid,
@@ -146,8 +147,14 @@ def process_grid(
             warnings.append(f"像素网格{snap.summary()} —— 按原始分辨率处理")
 
     keyed_rgba, residue = strip_key_residue(keyed_rgba, key)
-    if residue:
-        warnings.append(f"清除了 {residue} 个落在角色内部的键控色斑点")
+    # 只有比例高到真的可疑才告警。删掉的大头是被角色围住的背景区域
+    # （两腿之间、弓的弯里），那是正常情形 —— 每次都报会训练用户忽略告警。
+    if residue > KEY_RESIDUE_WARN_RATIO:
+        warnings.append(
+            f"前景里有 {residue:.1%} 的像素过近键控色，已删除 —— "
+            "比例这么高通常意味着角色配色与键控色撞了，"
+            "换个 background.color 或加 fallback_colors"
+        )
 
     foreground = keyed_rgba[:, :, 3] > 0
 

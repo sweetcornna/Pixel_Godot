@@ -84,6 +84,13 @@ MIN_COLOR_REDUCTION = 4.0
 #: 两类之间差了近十倍，阈值取 20 有充分余量。
 MAX_RECONSTRUCTION_ERROR = 20.0
 
+#: 键控色残留占前景的比例，超过才告警。
+#:
+#: 实测健康资产（cal_archer 的 seed，1024×1536）删掉 34317 个像素 ——
+#: 听着吓人，其实大头是被角色围住的背景区域（两腿之间、弓的弯里），
+#: 只占前景的百分之几。按绝对数告警会在每个正常资产上都刷屏。
+KEY_RESIDUE_WARN_RATIO = 0.05
+
 
 @dataclass(frozen=True, slots=True)
 class GridSnap:
@@ -170,29 +177,67 @@ def _median_blocks(rgb: np.ndarray, cols: int, rows: int) -> np.ndarray:
     return np.asarray(np.median(core, axis=(1, 3))).astype(np.uint8)
 
 
+def _rgba_blocks(rgba: np.ndarray, cols: int, rows: int) -> np.ndarray:
+    """alpha-aware 的块级还原：alpha 按多数决，RGB 只统计不透明像素。
+
+    **吸附与验证必须共用这一份。** 用 RGB 版的 ``_median_blocks`` 去验证，
+    跨角色边缘的块会把透明区的键控色也算进中位色，误差被边缘完全主导 ——
+    本该吸附的产出会被判成"1:1 像素画"，整条还原被静默关掉。
+    """
+    import warnings as _warnings
+
+    fitted, bw, bh = _fit_to_blocks(rgba, cols, rows)
+    blocks = fitted.reshape(rows, bh, cols, bw, 4)
+
+    opaque = blocks[:, :, :, :, 3] > 0
+    keep = opaque.mean(axis=(1, 3)) > 0.5
+
+    values = blocks[:, :, :, :, :3].astype(np.float32)
+    values[~opaque] = np.nan
+    with _warnings.catch_warnings():
+        _warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+        median = np.nanmedian(values, axis=(1, 3))
+    median = np.nan_to_num(median, nan=0.0)
+
+    out = np.zeros((rows, cols, 4), dtype=np.uint8)
+    out[keep, :3] = median[keep].astype(np.uint8)
+    out[keep, 3] = 255
+    return out
+
+
 def reconstruction_error(rgba: np.ndarray, block: float) -> float:
-    """按 ``block`` 下采样再放回原尺寸后的平均通道误差（仅统计不透明像素）。
+    """按 ``block`` 做块级还原后的平均通道误差（仅统计不透明像素）。
 
     块是真的 → 块内本来就同色，还原几乎无损。
     块是臆想的 → 一个块糊掉好几种真实颜色，误差立刻上到几十。
 
     这是**探测结果的验证**，不是探测本身。探测给出候选，这里判它可不可信。
+
+    **还原必须用与实际吸附同一种取色方式**（块中心中位色），不能用最近邻。
+    最近邻取的是块的**角点**，而角点正是软边缘最重的地方 —— 那样量出来的是
+    "角点采样有多差"，不是"块是不是真的"。实测同一张模型产出：
+    最近邻还原误差 27.9（越过阈值 20，块被误判成臆想的），
+    中心中位还原 5 左右 —— 整条像素网格还原因此被静默关掉过。
     """
     height, width = rgba.shape[:2]
     rows = max(1, round(height / block))
     cols = max(1, round(width / block))
+    if rows < 2 or cols < 2:
+        return 0.0
 
-    rgba4 = rgba if rgba.shape[2] == 4 else np.dstack(
-        [rgba, np.full((height, width), 255, np.uint8)]
+    if rgba.shape[2] == 4:
+        reduced = _rgba_blocks(rgba, cols, rows)[:, :, :3]
+        opaque = rgba[:, :, 3] > 0
+    else:
+        reduced = _median_blocks(rgba[:, :, :3], cols, rows)
+        opaque = np.ones((height, width), bool)
+
+    back = np.array(
+        Image.fromarray(reduced).resize((width, height), Image.Resampling.NEAREST)
     )
-    source = Image.fromarray(rgba4)
-    small = source.resize((cols, rows), Image.Resampling.NEAREST)
-    back = np.array(small.resize((width, height), Image.Resampling.NEAREST))
-
-    opaque = back[:, :, 3] > 0 if back.shape[2] == 4 else np.ones((height, width), bool)
     if not opaque.any():
         return 0.0
-    delta = np.abs(back[:, :, :3].astype(int) - rgba[:, :, :3].astype(int))
+    delta = np.abs(back.astype(int) - rgba[:, :, :3].astype(int))
     return float(delta.max(axis=-1)[opaque].mean())
 
 
@@ -271,29 +316,7 @@ def snap_rgba_to_grid(rgba: np.ndarray, *, block_size: float | None = None) -> G
     cols = max(1, round(width / block))
     rows = max(1, round(height / block))
 
-    fitted, bw, bh = _fit_to_blocks(rgba, cols, rows)
-    blocks = fitted.reshape(rows, bh, cols, bw, 4)
-
-    opaque = blocks[:, :, :, :, 3] > 0
-    # alpha 多数决：过半不透明才算前景，避免边缘块把轮廓撑胖一圈
-    keep = opaque.mean(axis=(1, 3)) > 0.5
-
-    # 把透明像素置 NaN，用 nanmedian 只统计不透明部分 —— 把背景一起算进来，
-    # 跨边缘的块就会取到键控色，成品上出现洋红斑点。
-    values = blocks[:, :, :, :, :3].astype(np.float32)
-    values[~opaque] = np.nan
-    # 全透明的块必然产生 all-NaN 切片 —— 那是正常情况（背景块），
-    # 不是异常，所以静音这条警告而不是让它刷屏。
-    import warnings as _warnings
-
-    with _warnings.catch_warnings():
-        _warnings.filterwarnings("ignore", message="All-NaN slice encountered")
-        median = np.nanmedian(values, axis=(1, 3))
-    median = np.nan_to_num(median, nan=0.0)
-
-    out = np.zeros((rows, cols, 4), dtype=np.uint8)
-    out[keep, :3] = median[keep].astype(np.uint8)
-    out[keep, 3] = 255
+    out = _rgba_blocks(rgba, cols, rows)
 
     after_rgb = out[out[:, :, 3] > 0][:, :3]
     after = len(np.unique(after_rgb, axis=0)) if after_rgb.size else 0
@@ -320,27 +343,37 @@ def snap_rgba_to_grid(rgba: np.ndarray, *, block_size: float | None = None) -> G
 
 def strip_key_residue(
     rgba: np.ndarray, key: tuple[int, int, int], *, tolerance: float = 90.0
-) -> tuple[np.ndarray, int]:
-    """删掉落在角色内部的键控色斑点。
+) -> tuple[np.ndarray, float]:
+    """删掉仍然过近键控色的不透明像素。返回 ``(图, 删掉的比例)``。
 
     结构上已由"键控后再吸附"避免了大部分，这里是兜底：
-    仍然过近键控色的不透明像素直接置透明，交给后续的孤立像素清理收尾。
     亮洋红出现在褐绿配色的角色身上极其刺眼，宁可打个洞也不能留。
+
+    删掉的东西其实有两类，而且**大头是第二类**：
+
+    1. 真正落在角色身上的洋红斑点 —— 要治的就是它
+    2. 被角色围住的背景区域（两腿之间、弓的弯里）—— 色键的漫水填充只清
+       与画布外缘连通的背景，这些封闭区域留了下来，本来就该在这里删掉
+
+    所以返回**比例**而不是绝对个数。绝对数随分辨率线性增长，
+    1024×1536 上删 34317 个听着吓人，其实只占前景的百分之几，是正常情形。
+    一个在健康资产上报出五位数的告警，只会训练用户忽略告警。
     """
     opaque = rgba[:, :, 3] > 0
-    if not opaque.any():
-        return rgba.copy(), 0
+    total = int(opaque.sum())
+    if not total:
+        return rgba.copy(), 0.0
 
     diff = rgba[:, :, :3].astype(np.float64) - np.asarray(key, dtype=np.float64)
     close = np.sqrt((diff**2).sum(axis=-1)) <= tolerance
     offenders = opaque & close
     count = int(offenders.sum())
     if not count:
-        return rgba.copy(), 0
+        return rgba.copy(), 0.0
 
     out = rgba.copy()
     out[offenders] = 0
-    return out, count
+    return out, count / total
 
 
 def native_subject_height(rgba_alpha: np.ndarray) -> int:

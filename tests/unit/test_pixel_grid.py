@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from pixel_asset_forge.processing.pixel_grid import snap_rgba_to_grid
 
@@ -81,3 +82,89 @@ def test_an_explicit_block_size_skips_validation() -> None:
     """``process`` 离线重跑要能强制复现当时的块大小。"""
     snap = snap_rgba_to_grid(clean_pixel_art(64), block_size=8)
     assert snap.applied, "显式指定时不该被验证挡掉"
+
+
+# -- 键控色残留：报比例，不报绝对数 ----------------------------------------
+
+
+def sprite_with_enclosed_background(size: int = 64) -> np.ndarray:
+    """一个"角色"，两腿之间围出一块背景 —— 色键的漫水填充清不掉它。"""
+    key = (255, 0, 255)
+    rgba = np.zeros((size, size, 4), dtype=np.uint8)
+    rgba[10:50, 16:48] = (139, 90, 43, 255)          # 躯干
+    rgba[36:50, 28:36] = (*key, 255)                 # 两腿之间的背景，仍不透明
+    return rgba
+
+
+def test_residue_is_reported_as_a_fraction_not_a_count() -> None:
+    """绝对数随分辨率线性增长，作为信号毫无意义。
+
+    实测健康资产（1024×1536 的 seed）删掉 34317 个像素 —— 听着吓人，
+    其实大头是被角色围住的背景区域，只占前景的百分之几。
+    一个在健康资产上报出五位数的告警，只会训练用户忽略告警。
+    """
+    from pixel_asset_forge.processing.pixel_grid import strip_key_residue
+
+    small = sprite_with_enclosed_background(64)
+    big = np.repeat(np.repeat(small, 4, axis=0), 4, axis=1)
+
+    _, ratio_small = strip_key_residue(small, (255, 0, 255))
+    _, ratio_big = strip_key_residue(big, (255, 0, 255))
+    assert ratio_small == pytest.approx(ratio_big, abs=0.01), (
+        "同一张图放大四倍，比例不该跟着变"
+    )
+    assert 0 < ratio_small < 1
+
+
+def test_a_clean_sprite_reports_no_residue() -> None:
+    from pixel_asset_forge.processing.pixel_grid import strip_key_residue
+
+    clean = np.zeros((32, 32, 4), dtype=np.uint8)
+    clean[8:24, 8:24] = (139, 90, 43, 255)
+    _, ratio = strip_key_residue(clean, (255, 0, 255))
+    assert ratio == 0.0
+
+
+# -- 验证必须与吸附用同一种取色方式 ----------------------------------------
+
+
+def keyed_blocky_art(block: int = 6, cells: int = 16) -> np.ndarray:
+    """块状像素画 + 键控后的透明背景 —— 实际进入吸附的就是这种形态。"""
+    art = blocky_pixel_art(block, cells)
+    rgba = art.copy()
+    # 四周一圈挖成透明，模拟键控后的背景
+    edge = block * 2
+    rgba[:edge, :, 3] = 0
+    rgba[-edge:, :, 3] = 0
+    rgba[:, :edge, 3] = 0
+    rgba[:, -edge:, 3] = 0
+    return rgba
+
+
+def test_validation_uses_the_same_block_sampling_as_the_snap() -> None:
+    """**这条防的是整条像素网格还原被静默关掉。**
+
+    验证若用最近邻取块的角点，量到的是"角点采样有多差"而不是"块是不是真的" ——
+    角点正是软边缘最重的地方。实测同一张模型产出：最近邻还原误差 27.9
+    （越过阈值 20，块被误判成臆想的），块中心中位还原只有 5 左右。
+    """
+    from pixel_asset_forge.processing.pixel_grid import reconstruction_error
+
+    art = keyed_blocky_art(6, 16)
+    assert reconstruction_error(art, 6) < 20.0, "真块被判成臆想的了"
+    assert snap_rgba_to_grid(art).applied
+
+
+def test_validation_ignores_the_transparent_background() -> None:
+    """RGB 版的块中位会把透明区的键控色也算进去，跨角色边缘的块因此被污染 ——
+    误差被边缘完全主导，本该吸附的产出被判成 1:1。
+    """
+    from pixel_asset_forge.processing.pixel_grid import reconstruction_error
+
+    art = keyed_blocky_art(6, 16)
+    polluted = art.copy()
+    polluted[art[:, :, 3] == 0, :3] = (255, 0, 255)  # 透明区填满洋红
+
+    assert reconstruction_error(polluted, 6) == pytest.approx(
+        reconstruction_error(art, 6), abs=1.0
+    ), "透明区的颜色不该影响验证结果"
