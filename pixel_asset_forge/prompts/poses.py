@@ -187,36 +187,55 @@ POSE_CYCLES: dict[str, PoseCycle] = {
                        "returning towards neutral"),
         ),
     ),
+    # 一次性动作的节拍**必须把"是哪一边"说死**。
+    #
+    # 实测（6 角色 × 5 动作）：翻面全部集中在 hurt（3/6）与 attack（1/6），
+    # walk 与 idle 一个都没有。差别就在措辞 —— walk 的节拍句句写死 left/right，
+    # 而这两个动作写的是"the rear foot""one arm""the shoulder"，
+    # 哪一只全没说。模型逐格自由选择，选得不一致就读成整体翻面。
+    #
+    # 不能直接写 left/right：持械手因角色而异（骑士右手剑、弓手左手弓）。
+    # 所以锚到**角色自身**的一侧 —— weapon hand / free hand / the same foot throughout。
     "attack": PoseCycle(
         linear=True,
         beats=_beats(
-            ("WINDUP", "weight shifts onto the back foot, the weapon is drawn back "
-                       "behind the shoulder, the body coils"),
-            ("COMMIT", "the front foot plants forward, the torso begins to rotate, "
-                       "the weapon starts its arc"),
+            ("WINDUP", "weight shifts onto the rear foot and the weapon is drawn back "
+                       "behind the shoulder on the weapon-holding side, the body coiling. "
+                       "Whichever hand holds the weapon in the reference image holds it "
+                       "here and in every following cell"),
+            ("COMMIT", "the foot opposite the weapon hand plants forward, the torso "
+                       "rotates, the weapon starts its arc — still in the same hand"),
             ("STRIKE", "the weapon is at full extension in front of the character, "
-                       "the body lunging forward at its furthest reach"),
-            ("FOLLOW-THROUGH", "the weapon continues past the target and drops, "
-                               "the shoulders rotating through"),
-            ("RECOVER", "the character pulls back towards the neutral standing stance"),
+                       "still in the same hand, the body lunging forward at its "
+                       "furthest reach"),
+            ("FOLLOW-THROUGH", "the weapon continues past the target and drops across "
+                               "the body, the shoulders rotating through, "
+                               "the weapon never changing hands"),
+            ("RECOVER", "the character pulls back towards the neutral standing stance, "
+                        "the weapon returning to rest on the same side it started"),
         ),
     ),
     "hurt": PoseCycle(
         linear=True,
         beats=_beats(
             ("IMPACT", "the body snaps backwards from the blow, the head tilted back, "
-                       "arms flung outwards"),
-            ("RECOIL", "the character is pushed back onto the rear foot, the torso folded"),
-            ("STAGGER", "struggling to regain balance, one arm reaching out for stability"),
-            ("RECOVER", "straightening back up towards the neutral standing stance"),
+                       "**both** arms flung outwards symmetrically"),
+            ("RECOIL", "pushed back onto the rear foot — the same foot as in the "
+                       "previous cell — the torso folded forward"),
+            ("STAGGER", "struggling to regain balance, the hand **not** holding the "
+                        "weapon reaching out for stability, the weapon hand unchanged"),
+            ("RECOVER", "straightening back up towards the neutral standing stance, "
+                        "everything back on the side it started on"),
         ),
     ),
     "death": PoseCycle(
         linear=True,
         beats=_beats(
-            ("STAGGER", "the body lurches, the knees beginning to buckle"),
-            ("KNEEL", "dropping onto one knee, the torso hunched forward"),
-            ("COLLAPSE", "the body tips sideways, the arms no longer supporting it"),
+            ("STAGGER", "the body lurches, both knees beginning to buckle"),
+            ("KNEEL", "dropping onto the knee on the weapon-holding side, the torso "
+                      "hunched forward, the weapon still in the same hand"),
+            ("COLLAPSE", "the body tips over towards that same side — not the other one — "
+                         "the arms no longer supporting it"),
             ("FALL", "falling towards the ground, most of the body below waist height"),
             ("LANDED", "lying on the ground, limbs splayed"),
             ("STILL", "motionless on the ground, the final resting pose"),

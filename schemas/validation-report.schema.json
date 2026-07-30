@@ -112,6 +112,7 @@
             "transparent_rgb_residue",
             "frame_order_continuity",
             "beat_signature",
+            "mirror_flip",
             "anchor_drift",
             "height_variation",
             "silhouette_variation",

@@ -33,7 +33,7 @@ from .component_split import SplitMethod, SplitResult, split_frames
 from .crop import ContentBox, crop_all
 from .despill import despill
 from .frame_split import assert_uniform_size, normalize_cell_sizes
-from .palette import PaletteResult, quantize_frames
+from .palette import PaletteResult, quantize_frames, snap_to_palette
 from .pixel_cleanup import cleanup_frames
 from .pixel_grid import (
     KEY_RESIDUE_WARN_RATIO,
@@ -73,6 +73,16 @@ class ProcessOptions:
 
     grid_block_size: float | None = None
     """显式块大小。``process`` 离线重跑必须传入 Manifest 记录的值才能复现。"""
+
+    palette: list[str] | None = None
+    """跨动作共用的调色板。None 表示本动作自己量化。
+
+    **不共用会让同一个角色在不同动作里换色。** 实测 6 个角色，每个动作各自
+    量化出 32 色，跨动作重合度 **0%** —— 骑士的绿斗篷在待机和走路里是两种
+    完全不同的绿。播放时切换动作，整个角色的配色会跳一下。
+
+    ``process`` 是唯一看得见全部动作的地方，由它求出一套共用调色板再逐动作锁死。
+    """
 
     scale_profile: ScaleProfile | None = None
     """跨动作缩放基准。None 表示本动作就是参考动作，按等比填满画布。
@@ -232,8 +242,14 @@ def process_grid(
     frames = align_frames(frames, opts.target_size, anchor=opts.anchor)
 
     # 7. 量化（整组共用调色板）
-    palette = quantize_frames(frames, opts.max_colors, dither=opts.dither)
-    frames = palette.frames
+    if opts.palette:
+        # 跨动作共用调色板：不再自己解一套，直接锁死到给定的那套。
+        frames, _drift = snap_to_palette(frames, opts.palette)
+        palette = PaletteResult(frames=frames, colors=list(opts.palette),
+                                quantization_error_ratio=0.0)
+    else:
+        palette = quantize_frames(frames, opts.max_colors, dither=opts.dither)
+        frames = palette.frames
 
     # 8. 像素清理
     if opts.cleanup_isolated:

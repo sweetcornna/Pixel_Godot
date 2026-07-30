@@ -228,6 +228,31 @@ ACTION_THRESHOLDS: Final[dict[str, ActionThresholds]] = {
     "loop":   ActionThresholds(0.20, 0.30, 2),
 }
 
+#: 各动作相对**站立基准高度**的可信区间。超出的部分判为模型漂移，钳回区间内。
+#:
+#: 跨动作缩放基准的前提是"尺寸差异是真实的姿势差异"，于是它把模型的随机漂移
+#: 也原样保住了。实测 6 个角色的站立类动作（idle/walk/attack/hurt）高度极差：
+#:
+#:     骑士 15%   法师 17%   小恶魔 27%   弓手 32%   石魔 37%   史莱姆 42%
+#:
+#: 史莱姆待机 70px、走路 45px —— 走路不会让角色矮三成，那是漂移不是姿势。
+#: 真实的姿势差异是有界的：走路与待机几乎同高，挥砍前冲可以略低，
+#: 倒地才真的矮一大截。所以按动作给区间，超出就钳。
+#:
+#: ``None`` 表示不钳（倒地类动作、以及我们不了解的自定义动作）。
+ACTION_SIZE_BAND: Final[dict[str, tuple[float, float] | None]] = {
+    "idle":   (0.95, 1.05),
+    "walk":   (0.92, 1.05),
+    "attack": (0.85, 1.12),   # 前冲会压低，举手会拔高
+    "hurt":   (0.80, 1.05),   # 后仰蜷缩会压低
+    "cast":   (0.88, 1.12),
+    "death":  None,           # 倒地天然矮一大截，钳它就是把动作毁了
+    "impact": None,
+    "travel": None,
+    "loop":   None,
+}
+
+
 DIRECTION_MULTIPLIER: Final[dict[Direction, float]] = {
     "down": 1.0,
     "left": 1.0,

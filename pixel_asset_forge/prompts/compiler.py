@@ -264,7 +264,13 @@ def compile_animation_prompt(
         "- in the cells where the legs are described as striding, the gap between the "
         "two feet must be at least as wide as the character's shoulders\n"
         "- do not draw a row of near-identical standing poses with only tiny "
-        "differences — that is the single most common way this comes out wrong"
+        "differences — that is the single most common way this comes out wrong\n"
+        "\n"
+        "Sidedness — a pose that involves ONE arm, ONE leg or ONE shoulder must use "
+        "the SAME one in every cell where it appears. Do not let the character's left "
+        "and right swap places partway through the sequence: if the weapon is in the "
+        "right hand it is in the right hand in every cell, if the character falls to "
+        "one side it falls to that side in every cell that shows the fall."
     )
 
     poses = (

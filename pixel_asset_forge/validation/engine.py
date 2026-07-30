@@ -45,6 +45,7 @@ from .metrics import (
     silhouette_variation,
     transparent_rgb_residue,
 )
+from .mirror_flip import detect_mirror_flips
 
 #: 相邻帧差异低于此值即认为"几乎没动"。整组都低于它 → static_animation。
 STATIC_THRESHOLD = 0.01
@@ -256,6 +257,23 @@ def validate_animation(
                 "" if signature.consistent else
                 " —— 要么帧被排错了格子，要么模型没照姿势描述画。看 contact sheet。"
             ),
+        )
+
+    # -- 帧间镜像翻转（高）------------------------------------------------
+    #
+    # 播放时极刺眼，静态看单帧却完全正常。实测 30 个样本检出 4 个，
+    # 全部集中在 hurt / attack —— 那两个动作的姿势节拍没说清是哪一边。
+    mirror = detect_mirror_flips(frames)
+    if not mirror.applicable:
+        add("mirror_flip", CheckResult.SKIP, skip_reason="not_applicable",
+            message=mirror.summary())
+    else:
+        add(
+            "mirror_flip",
+            CheckResult.PASS if not mirror.flipped else CheckResult.FAIL,
+            measured=len(mirror.flipped),
+            threshold=0,
+            message=mirror.summary(),
         )
 
     return checks

@@ -33,7 +33,7 @@ from ..logging_utils import get_logger
 from ..models.manifest import AssetManifest, GeneratedAnimation
 from ..models.request import load_request
 from ..planning.framerate import FrameBudget, frame_order, plan_inbetweens
-from ..planning.grid_layout import layout_for_frames
+from ..planning.grid_layout import GridLayout, layout_for_frames
 from ..processing.anchor import BOTTOM_CENTER, align_frames, anchor_drift
 from ..processing.background import resolve_key_color
 from ..processing.chroma_key import apply_chroma_key, hex_to_rgb
@@ -64,16 +64,78 @@ class InterpolateResult:
     warnings: list[str]
 
 
-def _keyframe_sources(store: ArtifactStore, key: str) -> list[Path]:
-    """取导入时存下的关键帧原图，按序号排。"""
-    stem = key.replace("_", "-")
-    found = sorted(store.source.glob(f"{stem}-key*-original.png"))
-    if len(found) < 2:
+def _to_png(rgba: np.ndarray, key_rgb: tuple[int, int, int]) -> bytes:
+    """把一帧 RGBA 压回"键控色背景的 RGB PNG" —— 与 source/ 里的原图同一种形态。
+
+    补间的参考图必须和生成路径喂给模型的东西长得一样，否则模型看到的是
+    带 alpha 的图，画出来的背景也未必是纯键控色。
+    """
+    flat = Image.new("RGBA", (rgba.shape[1], rgba.shape[0]), (*key_rgb, 255))
+    flat.alpha_composite(Image.fromarray(rgba))
+    buffer = io.BytesIO()
+    flat.convert("RGB").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _keyframes_from_grid(
+    store: ArtifactStore,
+    key: str,
+    entry: GeneratedAnimation,
+    key_rgb: tuple[int, int, int],
+) -> list[bytes]:
+    """把**生成出来的**动作网格拆成逐帧关键帧。
+
+    生成的动作天然就是关键帧序列 —— 只是帧数少。实测 attack / hurt 只有 4 帧，
+    相邻帧的轮廓变化中位 35~41%，是 walk（12%）的三倍、idle（4.6%）的八倍。
+    每一帧都像重画的，播起来就是"鬼畜"。补间正是治这个的。
+
+    从**源网格**而不是 frames/ 里取：源网格是全分辨率（一格三四百像素），
+    成品帧只有 96px。参考图分辨率越高，模型越能抓住细节。
+    """
+    if entry.source_image is None or entry.grid is None:
         raise ProcessingError(
-            f"{key} 只找到 {len(found)} 张关键帧原图。"
-            f"先跑 `pixel-asset import <request> <目录> --as keyframes --action ...`。"
+            f"{key} 没有记录源网格，拆不出关键帧 —— "
+            f"它可能是镜像派生的动作，那种动作请补它的源方向。"
         )
-    return found
+    source = store.root / entry.source_image
+    if not source.exists():
+        raise ProcessingError(f"{key} 的源网格不在了：{source}")
+
+    grid = entry.grid
+    layout = GridLayout(
+        frames=len(entry.frames) or grid.cols * grid.rows,
+        cols=grid.cols,
+        rows=grid.rows,
+        cell=(grid.cell[0], grid.cell[1]),
+    )
+    raw = np.array(Image.open(source).convert("RGB"))
+    keyed = apply_chroma_key(raw, key_rgb).rgba
+    split = split_frames(keyed, layout)
+    return [_to_png(frame, key_rgb) for frame in split.frames]
+
+
+def _keyframes(
+    store: ArtifactStore,
+    key: str,
+    entry: GeneratedAnimation,
+    key_rgb: tuple[int, int, int],
+) -> list[bytes]:
+    """取这个动作的关键帧，两种来源都收。
+
+    - **导入的**（``import --as keyframes``）—— 用户给的原图，原样读
+    - **生成的** —— 从源网格拆，帧数少的动作正是最需要补间的
+    """
+    stem = key.replace("_", "-")
+    imported = sorted(store.source.glob(f"{stem}-key*-original.png"))
+    if len(imported) >= 2:
+        return [path.read_bytes() for path in imported]
+
+    frames = _keyframes_from_grid(store, key, entry, key_rgb)
+    if len(frames) < 2:
+        raise ProcessingError(
+            f"{key} 只拆出 {len(frames)} 帧，补间至少要两帧"
+        )
+    return frames
 
 
 def _tile(image: Image.Image, size: tuple[int, int], cols: int, rows: int) -> bytes:
@@ -125,7 +187,7 @@ def run_interpolate(
     key_rgb = hex_to_rgb(background.color_used)
     canvas = (manifest.canvas.width, manifest.canvas.height)
 
-    sources = _keyframe_sources(store, key)
+    sources = _keyframes(store, key, entry, key_rgb)
     # 用**关键帧自己的**帧率，不是 entry.fps —— 后者补完一次就被改成目标帧率了，
     # 再拿它当源帧率会算出"已经够了，不需要补间"。
     keyframe_fps = entry.keyframe_fps or entry.fps
@@ -166,8 +228,8 @@ def run_interpolate(
     for gap, count in enumerate(budget.inbetweens):
         if count == 0:
             continue
-        start = Image.open(sources[gap]).convert("RGB")
-        end_path = sources[(gap + 1) % len(sources)]
+        start = Image.open(io.BytesIO(sources[gap])).convert("RGB")
+        end_bytes = sources[(gap + 1) % len(sources)]
 
         layout = layout_for_frames(count)
         prompt = compile_inbetween_prompt(
@@ -185,8 +247,8 @@ def run_interpolate(
                 base_image=_tile(start, prompt.size, layout.cols, layout.rows),
                 size=prompt.size,
                 references=[
-                    ReferenceImage("start", sources[gap].read_bytes()),
-                    ReferenceImage("end", end_path.read_bytes()),
+                    ReferenceImage("start", sources[gap]),
+                    ReferenceImage("end", end_bytes),
                 ],
             )
         logger.info("间隔 %d：补 %d 帧", gap, count)
@@ -222,8 +284,10 @@ def run_interpolate(
     # 正确做法分两步：关键帧之间用共用框保住它们的相对大小；中间帧则按**所在间隔
     # 两端关键帧的输出高度线性插值**定尺寸。动画师就是这么补的，而且它是确定性的。
     keyframes = [
-        apply_chroma_key(np.array(Image.open(p).convert("RGB")), key_rgb).rgba
-        for p in sources
+        apply_chroma_key(
+            np.array(Image.open(io.BytesIO(data)).convert("RGB")), key_rgb
+        ).rgba
+        for data in sources
     ]
 
     key_cropped, _box = crop_all(keyframes)

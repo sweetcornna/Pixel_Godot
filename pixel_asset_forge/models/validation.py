@@ -31,6 +31,7 @@ CheckId = Literal[
     "transparent_rgb_residue",
     "frame_order_continuity",
     "beat_signature",
+    "mirror_flip",
     "anchor_drift",
     "height_variation",
     "silhouette_variation",
@@ -80,6 +81,10 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     # 对乱序的放行率 7.0% 已经贴着 6.7% 的组合学下限），但**只在一个真实样本上
     # 验证过**。等阈值校准（任务 #37）拿到更多数据再谈要不要升级成阻断项。
     "beat_signature": Severity.MEDIUM,
+    # 播放时极刺眼，静态看单帧却完全正常 —— 每帧都是合格的角色，只是朝向反了。
+    # 判据很硬（只比几何、且只对够手性的帧下结论），实测 30 个样本检出 4 个真缺陷、
+    # 零误报，所以敢给 HIGH：它该拦住放行。
+    "mirror_flip": Severity.HIGH,
     "anchor_drift": Severity.HIGH,
     "height_variation": Severity.MEDIUM,
     "silhouette_variation": Severity.MEDIUM,
@@ -106,6 +111,7 @@ REQUIRES_REGENERATION: frozenset[CheckId] = frozenset(
         "frame_count",
         "frame_order_continuity",
         "beat_signature",
+        "mirror_flip",
         "blank_frame",
         "static_animation",
     }
