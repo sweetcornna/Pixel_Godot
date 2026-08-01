@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..models.job import JobTable
-from ..models.pack import PotionPack
+from ..models.pack import StaticAssetPack
 from .planner import PlanResult, plan_request
 
 
 @dataclass(frozen=True, slots=True)
 class PackPlanResult:
-    pack: PotionPack
+    pack: StaticAssetPack
     assets: tuple[PlanResult, ...]
 
     @property
@@ -35,7 +35,7 @@ class PackPlanResult:
 
 
 def plan_pack(
-    pack: PotionPack,
+    pack: StaticAssetPack,
     *,
     existing: Mapping[str, JobTable] | None = None,
     provider: str | None = None,

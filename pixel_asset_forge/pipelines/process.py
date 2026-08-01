@@ -159,7 +159,7 @@ def _process_static(
     *,
     only: str | None,
 ) -> list[dict[str, Any]]:
-    """从不可变的单张原图重跑静态 pickup 处理链。"""
+    """从不可变的单张原图重跑静态资产处理链。"""
     if only not in (None, "static"):
         raise ProcessingError("静态资产只支持 `process --only static`")
     if manifest is None:

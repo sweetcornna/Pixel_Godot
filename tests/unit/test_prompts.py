@@ -104,12 +104,29 @@ def test_static_prompt_is_item_only_and_uses_explicit_palette(examples_dir) -> N
     prompt = compile_static_prompt(request, key_color="#FF00FF").text
     lowered = prompt.lower()
 
+    assert prompt.startswith("Crisp pixel art of one single isolated pickup item.")
+    assert "Weapon orientation:" not in prompt
     assert "exact center" in lowered
     assert "12% empty background margin" in lowered
     for color in request.style.palette_colors or ():
         assert color in prompt
     for banned in ("character", "full body", "feet", "animation"):
         assert banned not in lowered
+
+
+def test_static_weapon_prompt_uses_weapon_subject_and_icon_orientation(examples_dir) -> None:
+    pickup = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    weapon = pickup.model_copy(update={"asset_type": "weapon"})
+
+    prompt = compile_static_prompt(weapon, key_color="#FF00FF").text
+
+    assert prompt.startswith("Crisp pixel art of one single isolated weapon.")
+    assert "Crisp pixel art of one single isolated pickup item." not in prompt
+    assert (
+        "Weapon orientation: place the weapon diagonally, with its blade tip or muzzle "
+        "pointing toward the upper right, following the standard game icon convention."
+        in prompt
+    )
 
 
 

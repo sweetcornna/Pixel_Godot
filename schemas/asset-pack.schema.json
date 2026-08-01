@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pixel-asset-forge/pixel-asset-forge/schemas/asset-pack.schema.json",
-  "title": "Pixel Asset Forge — Potion Asset Pack",
-  "description": "共享风格、背景、导出设置与显式色板的一组静态 potion pickup。",
+  "title": "Pixel Asset Forge — Static Asset Pack",
+  "description": "共享风格、背景、导出设置与显式色板的一组静态资产。",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
       "const": "1.0"
     },
     "pack_type": {
-      "const": "potion_pack"
+      "enum": ["potion_pack", "weapon_pack"]
     },
     "pack_id": {
       "type": "string",

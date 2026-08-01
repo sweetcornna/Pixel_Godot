@@ -180,6 +180,23 @@ def test_static_pickup_has_one_static_job_and_no_seed(examples_dir: Path) -> Non
     assert result.to_dict()["animations"] == []
 
 
+def test_static_weapon_has_one_static_job_and_no_seed(examples_dir: Path) -> None:
+    request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0].model_copy(
+        update={"asset_id": "iron_sword", "asset_type": "weapon"}
+    )
+    result = plan_request(request, provider="openai", model="gpt-image-2")
+
+    jobs = tuple(result.jobs)
+    assert len(jobs) == 1
+    assert jobs[0].id == "iron_sword:static"
+    assert jobs[0].kind is JobKind.STATIC
+    assert jobs[0].calls_api is True
+    assert jobs[0].input_fingerprint is not None
+    assert result.jobs.of_kind(JobKind.SEED) == ()
+    assert result.animations == ()
+    assert result.estimated_api_calls == 1
+
+
 def test_static_planner_avoids_palette_key_color(examples_dir: Path) -> None:
     request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
     colliding = request.model_copy(

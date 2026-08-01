@@ -12,16 +12,18 @@ from .manifest import (
     StaticImageInfo,
 )
 from .pack import (
+    PACK_ASSET_TYPES,
     PackAsset,
     PackPalette,
     PackShared,
-    PotionPack,
+    StaticAssetPack,
     expand_pack,
     input_fingerprint,
     load_pack,
     parse_pack,
 )
 from .request import (
+    STATIC_ASSET_TYPES,
     AnimationSpec,
     AssetRequest,
     BackgroundSpec,
@@ -34,6 +36,8 @@ from .request import (
 from .validation import Check, CheckId, CheckResult, Severity, ValidationReport
 
 __all__ = [
+    "PACK_ASSET_TYPES",
+    "STATIC_ASSET_TYPES",
     "AnimationEntry",
     "AnimationSpec",
     "AssetManifest",
@@ -57,8 +61,8 @@ __all__ = [
     "PackPalette",
     "PackShared",
     "PaletteInfo",
-    "PotionPack",
     "Severity",
+    "StaticAssetPack",
     "StaticImageInfo",
     "StyleSpec",
     "ValidationReport",

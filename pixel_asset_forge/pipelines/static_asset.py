@@ -1,4 +1,4 @@
-"""静态 pickup 流水线。"""
+"""无动画 pickup/weapon 静态流水线。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from ..config import Config
 from ..errors import PauseRequested, ProcessingError, ProviderError, RetryLimitExceededError
 from ..models.job import Job, JobEvent, JobKind, JobStatus, JobTable
 from ..models.manifest import AnchorInfo, StaticImageInfo
-from ..models.request import AssetRequest, load_request
+from ..models.request import STATIC_ASSET_TYPES, AssetRequest, load_request
 from ..planning.grid_layout import GridLayout
 from ..planning.planner import plan_request
 from ..processing.anchor import CENTER, place_on_canvas
@@ -98,10 +98,13 @@ def create_static_asset(
     stop_requested: object | None = None,
     allow_cached_resume: bool = False,
 ) -> StaticAssetResult:
-    """生成并处理一个静态 pickup，停在 ``processed`` 等待真实验证。"""
+    """生成并处理一个无动画静态资产，停在 ``processed`` 等待真实验证。"""
     request = load_request(request_path)
-    if request.asset_type != "pickup" or request.animation_list():
-        raise ProcessingError("静态流水线只接受无 animations 的 pickup 请求")
+    if request.asset_type not in STATIC_ASSET_TYPES or request.animation_list():
+        allowed = ", ".join(sorted(STATIC_ASSET_TYPES))
+        raise ProcessingError(
+            f"静态流水线只接受无 animations 的资产类型：{allowed}"
+        )
 
     store = ArtifactStore.for_asset(config.output_dir, request.asset_id).ensure()
     store.save_request_copy(request_path)

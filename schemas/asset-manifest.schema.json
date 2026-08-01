@@ -277,7 +277,7 @@
       "pattern": "^#[0-9A-Fa-f]{6}$"
     },
     "static_image": {
-      "description": "静态 pickup 的单张原图、处理产物与离线复现参数。",
+      "description": "静态资产的单张原图、处理产物与离线复现参数。",
       "type": "object",
       "additionalProperties": false,
       "required": [

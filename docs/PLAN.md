@@ -1263,6 +1263,43 @@ README 文档化用法必崩；唯一测试恰好加了 `--no-contact-sheet` 掩
 复位入口与暂停/恢复集成测试（此前「可断点续跑」零测试覆盖）。
 全套件 774 passed / 5 skipped / 0 failed。
 
+#### 7.2 `weapon_pack` 第二纵切 · ✅ 已完成
+
+**本次范围只有 `weapon_pack`，以及为它付出的最小泛化。** 不据此宣称
+`spell_bundle`、`combat_bundle`、`environment_pack` 或其余资产类型已完成。
+
+##### 泛化契约
+
+- 7.1 的 pack 模型从 potion 专名泛化为静态 pack 通用：`PotionPack` 更名
+  `StaticAssetPack`，`pack_type` 从字面量改为映射表 ——
+  `potion_pack → pickup`、`weapon_pack → weapon`。展开的 `asset_type`
+  由映射决定，除此之外 7.1 的全部契约逐字继承：shared 注入、显式色板、
+  无人工闸门、plan 前置闸门与指纹、固定 worker、失败隔离、断点续跑、
+  `--retry-failed`、`pack-summary`、逐资产目录与导出、静态重处理。
+- 静态流水线放行无动画的 `pickup` 与 `weapon`；其余类型**继续拒绝**，
+  错误消息列出当前允许的类型。planner 的静态分支同步放行。
+- JSON Schema 的 `pack_type` 从 `const` 改为二值 `enum`；两种 pack 共用
+  同一份 `asset-pack.schema.json`，不复制 schema。
+- 若提示词编译器存在按资产类型分块的措辞，为 `weapon` 补图标朝向惯例
+  （刀尖/枪口朝右上对角）；若编译器对静态类型本就无差别，则不加特殊措辞，
+  以实际代码为准，不为不存在的分块发明配置。
+
+##### 退出门槛（仅对 `weapon_pack` 主张）
+
+- ✅ `examples/weapon_pack.yaml` 走完 plan → create-asset-pack → 逐资产
+  export 全链路（mock 下集成测试 + CLI 实测）
+- ✅ `pack_type → asset_type` 映射有测试；静态流水线对 weapon 放行、
+  对未支持类型仍拒绝有测试
+- ✅ 泛化重命名后 7.1 的全部既有测试不回归、不削弱断言
+
+**7.2 完成记录**：泛化按契约走完 —— `StaticAssetPack` + `PACK_ASSET_TYPES`
+映射（potion_pack→pickup、weapon_pack→weapon），静态放行集合在 request 校验、
+planner、静态流水线、validation 四处统一为 {pickup, weapon}，拒绝消息列出
+允许类型。编译器静态 prompt 分流：pickup 措辞一字未动，weapon 用
+"one single isolated weapon" 并加对角朝向惯例（刀尖/枪口朝右上）。
+CLI 实测 `starter_weapons` 三件武器全链路（plan → create → 逐资产 export
+→ 静态重处理零 API）。全套件 793 passed / 5 skipped / 0 failed。
+
 ---
 
 ### Sprint 8：Tileset 与地图 · **第 10 周**

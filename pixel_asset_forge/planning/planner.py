@@ -23,7 +23,7 @@ from ..constants import (
 )
 from ..models.job import Job, JobKind, JobStatus, JobTable, make_job_id
 from ..models.pack import input_fingerprint
-from ..models.request import AnimationSpec, AssetRequest
+from ..models.request import STATIC_ASSET_TYPES, AnimationSpec, AssetRequest
 from ..processing.background import BackgroundDecision, resolve_key_color
 from .grid_layout import GridLayout, grid_for_frames, seed_layout
 
@@ -257,7 +257,7 @@ def plan_request(
     animation_specs = request.animation_list()
     animations: tuple[PlannedAnimation, ...] = ()
 
-    if request.asset_type == "pickup" and not animation_specs:
+    if request.asset_type in STATIC_ASSET_TYPES and not animation_specs:
         static_id = make_job_id(request.asset_id, JobKind.STATIC)
         static_layout = seed_layout()
         fingerprint = input_fingerprint(

@@ -1,4 +1,4 @@
-"""Potion pack 输入契约与展开。"""
+"""静态资产 pack 输入契约与展开。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,14 @@ import pytest
 from pydantic import ValidationError
 
 from pixel_asset_forge.errors import RequestValidationError
-from pixel_asset_forge.models import PackShared, input_fingerprint, load_pack, parse_pack
+from pixel_asset_forge.models import (
+    PACK_ASSET_TYPES,
+    PackShared,
+    StaticAssetPack,
+    input_fingerprint,
+    load_pack,
+    parse_pack,
+)
 from pixel_asset_forge.schema_registry import load_schema
 
 
@@ -44,6 +51,7 @@ def test_example_expands_to_static_pickup_requests(examples_dir: Path) -> None:
     pack = load_pack(examples_dir / "potion_pack.yaml")
     requests = pack.expand_requests()
 
+    assert isinstance(pack, StaticAssetPack)
     assert pack.pack_type == "potion_pack"
     assert [request.asset_id for request in requests] == [
         "health_potion",
@@ -57,6 +65,32 @@ def test_example_expands_to_static_pickup_requests(examples_dir: Path) -> None:
     assert all(request.style.palette_preset == "starter_potions" for request in requests)
     assert all(request.background == pack.shared.background for request in requests)
     assert all(request.export == pack.shared.export for request in requests)
+
+
+@pytest.mark.parametrize(
+    ("pack_type", "asset_type"),
+    [("potion_pack", "pickup"), ("weapon_pack", "weapon")],
+)
+def test_pack_type_maps_to_static_asset_type(pack_type: str, asset_type: str) -> None:
+    data = pack_data()
+    data["pack_type"] = pack_type
+
+    requests = parse_pack(data).expand_requests()
+
+    assert PACK_ASSET_TYPES[pack_type] == asset_type
+    assert all(request.asset_type == asset_type for request in requests)
+
+
+def test_pack_schema_exposes_only_supported_static_pack_types() -> None:
+    schema = load_schema("asset-pack")
+    assert schema["properties"]["pack_type"] == {
+        "enum": ["potion_pack", "weapon_pack"]
+    }
+
+    data = pack_data()
+    data["pack_type"] = "spell_bundle"
+    with pytest.raises(RequestValidationError):
+        parse_pack(data)
 
 
 def test_pack_shared_requires_explicit_background_at_pydantic_layer() -> None:

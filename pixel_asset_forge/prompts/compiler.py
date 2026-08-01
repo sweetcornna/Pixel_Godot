@@ -76,6 +76,16 @@ _STATIC_PERSPECTIVE = {
     "isometric": "an isometric camera looking at the item",
 }
 
+_STATIC_SUBJECT = {
+    "pickup": "Crisp pixel art of one single isolated pickup item.",
+    "weapon": "Crisp pixel art of one single isolated weapon.",
+}
+
+_WEAPON_ORIENTATION = (
+    "Weapon orientation: place the weapon diagonally, with its blade tip or muzzle "
+    "pointing toward the upper right, following the standard game icon convention."
+)
+
 _SHADING = {
     "flat": "flat single-tone shading",
     "two_tone": "two-tone shading (one base tone plus one shadow tone)",
@@ -183,7 +193,7 @@ def _background_block(key_color: str) -> str:
 
 
 def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledPrompt:
-    """单张静态 pickup 的 prompt；不复用任何角色或动作模板。"""
+    """单张静态资产的 prompt；不复用任何角色或动作模板。"""
     from ..planning.grid_layout import seed_layout
 
     layout = seed_layout()
@@ -193,18 +203,25 @@ def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledP
         if colors is not None
         else f"Use at most {request.style.max_colors} colours for the item."
     )
-    text = "\n\n".join(
+    blocks = [
+        _STATIC_SUBJECT.get(
+            request.asset_type,
+            "Crisp pixel art of one single isolated item.",
+        ),
+        f"Subject: {request.description.strip()}",
+        f"Camera: {_STATIC_PERSPECTIVE[request.style.perspective]}.",
+        _style_block(request),
+        palette,
+        (
+            "Composition: place the item at the exact center of the square canvas, "
+            f"with at least {PROMPT_MARGIN_PERCENT}% empty background margin on all "
+            "four sides. Keep the entire item visible and separated from every edge."
+        ),
+    ]
+    if request.asset_type == "weapon":
+        blocks.append(_WEAPON_ORIENTATION)
+    blocks.extend(
         [
-            "Crisp pixel art of one single isolated pickup item.",
-            f"Subject: {request.description.strip()}",
-            f"Camera: {_STATIC_PERSPECTIVE[request.style.perspective]}.",
-            _style_block(request),
-            palette,
-            (
-                "Composition: place the item at the exact center of the square canvas, "
-                f"with at least {PROMPT_MARGIN_PERCENT}% empty background margin on all "
-                "four sides. Keep the entire item visible and separated from every edge."
-            ),
             (
                 f"Background: one completely flat solid {key_color} colour filling every "
                 "pixel outside the item, including all margin around it. The background "
@@ -217,6 +234,7 @@ def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledP
             ),
         ]
     )
+    text = "\n\n".join(blocks)
     return CompiledPrompt(text=text, key_color=key_color, size=layout.size)
 
 

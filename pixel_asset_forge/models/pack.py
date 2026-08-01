@@ -1,11 +1,12 @@
-"""Asset Pack —— 一组共享静态生成设置的 pickup 请求。"""
+"""Asset Pack —— 一组共享生成设置的静态资产请求。"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -13,7 +14,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .. import PACK_SCHEMA_VERSION, PIPELINE_VERSION, REQUEST_SCHEMA_VERSION
 from ..errors import RequestValidationError
 from ..schema_registry import check_schema_version, validate_against
-from .request import AssetRequest, BackgroundSpec, ExportSpec, HexColor, StyleSpec
+from .request import AssetRequest, AssetType, BackgroundSpec, ExportSpec, HexColor, StyleSpec
+
+PackType = Literal["potion_pack", "weapon_pack"]
+PACK_ASSET_TYPES: Final[Mapping[PackType, AssetType]] = {
+    "potion_pack": "pickup",
+    "weapon_pack": "weapon",
+}
 
 
 class _Base(BaseModel):
@@ -37,15 +44,15 @@ class PackAsset(_Base):
     description: str = Field(min_length=8, max_length=2000)
 
 
-class PotionPack(_Base):
+class StaticAssetPack(_Base):
     schema_version: str = PACK_SCHEMA_VERSION
-    pack_type: Literal["potion_pack"]
+    pack_type: PackType
     pack_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_]*$", min_length=1, max_length=64)
     shared: PackShared
     assets: tuple[PackAsset, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _check_pack_contract(self) -> PotionPack:
+    def _check_pack_contract(self) -> StaticAssetPack:
         ids = [asset.asset_id for asset in self.assets]
         duplicates = sorted({asset_id for asset_id in ids if ids.count(asset_id) > 1})
         if duplicates:
@@ -72,7 +79,7 @@ class PotionPack(_Base):
         return self
 
     def expand_requests(self) -> tuple[AssetRequest, ...]:
-        """按 pack 顺序展开为无动画的静态 pickup 请求。"""
+        """按 pack 顺序展开为对应资产类型的无动画静态请求。"""
         style = self.shared.style.model_copy(
             update={
                 "palette_preset": self.shared.palette.name,
@@ -83,7 +90,7 @@ class PotionPack(_Base):
             AssetRequest(
                 schema_version=REQUEST_SCHEMA_VERSION,
                 asset_id=asset.asset_id,
-                asset_type="pickup",
+                asset_type=PACK_ASSET_TYPES[self.pack_type],
                 description=asset.description,
                 style=style,
                 background=self.shared.background,
@@ -94,7 +101,7 @@ class PotionPack(_Base):
         )
 
 
-def parse_pack(data: dict[str, Any], *, source: str = "<内存>") -> PotionPack:
+def parse_pack(data: dict[str, Any], *, source: str = "<内存>") -> StaticAssetPack:
     """先按公开 JSON Schema、再按 Pydantic 模型解析 pack。"""
     if not isinstance(data, dict):
         raise RequestValidationError(
@@ -111,7 +118,7 @@ def parse_pack(data: dict[str, Any], *, source: str = "<内存>") -> PotionPack:
     validate_against("asset-pack", data, what=source)
 
     try:
-        return PotionPack.model_validate(data)
+        return StaticAssetPack.model_validate(data)
     except ValidationError as exc:
         errors = [
             {"path": ".".join(str(part) for part in error["loc"]), "message": error["msg"]}
@@ -124,8 +131,8 @@ def parse_pack(data: dict[str, Any], *, source: str = "<内存>") -> PotionPack:
         ) from exc
 
 
-def load_pack(path: str | Path) -> PotionPack:
-    """从 YAML 文件读取 potion pack。"""
+def load_pack(path: str | Path) -> StaticAssetPack:
+    """从 YAML 文件读取静态资产 pack。"""
     pack_path = Path(path)
     if not pack_path.exists():
         raise RequestValidationError(f"找不到 pack 文件：{pack_path}")
@@ -136,8 +143,8 @@ def load_pack(path: str | Path) -> PotionPack:
     return parse_pack(data, source=str(pack_path))
 
 
-def expand_pack(pack: PotionPack) -> tuple[AssetRequest, ...]:
-    """函数式入口，等价于 :meth:`PotionPack.expand_requests`。"""
+def expand_pack(pack: StaticAssetPack) -> tuple[AssetRequest, ...]:
+    """函数式入口，等价于 :meth:`StaticAssetPack.expand_requests`。"""
     return pack.expand_requests()
 
 

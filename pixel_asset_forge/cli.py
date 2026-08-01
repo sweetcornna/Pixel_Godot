@@ -389,7 +389,7 @@ def plan(
 
 @app.command("create-asset-pack")
 def create_asset_pack(
-    pack_file: Annotated[Path, typer.Argument(help="Potion Pack YAML")],
+    pack_file: Annotated[Path, typer.Argument(help="静态资产 Pack YAML")],
     as_json: Annotated[bool, typer.Option("--json", help="输出 JSON 汇总")] = False,
     retry_failed: Annotated[
         bool, typer.Option("--retry-failed", help="重试任务表中处于 failed 的资产")
@@ -401,7 +401,7 @@ def create_asset_pack(
         str | None, typer.Option("--model", help="覆盖有效生成模型")
     ] = None,
 ) -> None:
-    """并发生成、验证并导出一个静态 potion_pack。"""
+    """并发生成、验证并导出一个静态资产 pack。"""
     overrides = {"model": model} if model is not None else None
     config = _load_config(config_path, overrides=overrides)
     control = PackRunControl()

@@ -120,7 +120,7 @@ class GridInfo(_Base):
 
 
 class StaticImageInfo(_Base):
-    """静态 pickup 的原图、处理产物与确定性处理参数。"""
+    """静态资产的原图、处理产物与确定性处理参数。"""
 
     source_image: str
     image: str

@@ -104,6 +104,43 @@ def test_static_pickup_runs_to_export(request_file: Path, config: Config) -> Non
     assert next(iter(table)).status is JobStatus.EXPORTED
 
 
+def test_static_pipeline_accepts_weapon(request_file: Path, config: Config) -> None:
+    weapon_file = request_file.with_name("iron_sword.yaml")
+    weapon_file.write_text(
+        request_file.read_text(encoding="utf-8")
+        .replace("asset_id: health_potion", "asset_id: iron_sword")
+        .replace("asset_type: pickup", "asset_type: weapon"),
+        encoding="utf-8",
+    )
+
+    result = create_static_asset(weapon_file, config)
+    store = ArtifactStore.for_asset(config.output_dir, "iron_sword")
+
+    assert result.image_path.exists()
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.asset_type == "weapon"
+    assert manifest.static_image is not None
+    assert run_validation(store.root).passed
+
+
+def test_static_pipeline_rejects_unsupported_asset_type(
+    request_file: Path, config: Config
+) -> None:
+    spell_file = request_file.with_name("healing_spell.yaml")
+    spell_file.write_text(
+        request_file.read_text(encoding="utf-8")
+        .replace("asset_id: health_potion", "asset_id: healing_spell")
+        .replace("asset_type: pickup", "asset_type: spell"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ProcessingError,
+        match=r"无 animations 的资产类型：pickup, weapon",
+    ):
+        create_static_asset(spell_file, config)
+
+
 def test_resume_from_processed_does_not_call_provider_again(
     request_file: Path, config: Config
 ) -> None:

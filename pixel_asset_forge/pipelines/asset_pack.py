@@ -1,4 +1,4 @@
-"""potion_pack 固定 worker 协调器。"""
+"""静态资产 pack 固定 worker 协调器。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from ..config import Config
 from ..errors import PauseRequested, PlanError, ProviderError, redact
 from ..logging_utils import get_logger
 from ..models.job import JobKind, JobStatus
-from ..models.pack import PotionPack, input_fingerprint, load_pack
+from ..models.pack import StaticAssetPack, input_fingerprint, load_pack
 from ..models.request import load_request
 from ..processing.background import resolve_key_color
 from ..prompts import compile_static_prompt
@@ -143,7 +143,9 @@ def _job_state(
     )
 
 
-def _require_saved_plans(pack: PotionPack, config: Config, pack_path: str | Path) -> None:
+def _require_saved_plans(
+    pack: StaticAssetPack, config: Config, pack_path: str | Path
+) -> None:
     """拒绝执行没有经过离线规划或规划指纹已经过期的资产。"""
     missing: list[str] = []
     mismatched: list[str] = []
@@ -197,7 +199,7 @@ def _reset_failed_static_job(config: Config, asset_id: str) -> bool:
 
 
 def _persist_summary(
-    pack: PotionPack,
+    pack: StaticAssetPack,
     config: Config,
     outcomes: dict[str, AssetOutcome],
     *,
@@ -486,7 +488,7 @@ async def run_asset_pack(
     control: PackRunControl | None = None,
     retry_failed: bool = False,
 ) -> PackSummary:
-    """并发执行一个 potion_pack；每个 worker 拥有独立 client。"""
+    """并发执行一个静态资产 pack；每个 worker 拥有独立 client。"""
     pack = load_pack(pack_path)
     _require_saved_plans(pack, config, pack_path)
     run_control = control or PackRunControl()

@@ -24,6 +24,7 @@ from ..constants import (
 )
 from ..errors import PlanError
 from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation, StaticImageInfo
+from ..models.request import STATIC_ASSET_TYPES
 from ..models.validation import (
     Check,
     CheckId,
@@ -555,7 +556,7 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
                 palette=manifest.palette.colors,
             )
         )
-    elif manifest.asset_type == "pickup" and not manifest.animations:
+    elif manifest.asset_type in STATIC_ASSET_TYPES and not manifest.animations:
         report.checks.append(
             Check.make(
                 "artifact_exists",
@@ -563,7 +564,7 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
                 CheckResult.FAIL,
                 measured=False,
                 threshold=True,
-                message="静态 pickup 的 Manifest 缺少 static_image",
+                message="静态资产的 Manifest 缺少 static_image",
             )
         )
 
