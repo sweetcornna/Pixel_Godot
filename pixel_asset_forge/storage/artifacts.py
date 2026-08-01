@@ -25,6 +25,7 @@ from ..constants import (
 )
 from ..errors import ProcessingError
 from ..models.job import JobTable
+from .atomic import atomic_write_bytes, atomic_write_json, atomic_write_text
 from .hashes import hash_bytes, hash_file
 
 JOB_TABLE_FILE = "jobs/job-table.json"
@@ -124,8 +125,7 @@ class ArtifactStore:
                 f"重生成前请先调用 archive_source({key!r})。"
             )
 
-        path.write_bytes(data)
-        return path
+        return atomic_write_bytes(path, data)
 
     def archive_source(self, key: str, *, suffix: str = ".png") -> Path | None:
         """把既有原图改名归档为 ``<key>-original.rN.png``，返回归档路径。
@@ -152,11 +152,7 @@ class ArtifactStore:
 
     @staticmethod
     def _write_json(path: Path, payload: Any) -> Path:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        return path
+        return atomic_write_json(path, payload)
 
     def save_job_table(self, table: JobTable) -> Path:
         return self._write_json(self.job_table_path, table.model_dump(mode="json"))
@@ -188,5 +184,4 @@ class ArtifactStore:
         """把请求原文复制进资产目录 —— 产物必须自带它的输入。"""
         text = Path(source).read_text(encoding="utf-8")
         self.root.mkdir(parents=True, exist_ok=True)
-        self.request_path.write_text(text, encoding="utf-8")
-        return self.request_path
+        return atomic_write_text(self.request_path, text)

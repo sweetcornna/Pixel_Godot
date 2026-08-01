@@ -42,7 +42,14 @@ from pathlib import Path
 
 from ..models.manifest import AssetManifest
 from ..processing.spritesheet import save_png
-from .base import AnimationView, Exporter, ExportResult, animation_views, load_frames
+from .base import (
+    AnimationView,
+    Exporter,
+    ExportResult,
+    animation_views,
+    load_frames,
+    load_static_image,
+)
 from .generic_json import build_atlas
 
 #: Godot 4 的资源格式版本。
@@ -113,7 +120,20 @@ class GodotExporter(Exporter):
         views = animation_views(manifest, root)
         result = ExportResult(target=self.target)
         if not views:
-            result.notes.append("没有任何动作，跳过 Godot 导出")
+            if manifest.static_image is None:
+                result.notes.append("没有任何可导出的静态图或动作")
+                return result
+            self.ensure_dir(out_dir)
+            image = load_static_image(manifest, root)
+            texture_name = f"{manifest.asset_id}.png"
+            result.files.append(save_png(image, out_dir / texture_name))
+            result.notes.append(
+                f"把 {texture_name} 复制进 Godot 项目并用于 Sprite2D；"
+                "锚点为 center，Sprite2D 默认 centered=true 即可。"
+            )
+            result.notes.append(
+                "导入时把纹理的 Filter 设为 Nearest，否则线性过滤会把像素糊掉。"
+            )
             return result
 
         self.ensure_dir(out_dir)

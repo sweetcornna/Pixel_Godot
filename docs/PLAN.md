@@ -14,7 +14,7 @@
 | **生成策略** | 种子图（canonical seed）+ **一次生成完整动作网格**，绝不逐帧独立生成 |
 | **物理布局** | 因 API 尺寸约束无法直接产出 32×32 或长条，改为生成大尺寸二维网格后本地缩小 |
 | **透明化** | `gpt-image-2` 不支持透明背景 → 纯色键控为主，多级降级阶梯兜底 |
-| **接口面** | CLI 9 个命令（核心实现）· MCP 6 个工具（只暴露高层语义） |
+| **接口面** | CLI 按完整业务动作演进（核心实现）· MCP 6 个高层工具（适配层、刻意收敛） |
 | **MVP 定义** | 一个 YAML → 四方向 × `idle`/`walk`，经自动切帧、透明化、脚底对齐、调色板量化、质量验证，Godot 可直接加载 |
 
 **第一个技术里程碑**（一切的前提）：
@@ -623,19 +623,25 @@ stateDiagram-v2
 
 CLI 与 MCP 是**两套不同的接口面**，两者规模不同是设计意图：
 
-### 6.1 CLI（9 个命令，核心实现）
+### 6.1 CLI（核心实现）
+
+CLI 命令面按**完整业务动作**收敛并随已实现能力演进，不机械固定数量；
+MCP 仍保持少量高层语义工具。详见 [ADR-005 修订](adr/ADR-005-cli-core-mcp-adapter.md)。
 
 | 命令 | 用途 | 是否调用 API |
 |---|---|:---:|
 | `pixel-asset init` | 初始化配置与目录 | ❌ |
 | `pixel-asset doctor` | 检测配置、依赖、API 连通性 | 仅探测 |
-| `pixel-asset plan <request.yaml>` | 解析请求并输出任务 DAG，不执行 | ❌ |
+| `pixel-asset plan <input.yaml>` | 自动识别单资产请求或 pack，输出任务 DAG，不执行 | ❌ |
 | `pixel-asset create-character <request.yaml>` | 生成 canonical seed | ✅ |
 | `pixel-asset create-animation --asset A --action X --direction D` | 生成动作网格 | ✅ |
+| `pixel-asset create-asset-pack <pack.yaml>` | 生成一组共享约束的静态资产 | ✅ |
+| `pixel-asset import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ |
+| `pixel-asset interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ |
 | `pixel-asset process <outputs/A>` | **仅重跑本地处理** | ❌ |
 | `pixel-asset validate <outputs/A>` | 运行验证引擎 | ❌ |
 | `pixel-asset repair <outputs/A/walk_down>` | 执行修复计划 | 视修复类型 |
-| `pixel-asset export <outputs/A> --target godot` | 导出引擎格式 | ❌ |
+| `pixel-asset export <asset-dir-or-id> --target godot` | 按资产目录或 `asset_id` 导出引擎格式 | ❌ |
 
 `create-character` 输出：
 
@@ -644,7 +650,8 @@ seed-original.png · seed-transparent.png · seed-pixel.png
 character-reference.json · palette.png
 ```
 
-**9 个命令中有 5 个完全不调用 API** —— 这是刻意设计：调试与迭代应尽量在离线侧完成。
+`plan`、`process`、`validate`、`export` 等离线入口使调试与迭代不必重复调用生成 API；
+这项边界比固定统计命令数量更重要。
 
 ### 6.2 MCP（6 个工具，适配层）
 
@@ -653,8 +660,9 @@ create_character · create_animation · create_asset_pack
 validate_asset   · repair_asset     · export_asset
 ```
 
-**为什么 MCP 只暴露 6 个而非 9 个**：`init` / `doctor` / `plan` 是运维与调试命令，对模型没有语义价值。
-更重要的是，不要向模型暴露几十个像素级工具 —— 工具数量增加会显著推高上下文开销与选错工具的概率。
+**为什么 MCP 保持 6 个，而不机械镜像 CLI**：`init` / `doctor` / `plan` / `import` / `interpolate`
+等是开发者工作流入口，不需要逐项变成 MCP 工具。更重要的是，不要向模型暴露几十个像素级工具 ——
+工具数量增加会显著推高上下文开销与选错工具的概率。
 MCP 层的职责是**收敛**，不是镜像 CLI。详见 [ADR-005](adr/ADR-005-cli-core-mcp-adapter.md)。
 
 `SKILL.md` 的职责是把用户自然语言映射到这些稳定命令，而**不是**让 Agent 自由组合底层脚本。
@@ -1154,7 +1162,7 @@ attack      690
 
 ---
 
-### Sprint 7：道具、特效与批量任务 · **第 9 周**
+### Sprint 7：道具、特效与批量任务 · **第 9 周** · 🚧 进行中
 
 **新资产类型**：`prop` · `weapon` · `projectile` · `impact` · `spell` · `pickup` · `ui_icon` · `environment_object`
 
@@ -1162,13 +1170,98 @@ attack      690
 
 **任务调度**：`asyncio` 并发（复用 Sprint 2 的并发控制）· 每资产独立失败 · 暂停与恢复 · 任务去重 · 失败汇总
 
-**退出门槛**
+#### 7.1 `potion_pack` 首纵切 · ✅ 已完成
 
-- ✅ 单个失败不导致整包失败
-- ✅ 可断点续跑
-- ✅ 可重新处理而不重新生成
-- ✅ 可按 `asset_id` 单独导出
-- ✅ 同批资产共享风格与调色板定义
+**本次范围只有 `potion_pack`。** 它由多个静态 `pickup` 构成；不据此宣称
+`weapon_pack`、`spell_bundle`、其余资产类型或整个 Sprint 7 已完成。
+
+##### 输入契约
+
+```yaml
+schema_version: "1.0"
+pack_type: potion_pack
+pack_id: starter_potions
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [32, 32]
+    max_colors: 8
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: starter_potions
+    colors: ["#261B2D", "#F4E6C1", "#D43D4F", "#4C9BE8"]
+assets:
+  - asset_id: health_potion
+    description: round red healing potion in a corked glass bottle
+  - asset_id: mana_potion
+    description: tall blue mana potion in a corked glass bottle
+```
+
+- `shared.style`、`shared.background`、`shared.export` 与 `shared.palette.colors`
+  对全部资产生效；色板必须显式列色，资产项只提供唯一 `asset_id` 与描述。
+- 每个资产展开为无动画的 `pickup`，只创建静态生成任务。静态 pickup **不伪装**
+  canonical seed 或 animation，不进入 seed 人工批准闸门，也没有其他人工批准闸门。
+- pack **不得写 `model`，也不负责选择模型**。运行时统一使用 `Config` 解析后的有效
+  `model`：当前内置默认值为 `gpt-image-2`，并继续服从既有优先级「命令行覆盖 >
+  环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值」。同一次 pack 运行中的资产
+  使用同一份解析后配置。
+
+##### 命令契约
+
+```bash
+pixel-asset plan potion-pack.yaml
+pixel-asset create-asset-pack potion-pack.yaml
+pixel-asset export outputs/health_potion --target godot
+pixel-asset export health_potion --target godot
+```
+
+- `plan` 自动识别单资产 request 与 pack；pack 计划汇总总任务数、预计 API 调用数，
+  同时保留逐 `asset_id` 的任务 DAG。规划完全离线，批量执行前必须先运行。
+- `pixel-asset create-asset-pack <pack.yaml>` 是 CLI 核心的完整业务入口，不要求调用方
+  用 shell 循环拼装批次语义。
+- `export` 同时接受资产目录和 `asset_id`；二者都只导出一个资产，pack 生成后可逐项审核、
+  逐项导出。
+
+##### 执行与产物契约
+
+- 批次使用固定数量的 `asyncio` workers；数量取自运行时 `Config`，启动后不随队列长度
+  漂移。
+- 单资产失败隔离：一个资产失败不取消其余资产；协作式暂停停止领取新任务，运行中的任务
+  收尾后可恢复。相同输入指纹与已完成任务会去重，续跑只领取未完成或可重试资产。
+- pack 级 `pack-summary` 汇总成功、失败、跳过/去重与暂停状态，并列出各 `asset_id`
+  的结果；单资产错误保留在对应条目中，不把整包抹成一个不透明失败。
+- 每个资产仍写入自己的 `outputs/<asset_id>/`，拥有独立 request 副本、Manifest、
+  JobTable 与 artifacts；`pack-summary` 只是批次索引，不取代任何单资产溯源记录。
+- 静态 pickup 可对自己的原始生成物重跑确定性处理而不重新生成。
+
+**Sprint 7 总退出门槛（尚未全部完成）**
+
+- ⬜ 单个失败不导致整包失败
+- ⬜ 可断点续跑
+- ⬜ 可重新处理而不重新生成
+- ⬜ 可按 `asset_id` 单独导出
+- ⬜ 同批资产共享风格与调色板定义
+
+> 7.1 完成时只标记 `potion_pack` 首纵切；其余 pack 与 Sprint 7 总状态继续保持未完成。
+> 上述五条门槛 `potion_pack` 已逐条有测试与 CLI 实测背书，但按本节口径，
+> 其余 pack 类型落地前总门槛不打勾。
+
+**7.1 完成记录**：实现落地时挖出并修掉了三类问题 ——
+① pack 需要的「验证后才可导出」硬闸被错误地全局应用，连带 Manifest 版本全局升
+2.1，打回 8 个既有测试；现闸门只对带 `static_image` 的静态资产生效，旧动画路径
+保持 2.0 契约。② `export <asset_id>` 默认 contact sheet 路径用错相对化基准，
+README 文档化用法必崩；唯一测试恰好加了 `--no-contact-sheet` 掩掉了它。
+③ 「批量执行前必须先 plan」与「重跑处理不重新生成」当时只是 README 行文：
+前者零强制（直接跑就花钱），后者更糟 —— 通用 `process` 没有 static 分支，会把
+单图原件当成叫 "static" 的动作按帧网格切坏。现在 `create-asset-pack` 逐资产核对
+已保存任务表与输入指纹，`process` 识别静态资产走单图链并写回 `static_image`。
+另修 worker 汇总落盘异常导致 `queue.join()` 永久挂起的死锁，补 `--retry-failed`
+复位入口与暂停/恢复集成测试（此前「可断点续跑」零测试覆盖）。
+全套件 774 passed / 5 skipped / 0 failed。
 
 ---
 

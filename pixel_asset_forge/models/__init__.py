@@ -9,6 +9,17 @@ from .manifest import (
     GeneratedAnimation,
     GridInfo,
     PaletteInfo,
+    StaticImageInfo,
+)
+from .pack import (
+    PackAsset,
+    PackPalette,
+    PackShared,
+    PotionPack,
+    expand_pack,
+    input_fingerprint,
+    load_pack,
+    parse_pack,
 )
 from .request import (
     AnimationSpec,
@@ -42,10 +53,19 @@ __all__ = [
     "JobStatus",
     "JobTable",
     "MirroringSpec",
+    "PackAsset",
+    "PackPalette",
+    "PackShared",
     "PaletteInfo",
+    "PotionPack",
     "Severity",
+    "StaticImageInfo",
     "StyleSpec",
     "ValidationReport",
+    "expand_pack",
+    "input_fingerprint",
+    "load_pack",
     "load_request",
+    "parse_pack",
     "parse_request",
 ]

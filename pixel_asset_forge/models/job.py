@@ -40,6 +40,7 @@ class JobEvent(StrEnum):
     CACHE_HIT = "cache_hit"
     DERIVE_READY = "derive_ready"
     PROVIDER_SUCCESS = "provider_success"
+    RECOVER_GENERATED = "recover_generated"
     TRANSIENT_ERROR = "transient_error"
     PERMANENT_ERROR = "permanent_error"
     RETRY_LIMIT_EXCEEDED = "retry_limit_exceeded"
@@ -61,6 +62,9 @@ class JobEvent(StrEnum):
 
 
 class JobKind(StrEnum):
+    STATIC = "static"
+    """单张静态物件图。直接调用 API，不伪装成 seed 或 animation。"""
+
     SEED = "seed"
     """canonical seed。所有动画的身份基准，也是唯一的人工闸门。"""
 
@@ -105,6 +109,9 @@ _TRANSITIONS: dict[tuple[JobStatus, JobEvent], _Transition] = {
     (JobStatus.GENERATING, JobEvent.PROVIDER_SUCCESS): _Transition(
         target=JobStatus.GENERATED, effect="落盘原图 + request id + prompt hash"
     ),
+    (JobStatus.PROCESSING, JobEvent.RECOVER_GENERATED): _Transition(
+        target=JobStatus.GENERATED, effect="处理阶段中断，从不可变原图恢复"
+    ),
     (JobStatus.GENERATING, JobEvent.TRANSIENT_ERROR): _Transition(
         target=JobStatus.GENERATING, effect="指数退避重试，attempts +1", calls_api=True
     ),
@@ -125,6 +132,12 @@ _TRANSITIONS: dict[tuple[JobStatus, JobEvent], _Transition] = {
     ),
     (JobStatus.PROCESSED, JobEvent.START_VALIDATION): _Transition(
         target=JobStatus.VALIDATING, effect="进入验证引擎"
+    ),
+    (JobStatus.VALIDATED, JobEvent.START_VALIDATION): _Transition(
+        target=JobStatus.VALIDATING, effect="重新验证既有成品"
+    ),
+    (JobStatus.VALIDATION_FAILED, JobEvent.START_VALIDATION): _Transition(
+        target=JobStatus.VALIDATING, effect="修正后重新验证"
     ),
     (JobStatus.VALIDATING, JobEvent.VALIDATION_PASSED): _Transition(
         target=JobStatus.VALIDATED, effect="写 validation-report.json"
@@ -210,6 +223,9 @@ class Job(BaseModel):
     attempts: int = 0
     repair_rounds: int = 0
 
+    input_fingerprint: str | None = None
+    """规范化输入 + pipeline/provider/model 的指纹，用于阻止同 ID 静默复用不同输入。"""
+
     prompt_hash: str | None = None
     request_id: str | None = None
     error: str | None = None
@@ -223,6 +239,8 @@ class Job(BaseModel):
         """动画键，形如 ``walk_down``；seed 任务返回 ``seed``。"""
         if self.kind is JobKind.SEED:
             return "seed"
+        if self.kind is JobKind.STATIC:
+            return "static"
         parts = [p for p in (self.action, self.direction) if p]
         return "_".join(parts)
 
@@ -233,7 +251,7 @@ class Job(BaseModel):
     @property
     def calls_api(self) -> bool:
         """本任务在正常路径上是否需要 API 调用。derived 任务永远不需要。"""
-        return self.kind in (JobKind.SEED, JobKind.ANIMATION)
+        return self.kind in (JobKind.STATIC, JobKind.SEED, JobKind.ANIMATION)
 
     # -- 状态机 -----------------------------------------------------------
 
@@ -303,6 +321,8 @@ def make_job_id(
     """
     if kind is JobKind.SEED:
         return f"{asset_id}:seed"
+    if kind is JobKind.STATIC:
+        return f"{asset_id}:static"
     parts = [asset_id, action or "unknown"]
     if direction:
         parts.append(direction)
@@ -327,9 +347,18 @@ class JobTable(BaseModel):
         return job_id in self.jobs
 
     def add(self, job: Job) -> Job:
-        """加入任务。ID 已存在时返回既有任务 —— 幂等的关键。"""
+        """加入任务；同 ID 的不同输入不得被幂等逻辑静默吞掉。"""
         existing = self.jobs.get(job.id)
         if existing is not None:
+            if (
+                existing.input_fingerprint is not None
+                and job.input_fingerprint is not None
+                and existing.input_fingerprint != job.input_fingerprint
+            ):
+                raise ValueError(
+                    f"任务 {job.id} 的 input_fingerprint 冲突："
+                    f"既有 {existing.input_fingerprint}，新规划 {job.input_fingerprint}"
+                )
             return existing
         self.jobs[job.id] = job
         return job
@@ -418,6 +447,7 @@ class JobTable(BaseModel):
         """任务集合的稳定指纹。用于判断"这次 plan 和上次是不是同一批任务"。"""
         payload = "|".join(
             f"{j.id}#{j.kind}#{j.frames}#{j.derived_from or ''}"
+            + (f"#{j.input_fingerprint}" if j.input_fingerprint else "")
             for j in sorted(self.jobs.values(), key=lambda j: j.id)
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

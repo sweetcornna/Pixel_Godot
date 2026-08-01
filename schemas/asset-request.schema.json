@@ -17,7 +17,7 @@
       "description": "请求 Schema 版本。省略时按当前版本解析。",
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+$",
-      "default": "1.0"
+      "default": "1.1"
     },
     "asset_id": {
       "description": "资产唯一标识，同时用作 outputs/ 下的目录名。",
@@ -199,6 +199,15 @@
         "palette_preset": {
           "description": "presets/palette-presets.yaml 中的调色板名称。与 max_colors 同时给出时以调色板为准。",
           "type": "string"
+        },
+        "palette_colors": {
+          "description": "显式锁定的共享色板。非空，颜色数不得超过 max_colors；pack 展开时写入。",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/hex_color"
+          }
         }
       }
     },

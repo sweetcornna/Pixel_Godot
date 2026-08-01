@@ -6,6 +6,31 @@
 
 ---
 
+## 修订（2026-07-30）
+
+本 ADR 原文把 CLI 固定为 9 个命令，并把 `create_asset_pack` 限定在 MCP，认为 CLI
+用 shell 循环更自然。后续已经落地的 `import`、`interpolate`，以及 Sprint 7 的
+`potion_pack` 首纵切证明：**固定数量不是架构目标，完整且可测试的业务动作才是。**
+以下原文保留为当时的历史决策，不追改、不抹除；本修订覆盖其中的固定数量与
+`create_asset_pack` 仅属 MCP 两点。
+
+修订后的原则：
+
+1. **CLI 仍是核心实现，但命令面按完整业务动作收敛并允许演进。** 不暴露切帧、键控、
+   量化等底层步骤；当一个动作有自身的输入契约、调度语义、恢复语义和汇总产物时，
+   它应有稳定 CLI 入口，而不是为了守住一个数字塞进旧命令或交给 shell 编排。
+2. **`pixel-asset create-asset-pack <pack.yaml>` 是 CLI 核心入口。** pack 不是若干独立
+   生成命令的 shell 循环：它要求共享 style/background/export/显式 palette、固定
+   worker 批次、单资产失败隔离、协作暂停恢复、输入去重与 pack-summary。只有核心入口
+   能让 CLI、Python 库和未来 MCP 复用同一套确定性语义并得到一致的可测试结果。
+3. **MCP 仍保持高层收敛，不机械镜像 CLI。** `create_asset_pack` 继续对应一个完整业务
+   动作；`init`、`doctor`、`plan`、`import`、`interpolate` 等 CLI 入口不因此逐项扩张成
+   MCP 工具。收敛的是语义粒度和模型选择负担，不是机械固定接口数量。
+4. **`plan` 自动识别 request 与 pack，`export` 接受目录或 `asset_id`。** 这类参数形态
+   是同一业务动作的自然扩展，无需为了数量另造工具。
+
+---
+
 ## 背景
 
 本项目的目标形态是"可安装到 Codex / Claude Code 等 Agent 环境的 Skill"。

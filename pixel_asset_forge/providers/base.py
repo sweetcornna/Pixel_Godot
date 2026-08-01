@@ -211,7 +211,11 @@ class ImageProvider(ABC):
     ) -> str:
         """``generate`` 调用的缓存键。包装器复用它，避免两处各算一份而算岔。"""
         return prompt_hash(
-            prompt, model=model or self.model, size=size, operation="generate"
+            prompt,
+            model=model or self.model,
+            size=size,
+            operation="generate",
+            extra={"provider": self.name},
         )
 
     def edit_key(
@@ -229,6 +233,7 @@ class ImageProvider(ABC):
             size=size,
             operation="edit",
             reference_hashes=[hash_bytes(base_image), *(r.content_hash for r in references)],
+            extra={"provider": self.name},
         )
 
     def generate(

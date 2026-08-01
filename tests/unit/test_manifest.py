@@ -20,6 +20,7 @@ from pixel_asset_forge.models.manifest import (
     GridInfo,
     PaletteInfo,
     ProviderInfo,
+    StaticImageInfo,
 )
 
 
@@ -57,6 +58,32 @@ def test_roundtrip(tmp_path: Path) -> None:
     loaded = AssetManifest.load(path)
     assert loaded.asset_id == "knight_01"
     assert len(loaded.resolve_frames("walk_down")) == 8
+
+
+def test_static_image_manifest_21_roundtrip(tmp_path: Path) -> None:
+    digest_a = "a" * 64
+    digest_b = "b" * 64
+    manifest = make_manifest(
+        asset_id="health_potion",
+        asset_type="pickup",
+        static_image=StaticImageInfo(
+            source_image="source/static-original.png",
+            image="frames/static.png",
+            requested_size=(1024, 1024),
+            actual_size=(1024, 1024),
+            key_threshold=145.0,
+            grid_block_size=8.5,
+            source_hash=digest_a,
+            processed_hash=digest_b,
+        ),
+    )
+
+    loaded = AssetManifest.load(manifest.save(tmp_path / "asset-manifest.json"))
+    assert loaded.schema_version == "2.1"
+    assert loaded.static_image is not None
+    assert loaded.static_image.image == "frames/static.png"
+    assert loaded.static_image.grid_block_size == 8.5
+    assert loaded.static_image.source_hash == digest_a
 
 
 def test_saving_validates_against_the_schema(tmp_path: Path) -> None:
@@ -137,7 +164,7 @@ def test_future_major_version_is_refused(tmp_path: Path) -> None:
     """读取器遇到更高 MAJOR 必须拒绝并提示迁移（PLAN §5.4）。"""
     path = tmp_path / "m.json"
     make_manifest().save(path)
-    text = path.read_text(encoding="utf-8").replace('"schema_version": "2.0"',
+    text = path.read_text(encoding="utf-8").replace('"schema_version": "2.1"',
                                                     '"schema_version": "3.0"', 1)
     path.write_text(text, encoding="utf-8")
     with pytest.raises(SchemaVersionError) as exc:
@@ -149,7 +176,7 @@ def test_higher_minor_version_is_accepted(tmp_path: Path) -> None:
     """更高 MINOR 只意味着新增了可选字段，向前兼容必须成立（PLAN §5.4）。"""
     path = tmp_path / "m.json"
     make_manifest().save(path)
-    text = path.read_text(encoding="utf-8").replace('"schema_version": "2.0"',
+    text = path.read_text(encoding="utf-8").replace('"schema_version": "2.1"',
                                                     '"schema_version": "2.7"', 1)
     path.write_text(text, encoding="utf-8")
     assert AssetManifest.load(path).schema_version == "2.7"
@@ -252,7 +279,7 @@ def test_v1_stage_numbers_migrate_to_named_stages(tmp_path: Path, old: int, new:
     path.write_text(json.dumps(_v1_manifest(old)), encoding="utf-8")
 
     loaded = AssetManifest.load(path)
-    assert loaded.schema_version == "2.0"
+    assert loaded.schema_version == "2.1"
     assert loaded.background.fallback_stage == new
 
 

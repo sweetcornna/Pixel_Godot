@@ -14,13 +14,14 @@ import yaml
 
 from pixel_asset_forge.constants import ALLOWED_FRAME_COUNTS
 from pixel_asset_forge.errors import PlanError
-from pixel_asset_forge.models import load_request, parse_request
+from pixel_asset_forge.models import load_pack, load_request, parse_request
 from pixel_asset_forge.models.request import infer_locomotion
 from pixel_asset_forge.planning import grid_for_frames, layout_for_frames
 from pixel_asset_forge.prompts import (
     PROMPT_MARGIN_PERCENT,
     compile_animation_prompt,
     compile_seed_prompt,
+    compile_static_prompt,
     numbered_poses,
     pose_sequence,
 )
@@ -96,6 +97,22 @@ def test_numbered_poses_state_the_row_and_column() -> None:
 
 
 # -- Prompt 编译 -----------------------------------------------------------
+
+
+def test_static_prompt_is_item_only_and_uses_explicit_palette(examples_dir) -> None:
+    request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    prompt = compile_static_prompt(request, key_color="#FF00FF").text
+    lowered = prompt.lower()
+
+    assert "exact center" in lowered
+    assert "12% empty background margin" in lowered
+    for color in request.style.palette_colors or ():
+        assert color in prompt
+    for banned in ("character", "full body", "feet", "animation"):
+        assert banned not in lowered
+
+
+
 
 
 @pytest.fixture

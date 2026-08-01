@@ -21,16 +21,24 @@ from PIL import Image
 from ..constants import ACTION_DEFAULTS, ACTION_SIZE_BAND, split_animation_key
 from ..errors import ProcessingError
 from ..logging_utils import get_logger
-from ..models.manifest import AssetManifest, GeneratedAnimation, GridInfo
+from ..models.job import JobKind
+from ..models.manifest import (
+    AnchorInfo,
+    AssetManifest,
+    GeneratedAnimation,
+    GridInfo,
+    StaticImageInfo,
+)
 from ..models.request import AssetRequest, load_request
 from ..planning.grid_layout import GridLayout, layout_for_frames
-from ..processing.anchor import BOTTOM_CENTER, align_frames
+from ..processing.anchor import BOTTOM_CENTER, CENTER, align_frames, place_on_canvas
 from ..processing.palette import quantize_frames, snap_to_palette
 from ..processing.pipeline import ProcessOptions, ProcessResult, process_grid
 from ..processing.resize import nearest_resize
 from ..processing.scale_profile import ScaleProfile, derive_profile
 from ..processing.spritesheet import compose_spritesheet, save_frames, save_gif, save_png
 from ..storage.artifacts import ArtifactStore
+from ..storage.hashes import hash_file
 
 logger = get_logger("pipeline.process")
 
@@ -137,6 +145,109 @@ def _threshold_for(key: str, manifest: AssetManifest | None) -> float | None:
         return manifest.background.key_threshold
     entry = manifest.animations.get(key)
     return getattr(entry, "key_threshold", None)
+
+
+def _has_static_job(store: ArtifactStore) -> bool:
+    table = store.load_job_table()
+    return bool(table is not None and table.of_kind(JobKind.STATIC))
+
+
+def _process_static(
+    store: ArtifactStore,
+    request: AssetRequest | None,
+    manifest: AssetManifest | None,
+    *,
+    only: str | None,
+) -> list[dict[str, Any]]:
+    """从不可变的单张原图重跑静态 pickup 处理链。"""
+    if only not in (None, "static"):
+        raise ProcessingError("静态资产只支持 `process --only static`")
+    if manifest is None:
+        raise ProcessingError("静态任务缺少 Manifest，无法可靠恢复既有处理参数")
+
+    existing = manifest.static_image
+    source_path = (
+        store.root / existing.source_image
+        if existing is not None
+        else store.source_path("static")
+    )
+    if not source_path.exists():
+        raise ProcessingError(f"静态资产原图不存在：{source_path}")
+
+    image = np.array(Image.open(source_path).convert("RGB"))
+    source_size = (image.shape[1], image.shape[0])
+    final_size = (manifest.canvas.width, manifest.canvas.height)
+    inner_size = (max(1, final_size[0] - 2), max(1, final_size[1] - 2))
+    palette = list(manifest.palette.colors) or (
+        list(request.style.palette_colors)
+        if request is not None and request.style.palette_colors is not None
+        else None
+    )
+    options = ProcessOptions(
+        key_color=manifest.background.color_used,
+        key_threshold=existing.key_threshold if existing is not None else None,
+        target_size=inner_size,
+        max_colors=manifest.palette.max_colors,
+        anchor=CENTER,
+        crop_padding=1,
+        grid_block_size=existing.grid_block_size if existing is not None else None,
+        palette=palette,
+    )
+    layout = GridLayout(frames=1, cols=1, rows=1, cell=source_size)
+    result = process_grid(image, layout, options)
+    final_frame = place_on_canvas(result.frames[0], final_size, anchor=CENTER)
+    image_path = (
+        store.root / existing.image
+        if existing is not None
+        else store.frames / "static.png"
+    )
+    save_png(final_frame, image_path)
+
+    table = store.load_job_table()
+    static_jobs = table.of_kind(JobKind.STATIC) if table is not None else ()
+    planned_size = static_jobs[0].physical_size if static_jobs else None
+    requested_size = (
+        existing.requested_size
+        if existing is not None
+        else (planned_size or source_size)
+    )
+    actual_size = existing.actual_size if existing is not None else source_size
+    manifest.anchor = AnchorInfo(type="center", x=0.5, y=0.5)
+    manifest.palette.colors = palette or result.palette.colors
+    manifest.static_image = StaticImageInfo(
+        source_image=str(source_path.relative_to(store.root)),
+        image=str(image_path.relative_to(store.root)),
+        requested_size=requested_size,
+        actual_size=actual_size,
+        key_threshold=result.key_threshold,
+        grid_block_size=(
+            result.grid_snap.block_size
+            if result.grid_snap is not None and result.grid_snap.applied
+            else None
+        ),
+        source_hash=hash_file(source_path),
+        processed_hash=hash_file(image_path),
+    )
+    manifest.status = "processed"
+    manifest.save(store.manifest_path)
+
+    return [
+        {
+            "key": "static",
+            "frames": 1,
+            "frame_size": f"{final_size[0]}×{final_size[1]}",
+            "threshold": result.key_threshold,
+            "background_ratio": result.background_ratio,
+            "colors": result.palette.color_count,
+            "quantization_error": result.palette.quantization_error_ratio,
+            "anchor_drift": result.anchor_drift_px,
+            "split_method": result.split.method.value if result.split else "slots",
+            "fragments": result.split.fragments_attached if result.split else 0,
+            "sprites_found": 1,
+            "source_size": result.source_size,
+            "warnings": list(result.warnings),
+        }
+    ]
 
 
 @dataclass
@@ -390,6 +501,8 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
 
     request = load_request(store.request_path) if store.request_path.exists() else None
     manifest = AssetManifest.load(store.manifest_path) if store.manifest_path.exists() else None
+    if (manifest is not None and manifest.static_image is not None) or _has_static_job(store):
+        return _process_static(store, request, manifest, only=only)
     base = _base_options(request, manifest)
 
     summaries: list[dict[str, Any]] = []
@@ -609,6 +722,8 @@ def _update_manifest(
             logger.warning("既没有 manifest 也没有 request，跳过 manifest 写回")
             return
         manifest = AssetManifest(
+            # 2.1 只为静态资产新增 static_image；传统动画产物继续使用 2.0 契约。
+            schema_version="2.0",
             asset_id=request.asset_id,
             asset_type=request.asset_type,
             provider=ProviderInfo(name="mock", model="unknown"),

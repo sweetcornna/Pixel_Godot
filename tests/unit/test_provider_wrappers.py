@@ -161,6 +161,14 @@ def test_factory_builds_the_full_stack(tmp_path: Path) -> None:
     assert provider.inner.throttle.max_concurrency == 2
 
 
+def test_factory_reuses_an_injected_throttle(tmp_path: Path) -> None:
+    throttle = Throttle(max_concurrency=1)
+    provider = get_provider(Config(provider="mock"), throttle=throttle)
+    assert isinstance(provider, CachingProvider)
+    assert isinstance(provider.inner, ThrottledProvider)
+    assert provider.inner.throttle is throttle
+
+
 def test_factory_omits_cache_when_disabled(tmp_path: Path) -> None:
     config = Config(provider="mock", cache_enabled=False)
     provider = get_provider(config)

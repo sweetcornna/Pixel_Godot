@@ -131,6 +131,9 @@ class CachingProvider(_Delegating):
         entry = self.cache.get(key)
         if entry is None:
             return None
+        if entry.meta.get("provider") != self.name or entry.meta.get("model") != model:
+            logger.warning("缓存条目后端不匹配，按 miss 处理：%s", key[:12])
+            return None
         data = entry.image_path.read_bytes()
         self.hits += 1
         logger.info("缓存命中 %s，跳过 API 调用", key[:12])
@@ -171,16 +174,17 @@ class CachingProvider(_Delegating):
         key = self.generate_key(prompt, size, effective_model)
         summary = {"operation": "generate", "size": list(size), "prompt_chars": len(prompt)}
 
-        cached = self._from_cache(
-            key, requested_size=size, model=effective_model, summary=summary
-        )
-        if cached is not None:
-            return cached
+        with self.cache.key_lock(key):
+            cached = self._from_cache(
+                key, requested_size=size, model=effective_model, summary=summary
+            )
+            if cached is not None:
+                return cached
 
-        self.misses += 1
-        result = super().generate(prompt, size=size, model=model, sleep=sleep)
-        self._store(result)
-        return result
+            self.misses += 1
+            result = super().generate(prompt, size=size, model=model, sleep=sleep)
+            self._store(result)
+            return result
 
     def edit(
         self,
@@ -201,19 +205,20 @@ class CachingProvider(_Delegating):
             "references": len(references),
         }
 
-        cached = self._from_cache(
-            key, requested_size=size, model=effective_model, summary=summary
-        )
-        if cached is not None:
-            return cached
+        with self.cache.key_lock(key):
+            cached = self._from_cache(
+                key, requested_size=size, model=effective_model, summary=summary
+            )
+            if cached is not None:
+                return cached
 
-        self.misses += 1
-        result = super().edit(
-            prompt, base_image=base_image, size=size, references=references,
-            model=model, sleep=sleep,
-        )
-        self._store(result)
-        return result
+            self.misses += 1
+            result = super().edit(
+                prompt, base_image=base_image, size=size, references=references,
+                model=model, sleep=sleep,
+            )
+            self._store(result)
+            return result
 
 
 def bypass_cache(provider: ImageProvider) -> AbstractContextManager[None]:

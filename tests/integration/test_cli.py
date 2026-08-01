@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -94,6 +95,145 @@ def test_plan_surfaces_the_background_downgrade(examples_dir: Path) -> None:
     assert "#00FF00" in result.stdout
 
 
+def test_plan_recognizes_potion_pack_and_reports_effective_model(
+    examples_dir: Path,
+) -> None:
+    result = runner.invoke(app, ["plan", str(examples_dir / "potion_pack.yaml"), "--json"])
+    assert result.exit_code == EXIT_OK
+    payload = json.loads(result.stdout)
+    assert payload["pack_type"] == "potion_pack"
+    assert payload["estimated_api_calls"] == 3
+    assert len(payload["assets"]) == 3
+
+
+def test_create_asset_pack_requires_saved_plan(
+    examples_dir: Path, isolated_env: Path
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\nmodel: mock-image\noutput_dir: outputs\ncache_dir: cache\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["create-asset-pack", str(examples_dir / "potion_pack.yaml"), "--config", str(config)],
+    )
+
+    assert result.exit_code == EXIT_ERROR
+    assert "批量执行前必须先完成离线规划" in result.stderr
+    assert "pixel-asset plan" in result.stderr
+    assert "--save" in result.stderr
+    assert not (isolated_env / "outputs" / "_packs").exists()
+
+
+def test_create_asset_pack_rejects_stale_saved_plan(
+    examples_dir: Path, isolated_env: Path
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\nmodel: mock-image\noutput_dir: outputs\ncache_dir: cache\n",
+        encoding="utf-8",
+    )
+    pack_file = isolated_env / "potion_pack.yaml"
+    pack_data = yaml.safe_load(
+        (examples_dir / "potion_pack.yaml").read_text(encoding="utf-8")
+    )
+    pack_file.write_text(yaml.safe_dump(pack_data, sort_keys=False), encoding="utf-8")
+    planned = runner.invoke(
+        app,
+        ["plan", str(pack_file), "--config", str(config), "--save"],
+    )
+    assert planned.exit_code == EXIT_OK
+    pack_data["assets"][0]["description"] += " with a gold label"
+    pack_file.write_text(yaml.safe_dump(pack_data, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["create-asset-pack", str(pack_file), "--config", str(config)],
+    )
+
+    assert result.exit_code == EXIT_ERROR
+    assert "规划指纹与当前请求不一致：health_potion" in result.stderr
+    assert "pixel-asset plan" in result.stderr
+    assert not (isolated_env / "outputs" / "_packs").exists()
+
+
+def test_create_pack_and_export_by_asset_id(
+    examples_dir: Path, isolated_env: Path
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\n"
+        "model: mock-image\n"
+        "output_dir: outputs\n"
+        "cache_dir: cache\n"
+        "max_concurrency: 2\n",
+        encoding="utf-8",
+    )
+    planned = runner.invoke(
+        app,
+        ["plan", str(examples_dir / "potion_pack.yaml"), "--config", str(config), "--save"],
+    )
+    assert planned.exit_code == EXIT_OK
+    created = runner.invoke(
+        app,
+        [
+            "create-asset-pack",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--json",
+        ],
+    )
+    assert created.exit_code == EXIT_OK
+    payload = json.loads(created.stdout)
+    assert payload["model"] == "mock-image"
+    assert payload["counts"]["exported"] == 3
+
+    exported = runner.invoke(
+        app,
+        ["export", "health_potion", "--config", str(config), "--no-contact-sheet"],
+    )
+    assert exported.exit_code == EXIT_OK
+    assert (isolated_env / "outputs" / "health_potion" / "exports").exists()
+
+
+def test_export_by_asset_id_includes_default_contact_sheet(
+    examples_dir: Path, isolated_env: Path
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\n"
+        "model: mock-image\n"
+        "output_dir: outputs\n"
+        "cache_dir: cache\n"
+        "max_concurrency: 2\n",
+        encoding="utf-8",
+    )
+    planned = runner.invoke(
+        app,
+        ["plan", str(examples_dir / "potion_pack.yaml"), "--config", str(config), "--save"],
+    )
+    assert planned.exit_code == EXIT_OK
+    created = runner.invoke(
+        app,
+        ["create-asset-pack", str(examples_dir / "potion_pack.yaml"), "--config", str(config)],
+    )
+    assert created.exit_code == EXIT_OK
+
+    exported = runner.invoke(
+        app,
+        ["export", "health_potion", "--config", str(config), "--target", "godot"],
+    )
+
+    assert exported.exit_code == EXIT_OK
+    assert "contact-sheet.png" in exported.stdout
+    assert (
+        isolated_env / "outputs" / "health_potion" / "previews" / "contact-sheet.png"
+    ).exists()
+
+
 def test_plan_save_persists_the_job_table(examples_dir: Path, isolated_env: Path) -> None:
     result = runner.invoke(app, ["plan", str(examples_dir / "knight.yaml"), "--save"])
     assert result.exit_code == EXIT_OK
@@ -109,6 +249,46 @@ def test_replanning_after_save_is_idempotent(examples_dir: Path, isolated_env: P
     first = json.loads(table.read_text(encoding="utf-8"))
     runner.invoke(app, ["plan", str(examples_dir / "knight.yaml"), "--save"])
     assert json.loads(table.read_text(encoding="utf-8")) == first
+
+
+def test_replanning_with_changed_model_reports_readable_fingerprint_conflict(
+    examples_dir: Path, isolated_env: Path
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\nmodel: model-a\noutput_dir: outputs\ncache_dir: cache\n",
+        encoding="utf-8",
+    )
+    first = runner.invoke(
+        app,
+        [
+            "plan",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--save",
+        ],
+    )
+    assert first.exit_code == EXIT_OK
+    config.write_text(
+        "provider: mock\nmodel: model-b\noutput_dir: outputs\ncache_dir: cache\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--save",
+        ],
+    )
+
+    assert result.exit_code == EXIT_ERROR
+    assert "input_fingerprint 冲突" in result.stderr
+    assert not isinstance(result.exception, ValueError)
 
 
 def test_invalid_request_exits_with_field_paths(isolated_env: Path) -> None:

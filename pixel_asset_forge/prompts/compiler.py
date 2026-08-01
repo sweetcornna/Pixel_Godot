@@ -69,6 +69,13 @@ _FACING = {
     ),
 }
 
+_STATIC_PERSPECTIVE = {
+    "top_down_3_4": "the camera slightly above the item, looking down at a shallow angle",
+    "top_down": "the camera directly overhead, looking straight down at the item",
+    "side_view": "the camera level with the item, looking straight at it from the side",
+    "isometric": "an isometric camera looking at the item",
+}
+
 _SHADING = {
     "flat": "flat single-tone shading",
     "two_tone": "two-tone shading (one base tone plus one shadow tone)",
@@ -173,6 +180,44 @@ def _background_block(key_color: str) -> str:
         f"that is not the subject, including the space between cells. "
         f"The background must be a single uniform colour with no gradient and no texture."
     )
+
+
+def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledPrompt:
+    """单张静态 pickup 的 prompt；不复用任何角色或动作模板。"""
+    from ..planning.grid_layout import seed_layout
+
+    layout = seed_layout()
+    colors = request.style.palette_colors
+    palette = (
+        "Explicit palette — use only these colours for the item: " + ", ".join(colors) + "."
+        if colors is not None
+        else f"Use at most {request.style.max_colors} colours for the item."
+    )
+    text = "\n\n".join(
+        [
+            "Crisp pixel art of one single isolated pickup item.",
+            f"Subject: {request.description.strip()}",
+            f"Camera: {_STATIC_PERSPECTIVE[request.style.perspective]}.",
+            _style_block(request),
+            palette,
+            (
+                "Composition: place the item at the exact center of the square canvas, "
+                f"with at least {PROMPT_MARGIN_PERCENT}% empty background margin on all "
+                "four sides. Keep the entire item visible and separated from every edge."
+            ),
+            (
+                f"Background: one completely flat solid {key_color} colour filling every "
+                "pixel outside the item, including all margin around it. The background "
+                "must be uniform, with no gradient, texture or vignette."
+            ),
+            (
+                "Exclude people, humanoids, creatures, faces, limbs, text, labels, numbers, "
+                "watermarks, scenery, ground planes, horizons, shadows, glow, bloom, blur, "
+                "photorealism, soft edges, anti-aliasing, and every second object."
+            ),
+        ]
+    )
+    return CompiledPrompt(text=text, key_color=key_color, size=layout.size)
 
 
 def compile_seed_prompt(request: AssetRequest, *, key_color: str) -> CompiledPrompt:

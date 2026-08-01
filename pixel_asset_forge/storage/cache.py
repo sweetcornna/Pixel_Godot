@@ -12,10 +12,14 @@ prompt 改一个字，哈希就变了，自然 miss。
 from __future__ import annotations
 
 import json
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..errors import ProcessingError
+from .atomic import atomic_write_bytes, atomic_write_json
 from .hashes import hash_bytes
 
 
@@ -36,6 +40,16 @@ class GenerationCache:
     def __init__(self, root: str | Path, *, enabled: bool = True) -> None:
         self.root = Path(root)
         self.enabled = enabled
+        self._locks_guard = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
+
+    @contextmanager
+    def key_lock(self, key: str) -> Iterator[None]:
+        """同进程内同一生成键只允许一个调用者读写缓存。"""
+        with self._locks_guard:
+            lock = self._locks.setdefault(key, threading.Lock())
+        with lock:
+            yield
 
     def _entry_dir(self, key: str) -> Path:
         # 两级分片：单目录几万个文件在某些文件系统上会明显变慢。
@@ -62,14 +76,12 @@ class GenerationCache:
         entry_dir = self._entry_dir(key)
         entry_dir.mkdir(parents=True, exist_ok=True)
         image = entry_dir / "image.png"
-        image.write_bytes(data)
+        atomic_write_bytes(image, data)
 
         full_meta = dict(meta or {})
         full_meta["content_hash"] = hash_bytes(data)
         full_meta["size_bytes"] = str(len(data))
-        (entry_dir / "meta.json").write_text(
-            json.dumps(full_meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        atomic_write_json(entry_dir / "meta.json", full_meta)
         return CacheEntry(key=key, image_path=image, meta=full_meta)
 
     def read(self, key: str) -> bytes:

@@ -6,6 +6,7 @@
 
 from .anchor import (
     BOTTOM_CENTER,
+    CENTER,
     Anchor,
     align_frames,
     anchor_drift,
@@ -59,6 +60,7 @@ from .spritesheet import (
 
 __all__ = [
     "BOTTOM_CENTER",
+    "CENTER",
     "Anchor",
     "BackgroundDecision",
     "ContentBox",

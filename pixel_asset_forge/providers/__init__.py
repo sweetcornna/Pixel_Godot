@@ -43,7 +43,12 @@ def build_backend(config: Config) -> ImageProvider:
     )
 
 
-def get_provider(config: Config, *, cache: GenerationCache | None = None) -> ImageProvider:
+def get_provider(
+    config: Config,
+    *,
+    cache: GenerationCache | None = None,
+    throttle: Throttle | None = None,
+) -> ImageProvider:
     """按配置构造完整的 Provider 栈。
 
     包装顺序是 ``Caching(Throttled(backend))`` —— 缓存在外层，
@@ -53,7 +58,7 @@ def get_provider(config: Config, *, cache: GenerationCache | None = None) -> Ima
 
     provider = ThrottledProvider(
         provider,
-        Throttle.from_rpm(config.max_concurrency, config.requests_per_minute),
+        throttle or Throttle.from_rpm(config.max_concurrency, config.requests_per_minute),
     )
 
     if config.cache_enabled:

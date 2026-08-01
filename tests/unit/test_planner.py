@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from pixel_asset_forge.models import load_request, parse_request
+from pixel_asset_forge.models import load_pack, load_request, parse_request
 from pixel_asset_forge.models.job import JobKind, JobStatus, JobTable
-from pixel_asset_forge.planning import plan_request
+from pixel_asset_forge.planning import plan_pack, plan_request
 
 
 def test_job_ids_are_unique(examples_dir: Path) -> None:
@@ -162,3 +162,54 @@ def test_merging_into_a_foreign_table_is_rejected(examples_dir: Path) -> None:
     request = load_request(examples_dir / "knight.yaml")
     with pytest.raises(ValueError):
         plan_request(request, existing=JobTable(asset_id="someone_else"))
+
+
+def test_static_pickup_has_one_static_job_and_no_seed(examples_dir: Path) -> None:
+    request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    result = plan_request(request, provider="openai", model="gpt-image-2")
+
+    jobs = tuple(result.jobs)
+    assert len(jobs) == 1
+    assert jobs[0].id == "health_potion:static"
+    assert jobs[0].kind is JobKind.STATIC
+    assert jobs[0].calls_api is True
+    assert jobs[0].input_fingerprint is not None
+    assert result.jobs.of_kind(JobKind.SEED) == ()
+    assert result.animations == ()
+    assert result.estimated_api_calls == 1
+    assert result.to_dict()["animations"] == []
+
+
+def test_static_planner_avoids_palette_key_color(examples_dir: Path) -> None:
+    request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    colliding = request.model_copy(
+        update={
+            "style": request.style.model_copy(
+                update={"palette_colors": ("#FF00FF", "#211A2C")}
+            )
+        }
+    )
+    result = plan_request(colliding)
+    assert result.background.color_used == "#00FF00"
+
+
+def test_animated_non_pickup_keeps_seed_behavior(examples_dir: Path) -> None:
+    result = plan_request(load_request(examples_dir / "fireball.yaml"))
+    assert result.jobs.seed_job is not None
+    assert result.jobs.of_kind(JobKind.STATIC) == ()
+
+
+def test_pack_plan_sums_assets_and_accepts_existing_mapping(examples_dir: Path) -> None:
+    pack = load_pack(examples_dir / "potion_pack.yaml")
+    first = plan_pack(pack, provider="openai", model="gpt-image-2")
+    existing = {result.request.asset_id: result.jobs for result in first.assets}
+    second = plan_pack(
+        pack,
+        existing=existing,
+        provider="openai",
+        model="gpt-image-2",
+    )
+
+    assert first.estimated_api_calls == 3
+    assert first.total_jobs == 3
+    assert second.to_dict()["assets"][0]["asset_id"] == "health_potion"

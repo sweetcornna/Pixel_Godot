@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 import yaml
 from pydantic import (
@@ -101,6 +101,7 @@ ACTION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 CycleKind = Literal["one_shot", "loop", "gait"]
 
 ExportTarget = Literal["generic-json", "godot", "phaser", "tiled"]
+HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
 
 
 class _Base(BaseModel):
@@ -118,6 +119,8 @@ class StyleSpec(_Base):
     strict_lighting: bool = False
     """true 时禁用一切镜像，四方向全部独立生成（ADR-006）。"""
     palette_preset: str | None = None
+    palette_colors: tuple[HexColor, ...] | None = None
+    """显式锁定的共享色板。pack 展开时写入；数量不得超过 ``max_colors``。"""
 
     @field_validator("target_size")
     @classmethod
@@ -128,6 +131,23 @@ class StyleSpec(_Base):
                     f"逻辑尺寸只支持 {LOGICAL_SIZES}，收到 {side}"
                 )
         return value
+
+    @field_validator("palette_colors")
+    @classmethod
+    def _check_palette_not_empty(
+        cls, value: tuple[HexColor, ...] | None
+    ) -> tuple[HexColor, ...] | None:
+        if value is not None and not value:
+            raise ValueError("显式 palette_colors 不能为空")
+        return value
+
+    @model_validator(mode="after")
+    def _check_palette_limit(self) -> StyleSpec:
+        if self.palette_colors is not None and len(self.palette_colors) > self.max_colors:
+            raise ValueError(
+                f"显式色板有 {len(self.palette_colors)} 色，超过 max_colors={self.max_colors}"
+            )
+        return self
 
 
 class BackgroundSpec(_Base):
@@ -255,7 +275,7 @@ class ExportSpec(_Base):
 
 
 class AssetRequest(_Base):
-    schema_version: str = "1.0"
+    schema_version: str = REQUEST_SCHEMA_VERSION
     asset_id: str
     asset_type: AssetType
     description: str = Field(min_length=8, max_length=2000)
@@ -301,7 +321,7 @@ def parse_request(data: dict[str, Any], *, source: str = "<内存>") -> AssetReq
             f"{source}：请求必须是一个 YAML 映射（字典），实际是 {type(data).__name__}"
         )
 
-    version = data.get("schema_version", "1.0")
+    version = data.get("schema_version", REQUEST_SCHEMA_VERSION)
     if not isinstance(version, str):
         raise RequestValidationError(
             f"{source}：schema_version 必须是字符串",

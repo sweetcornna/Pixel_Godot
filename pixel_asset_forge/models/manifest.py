@@ -19,6 +19,7 @@ from .. import MANIFEST_SCHEMA_VERSION, PIPELINE_VERSION
 from ..constants import ESCALATED_STAGES, FallbackStage
 from ..errors import ProcessingError
 from ..schema_registry import check_schema_version, validate_against
+from ..storage.atomic import atomic_write_json
 
 HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
 
@@ -118,6 +119,19 @@ class GridInfo(_Base):
         return self.requested_size != self.actual_size
 
 
+class StaticImageInfo(_Base):
+    """静态 pickup 的原图、处理产物与确定性处理参数。"""
+
+    source_image: str
+    image: str
+    requested_size: tuple[int, int]
+    actual_size: tuple[int, int]
+    key_threshold: float = Field(ge=0)
+    grid_block_size: float | None = Field(default=None, gt=0)
+    source_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+    processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+
+
 class GeneratedAnimation(_Base):
     fps: int = Field(ge=1, le=60)
     loop: bool
@@ -210,6 +224,7 @@ class AssetManifest(_Base):
     palette: PaletteInfo
     mirroring: MirroringInfo | None = None
     scale_profile: ScaleProfileInfo | None = None
+    static_image: StaticImageInfo | None = None
     animations: dict[str, AnimationEntry] = Field(default_factory=dict)
     sheets: dict[str, str] = Field(default_factory=dict)
     status: ManifestStatus = "planned"
@@ -225,12 +240,7 @@ class AssetManifest(_Base):
 
     def save(self, path: str | Path) -> Path:
         self.validate_schema()
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
-            json.dumps(self.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        return p
+        return atomic_write_json(path, self.to_dict())
 
     @classmethod
     def load(cls, path: str | Path) -> AssetManifest:

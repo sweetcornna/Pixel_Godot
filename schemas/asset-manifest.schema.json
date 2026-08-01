@@ -19,7 +19,7 @@
   ],
   "properties": {
     "schema_version": {
-      "description": "MAJOR.MINOR，当前 2.0。读取器遇到更高 MAJOR 必须拒绝；更高 MINOR 应忽略未知字段（PLAN §5.4）。1.x → 2.0 的变更：fallback_stage 由序号整数改为具名枚举、grid 增加 requested_size/actual_size、background 增加 key_threshold。迁移由读取器自动完成。",
+      "description": "MAJOR.MINOR，当前 2.1。读取器遇到更高 MAJOR 必须拒绝；更高 MINOR 应忽略未知字段（PLAN §5.4）。2.1 仅新增可选 static_image，无需迁移。1.x → 2.x 的迁移由读取器自动完成。",
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+$"
     },
@@ -199,6 +199,9 @@
         }
       }
     },
+    "static_image": {
+      "$ref": "#/$defs/static_image"
+    },
     "animations": {
       "description": "键为 <action>_<direction>，如 walk_down。",
       "type": "object",
@@ -272,6 +275,61 @@
     "hex_color": {
       "type": "string",
       "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "static_image": {
+      "description": "静态 pickup 的单张原图、处理产物与离线复现参数。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_image",
+        "image",
+        "requested_size",
+        "actual_size",
+        "key_threshold",
+        "source_hash",
+        "processed_hash"
+      ],
+      "properties": {
+        "source_image": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "requested_size": {
+          "$ref": "#/$defs/image_size"
+        },
+        "actual_size": {
+          "$ref": "#/$defs/image_size"
+        },
+        "key_threshold": {
+          "type": "number",
+          "minimum": 0
+        },
+        "grid_block_size": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "source_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "processed_hash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "image_size": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$"
     },
     "generated_animation": {
       "description": "由 API 生成的动作。",

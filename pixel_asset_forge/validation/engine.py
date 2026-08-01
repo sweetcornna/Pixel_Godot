@@ -23,7 +23,7 @@ from ..constants import (
     split_animation_key,
 )
 from ..errors import PlanError
-from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation
+from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation, StaticImageInfo
 from ..models.validation import (
     Check,
     CheckId,
@@ -33,11 +33,14 @@ from ..models.validation import (
     thresholds_for,
 )
 from ..planning.grid_layout import aspect_mismatch
+from ..processing.chroma_key import hex_to_rgb
 from ..prompts.poses import pose_sequence
+from ..storage.hashes import hash_file
 from .beat_signature import BeatSignature, check_beat_signature
 from .frame_order import UNDETECTABLE_MESSAGE, measure_frame_order
 from .metrics import (
     anchor_measurement,
+    content_box,
     exact_duplicates,
     height_variation,
     is_blank,
@@ -403,8 +406,126 @@ def validate_derived(key: str, entry: DerivedAnimation) -> list[Check]:
     ]
 
 
+def validate_static_image(
+    root: Path,
+    entry: StaticImageInfo,
+    *,
+    expected_size: tuple[int, int],
+    palette: list[str],
+) -> list[Check]:
+    """验证静态成品及其 Manifest 溯源。"""
+    target = "static"
+    image_path = root / entry.image
+    source_path = root / entry.source_image
+    image_exists = image_path.is_file()
+    source_exists = source_path.is_file()
+    checks = [
+        Check.make(
+            "artifact_exists",
+            target,
+            CheckResult.PASS if image_exists and source_exists else CheckResult.FAIL,
+            measured=image_exists and source_exists,
+            threshold=True,
+            message=(
+                None
+                if image_exists and source_exists
+                else f"静态产物缺失：成品={image_exists}，原图={source_exists}"
+            ),
+        )
+    ]
+    if not image_exists or not source_exists:
+        return checks
+
+    source_hash_ok = hash_file(source_path) == entry.source_hash
+    image_hash_ok = hash_file(image_path) == entry.processed_hash
+    checks.append(
+        Check.make(
+            "artifact_hash",
+            target,
+            CheckResult.PASS if source_hash_ok and image_hash_ok else CheckResult.FAIL,
+            measured=source_hash_ok and image_hash_ok,
+            threshold=True,
+            message=(
+                None
+                if source_hash_ok and image_hash_ok
+                else "磁盘内容哈希与 Manifest 不一致"
+            ),
+        )
+    )
+
+    frame = np.array(Image.open(image_path).convert("RGBA"))
+    actual_size = (frame.shape[1], frame.shape[0])
+    checks.append(
+        Check.make(
+            "frame_size",
+            target,
+            CheckResult.PASS if actual_size == expected_size else CheckResult.FAIL,
+            measured=actual_size[0] * actual_size[1],
+            threshold=expected_size[0] * expected_size[1],
+            message=(
+                None
+                if actual_size == expected_size
+                else f"期望 {expected_size}，实际 {actual_size}"
+            ),
+        )
+    )
+
+    blank = is_blank(frame)
+    checks.append(
+        Check.make(
+            "blank_frame",
+            target,
+            CheckResult.FAIL if blank else CheckResult.PASS,
+            measured=blank,
+            threshold=False,
+            message="静态成品全透明" if blank else None,
+        )
+    )
+    residue = transparent_rgb_residue(frame)
+    checks.append(
+        Check.make(
+            "transparent_rgb_residue",
+            target,
+            CheckResult.PASS if residue == 0 else CheckResult.FAIL,
+            measured=residue,
+            threshold=0,
+            message=None if residue == 0 else f"{residue} 个透明像素带非零 RGB",
+        )
+    )
+
+    box = content_box(frame)
+    touches_edge = box is not None and (
+        box[0] <= 0 or box[1] <= 0 or box[2] >= frame.shape[1] or box[3] >= frame.shape[0]
+    )
+    checks.append(
+        Check.make(
+            "content_bounds",
+            target,
+            CheckResult.FAIL if touches_edge or box is None else CheckResult.PASS,
+            measured=bool(touches_edge),
+            threshold=False,
+            message="主体接触画布边缘，可能已被裁切" if touches_edge else None,
+        )
+    )
+
+    allowed = {hex_to_rgb(color) for color in palette}
+    actual = palette_of([frame])
+    outside = actual - allowed if allowed else set()
+    checks.append(
+        Check.make(
+            "palette_membership",
+            target,
+            CheckResult.PASS if not outside else CheckResult.FAIL,
+            measured=len(outside),
+            threshold=0,
+            message=None if not outside else f"{len(outside)} 个颜色不属于共享 palette",
+        )
+    )
+    return checks
+
+
 def validate_asset(asset_dir: str | Path) -> ValidationReport:
-    """校验一个资产目录下的全部动作。"""
+    """校验一个资产目录下的静态图与全部动作。"""
     root = Path(asset_dir)
     manifest = AssetManifest.load(root / "asset-manifest.json")
 
@@ -424,6 +545,27 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
         locomotion = request.resolved_locomotion
         for spec in request.animation_list():
             request_frames[spec.name] = spec.frames
+
+    if manifest.static_image is not None:
+        report.checks.extend(
+            validate_static_image(
+                root,
+                manifest.static_image,
+                expected_size=expected_size,
+                palette=manifest.palette.colors,
+            )
+        )
+    elif manifest.asset_type == "pickup" and not manifest.animations:
+        report.checks.append(
+            Check.make(
+                "artifact_exists",
+                "static",
+                CheckResult.FAIL,
+                measured=False,
+                threshold=True,
+                message="静态 pickup 的 Manifest 缺少 static_image",
+            )
+        )
 
     for key in sorted(manifest.animations):
         entry = manifest.animations[key]

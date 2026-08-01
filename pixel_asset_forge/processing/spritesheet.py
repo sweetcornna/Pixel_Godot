@@ -6,6 +6,7 @@ Spritesheet 的布局必须**可由 Manifest 完整重建**（ADR-001）：
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import numpy as np
 from PIL import Image
 
 from ..errors import ProcessingError
+from ..storage.atomic import atomic_write_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +83,9 @@ def save_png(rgba: np.ndarray, path: str | Path) -> Path:
     cleaned = rgba.copy()
     cleaned[cleaned[:, :, 3] == 0] = 0
 
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(cleaned, mode="RGBA").save(target, format="PNG", optimize=True)
-    return target
+    buffer = io.BytesIO()
+    Image.fromarray(cleaned, mode="RGBA").save(buffer, format="PNG", optimize=True)
+    return atomic_write_bytes(path, buffer.getvalue())
 
 
 def save_frames(frames: list[np.ndarray], directory: str | Path, *, stem: str) -> list[Path]:

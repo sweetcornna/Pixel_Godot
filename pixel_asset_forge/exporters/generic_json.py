@@ -17,7 +17,14 @@ import numpy as np
 
 from ..models.manifest import AssetManifest
 from ..processing.spritesheet import save_png
-from .base import AnimationView, Exporter, ExportResult, animation_views, load_frames
+from .base import (
+    AnimationView,
+    Exporter,
+    ExportResult,
+    animation_views,
+    load_frames,
+    load_static_image,
+)
 
 SCHEMA = "pixel-asset-forge.generic.v1"
 
@@ -54,8 +61,6 @@ class GenericJsonExporter(Exporter):
     def export(self, manifest: AssetManifest, root: Path, out_dir: Path) -> ExportResult:
         views = animation_views(manifest, root)
         result = ExportResult(target=self.target)
-        if not views:
-            result.notes.append("没有任何动作，只导出元数据")
 
         self.ensure_dir(out_dir)
         frames_by_key = {v.key: load_frames(root, v) for v in views}
@@ -79,6 +84,16 @@ class GenericJsonExporter(Exporter):
                 "reference": manifest.scale_profile.reference,
                 "subject_ratio": manifest.scale_profile.subject_ratio,
                 "canvas_fraction": manifest.scale_profile.canvas_fraction,
+            }
+
+        if manifest.static_image is not None:
+            image = load_static_image(manifest, root)
+            image_path = save_png(image, out_dir / f"{manifest.asset_id}.png")
+            result.files.append(image_path)
+            payload["image"] = {
+                "file": image_path.name,
+                "width": int(image.shape[1]),
+                "height": int(image.shape[0]),
             }
 
         if views:

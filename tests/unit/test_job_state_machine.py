@@ -55,6 +55,17 @@ def test_cache_hit_skips_the_api_call() -> None:
     assert transition.calls_api is False
 
 
+def test_static_job_calls_the_api_and_has_static_id() -> None:
+    job = Job(
+        id=make_job_id("potion", JobKind.STATIC),
+        asset_id="potion",
+        kind=JobKind.STATIC,
+    )
+    assert job.id == "potion:static"
+    assert job.key == "static"
+    assert job.calls_api is True
+
+
 def test_derived_job_never_calls_the_api() -> None:
     job = make_job(JobKind.DERIVED, derived_from="walk_left", transform="flip_horizontal")
     assert job.calls_api is False
@@ -191,6 +202,41 @@ def test_job_table_add_is_idempotent() -> None:
     before = len(table)
     table.add(Job(id="a:seed", asset_id="a", kind=JobKind.SEED))
     assert len(table) == before
+
+
+def test_job_table_rejects_same_id_with_different_fingerprints() -> None:
+    table = JobTable(asset_id="potion")
+    table.add(
+        Job(
+            id="potion:static",
+            asset_id="potion",
+            kind=JobKind.STATIC,
+            input_fingerprint="a" * 64,
+        )
+    )
+    with pytest.raises(ValueError, match="input_fingerprint 冲突"):
+        table.add(
+            Job(
+                id="potion:static",
+                asset_id="potion",
+                kind=JobKind.STATIC,
+                input_fingerprint="b" * 64,
+            )
+        )
+
+
+def test_job_table_still_reuses_when_either_fingerprint_is_missing() -> None:
+    table = JobTable(asset_id="potion")
+    existing = Job(id="potion:static", asset_id="potion", kind=JobKind.STATIC)
+    assert table.add(existing) is existing
+    assert table.add(
+        Job(
+            id="potion:static",
+            asset_id="potion",
+            kind=JobKind.STATIC,
+            input_fingerprint="b" * 64,
+        )
+    ) is existing
 
 
 def test_cycle_detection() -> None:

@@ -57,6 +57,9 @@ def mvp_asset(config: Config, tmp_path: Path, examples_dir: Path) -> ArtifactSto
             create_animation(
                 store.root, action=action, direction=direction, config=config
             )
+    from pixel_asset_forge.pipelines.validation import run_validation
+
+    run_validation(store.root)
     return store
 
 

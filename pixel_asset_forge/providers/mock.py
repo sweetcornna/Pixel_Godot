@@ -35,6 +35,10 @@ from .base import ImageProvider, ReferenceImage
 _GRID_RE = re.compile(r"(\d+)\s*[x×]\s*(\d+)\s*(?:cell\s*)?grid", re.IGNORECASE)
 _POSES_RE = re.compile(r"exactly\s+(\d+)\s+(?:distinct\s+)?poses?", re.IGNORECASE)
 _HEX_RE = re.compile(r"#([0-9A-Fa-f]{6})")
+_BACKGROUND_HEX_RE = re.compile(
+    r"Background:\s*[^#]*#([0-9A-Fa-f]{6})",
+    re.IGNORECASE,
+)
 
 #: 触发模拟 moderation 拦截的词。用于测试永久错误路径不会被重试。
 _BLOCKED_WORDS = ("gore", "mutilat", "dismember")
@@ -44,7 +48,7 @@ _MARGIN_RATIO = 0.12
 
 
 def _parse_key_color(prompt: str) -> tuple[int, int, int]:
-    match = _HEX_RE.search(prompt)
+    match = _BACKGROUND_HEX_RE.search(prompt) or _HEX_RE.search(prompt)
     raw = match.group(1) if match else DEFAULT_KEY_COLOR.lstrip("#")
     return (int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16))
 
