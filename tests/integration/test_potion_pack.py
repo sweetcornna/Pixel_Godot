@@ -40,6 +40,15 @@ def save_plan(pack_path: Path, cfg: Config) -> None:
         )
 
 
+def single_asset_pack(tmp_path: Path, examples_dir: Path, pack_id: str) -> Path:
+    data = yaml.safe_load((examples_dir / "potion_pack.yaml").read_text(encoding="utf-8"))
+    data["pack_id"] = pack_id
+    data["assets"] = data["assets"][:1]
+    path = tmp_path / f"{pack_id}.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def test_three_potions_complete_and_resume_by_skipping(
     tmp_path: Path, examples_dir: Path
 ) -> None:
@@ -169,6 +178,7 @@ def test_retry_failed_resets_and_reclaims_asset(
 
     retried = asyncio.run(run_asset_pack(path, cfg, retry_failed=True))
     assert retried.counts["exported"] == 1
+    assert retried.counts["resumed"] == 1
     assert retried.assets[0].resumed is True
     log = json.loads(store.generation_log_path.read_text(encoding="utf-8"))
     assert len(log) == 1
@@ -220,3 +230,150 @@ def test_request_stop_pauses_undispatched_assets_and_resume_completes(
         store = ArtifactStore.for_asset(cfg.output_dir, outcome.asset_id)
         log = json.loads(store.generation_log_path.read_text(encoding="utf-8"))
         assert len(log) == 1
+
+
+def test_existing_job_fingerprint_conflict_is_not_reused_after_gate(
+    tmp_path: Path,
+    examples_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = config(tmp_path)
+    path = single_asset_pack(tmp_path, examples_dir, "fingerprint_conflict")
+    save_plan(path, cfg)
+    changed = cfg.model_copy(update={"model": "different-model"})
+    create_called = False
+
+    def unexpected_create(*_args, **_kwargs):
+        nonlocal create_called
+        create_called = True
+        raise AssertionError("fingerprint conflict must stop before generation")
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asset_pack, "_require_saved_plans", lambda *_args: None)
+    monkeypatch.setattr(asset_pack, "create_static_asset", unexpected_create)
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+
+    summary = asyncio.run(run_asset_pack(path, changed))
+
+    assert summary.counts["processing_failed"] == 1
+    assert summary.assets[0].error_code == "input_fingerprint_conflict"
+    assert "不会静默复用或覆盖原图" in (summary.assets[0].error or "")
+    assert create_called is False
+
+
+def test_generating_without_source_or_cache_is_outcome_unknown_and_not_retried(
+    tmp_path: Path,
+    examples_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = config(tmp_path)
+    path = single_asset_pack(tmp_path, examples_dir, "unknown_outcome")
+    save_plan(path, cfg)
+    store = ArtifactStore.for_asset(cfg.output_dir, "health_potion")
+    table = store.load_job_table()
+    assert table is not None
+    job = next(iter(table))
+    job.status = JobStatus.GENERATING
+    store.save_job_table(table)
+    create_called = False
+
+    def unexpected_create(*_args, **_kwargs):
+        nonlocal create_called
+        create_called = True
+        raise AssertionError("unknown outcomes must not be retried")
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asset_pack, "create_static_asset", unexpected_create)
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+
+    summary = asyncio.run(run_asset_pack(path, cfg))
+
+    assert summary.counts["outcome_unknown"] == 1
+    assert summary.counts["paused"] == 1
+    assert summary.assets[0].outcome_unknown is True
+    assert summary.assets[0].error_code == "outcome_unknown"
+    assert "未自动重试" in (summary.assets[0].error or "")
+    assert create_called is False
+    assert not store.source_path("static").exists()
+    assert not store.generation_log_path.exists()
+
+
+def test_summary_counts_persisted_validation_failure_and_resume(
+    tmp_path: Path,
+    examples_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = config(tmp_path)
+    path = single_asset_pack(tmp_path, examples_dir, "validation_failure")
+    save_plan(path, cfg)
+    store = ArtifactStore.for_asset(cfg.output_dir, "health_potion")
+    table = store.load_job_table()
+    assert table is not None
+    next(iter(table)).status = JobStatus.VALIDATION_FAILED
+    store.save_job_table(table)
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+
+    summary = asyncio.run(run_asset_pack(path, cfg))
+
+    assert summary.counts["validation_failed"] == 1
+    assert summary.counts["resumed"] == 1
+    assert summary.assets[0].outcome == "validation_failed"
+    assert summary.assets[0].resumed is True
+
+
+def test_summary_counts_cached_resume(
+    tmp_path: Path,
+    examples_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = config(tmp_path)
+    path = single_asset_pack(tmp_path, examples_dir, "cached_resume")
+    save_plan(path, cfg)
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+    first = asyncio.run(run_asset_pack(path, cfg))
+    assert first.counts["exported"] == 1
+
+    store = ArtifactStore.for_asset(cfg.output_dir, "health_potion")
+    table = store.load_job_table()
+    assert table is not None
+    next(iter(table)).status = JobStatus.GENERATING
+    store.save_job_table(table)
+    store.source_path("static").unlink()
+
+    resumed = asyncio.run(run_asset_pack(path, cfg))
+
+    assert resumed.counts["cached"] == 1
+    assert resumed.counts["resumed"] == 1
+    assert resumed.assets[0].cached is True
+    assert resumed.assets[0].resumed is True
+
+
+def test_summary_uses_explicit_placeholders_for_missing_outcomes(
+    tmp_path: Path, examples_dir: Path
+) -> None:
+    cfg = config(tmp_path)
+    pack = load_pack(examples_dir / "potion_pack.yaml")
+
+    summary = asset_pack._persist_summary(
+        pack, cfg, {}, control=PackRunControl()
+    )
+
+    assert summary.counts["total"] == len(pack.assets)
+    assert summary.counts["outcome_missing"] == len(pack.assets)
+    assert [asset.asset_id for asset in summary.assets] == [
+        asset.asset_id for asset in pack.assets
+    ]
+    assert all(asset.outcome == "outcome_missing" for asset in summary.assets)
+    assert all(asset.error_code == "outcome_missing" for asset in summary.assets)

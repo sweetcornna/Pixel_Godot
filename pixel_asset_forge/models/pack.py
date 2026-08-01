@@ -27,7 +27,7 @@ class PackPalette(_Base):
 
 class PackShared(_Base):
     style: StyleSpec
-    background: BackgroundSpec = BackgroundSpec()
+    background: BackgroundSpec
     export: ExportSpec
     palette: PackPalette
 

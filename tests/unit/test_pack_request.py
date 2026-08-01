@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from pixel_asset_forge.errors import RequestValidationError
-from pixel_asset_forge.models import input_fingerprint, load_pack, parse_pack
+from pixel_asset_forge.models import PackShared, input_fingerprint, load_pack, parse_pack
 from pixel_asset_forge.schema_registry import load_schema
 
 
@@ -54,6 +55,18 @@ def test_example_expands_to_static_pickup_requests(examples_dir: Path) -> None:
     assert all(request.schema_version == "1.1" for request in requests)
     assert all(request.style.palette_colors == pack.shared.palette.colors for request in requests)
     assert all(request.style.palette_preset == "starter_potions" for request in requests)
+    assert all(request.background == pack.shared.background for request in requests)
+    assert all(request.export == pack.shared.export for request in requests)
+
+
+def test_pack_shared_requires_explicit_background_at_pydantic_layer() -> None:
+    shared = pack_data()["shared"]
+    del shared["background"]
+
+    with pytest.raises(ValidationError) as exc:
+        PackShared.model_validate(shared)
+
+    assert any(error["loc"] == ("background",) for error in exc.value.errors())
 
 
 def test_duplicate_asset_id_is_rejected() -> None:

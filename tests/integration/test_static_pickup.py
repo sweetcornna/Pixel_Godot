@@ -8,13 +8,15 @@ from pathlib import Path
 import pytest
 
 from pixel_asset_forge.config import Config
-from pixel_asset_forge.errors import ExportError
-from pixel_asset_forge.models import AssetManifest, load_pack
+from pixel_asset_forge.errors import ExportError, ProcessingError
+from pixel_asset_forge.models import AssetManifest, load_pack, load_request
 from pixel_asset_forge.models.job import JobStatus
 from pixel_asset_forge.pipelines.export import run_export
 from pixel_asset_forge.pipelines.process import run_process
 from pixel_asset_forge.pipelines.static_asset import create_static_asset
 from pixel_asset_forge.pipelines.validation import run_validation
+from pixel_asset_forge.planning import plan_request
+from pixel_asset_forge.providers import MockImageProvider
 from pixel_asset_forge.storage import ArtifactStore
 from pixel_asset_forge.storage.hashes import hash_file
 
@@ -137,6 +139,34 @@ def test_process_rebuilds_completed_static_asset_without_provider_call(
     assert manifest.static_image is not None
     assert manifest.static_image.image == "frames/static.png"
     assert manifest.static_image.processed_hash == hash_file(created.image_path)
+
+
+def test_generating_resume_rejects_uncached_provider_result(
+    request_file: Path, config: Config
+) -> None:
+    request = load_request(request_file)
+    store = ArtifactStore.for_asset(config.output_dir, request.asset_id).ensure()
+    planned = plan_request(
+        request, provider=config.provider, model=config.model
+    )
+    job = next(iter(planned.jobs))
+    job.status = JobStatus.GENERATING
+    store.save_job_table(planned.jobs)
+    provider = MockImageProvider(config.model)
+
+    with pytest.raises(ProcessingError, match=r"恢复调用未命中 cache.*拒绝提交"):
+        create_static_asset(
+            request_file,
+            config,
+            provider=provider,
+            allow_cached_resume=True,
+        )
+
+    assert len(provider.calls) == 1
+    assert not store.source_path("static").exists()
+    persisted = store.load_job_table()
+    assert persisted is not None
+    assert next(iter(persisted)).status is JobStatus.GENERATING
 
 
 def load_pack_data(path: Path) -> dict:

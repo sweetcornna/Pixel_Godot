@@ -6,7 +6,9 @@ Sprint 1 交付 ``init`` / ``plan`` / ``doctor``。其余命令必须给出
 
 from __future__ import annotations
 
+import asyncio
 import json
+import signal
 from pathlib import Path
 
 import pytest
@@ -19,8 +21,12 @@ from pixel_asset_forge.cli import (
     EXIT_INVALID_REQUEST,
     EXIT_NOT_IMPLEMENTED,
     EXIT_OK,
+    EXIT_VALIDATION_FAILED,
     app,
 )
+from pixel_asset_forge.models import input_fingerprint, load_pack
+from pixel_asset_forge.pipelines.asset_pack import AssetOutcome, PackSummary
+from pixel_asset_forge.storage import ArtifactStore
 
 runner = CliRunner()
 
@@ -106,6 +112,107 @@ def test_plan_recognizes_potion_pack_and_reports_effective_model(
     assert len(payload["assets"]) == 3
 
 
+def test_cli_model_override_beats_environment_and_passes_pack_gate(
+    examples_dir: Path,
+    isolated_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\n"
+        "model: config-model\n"
+        "output_dir: outputs\n"
+        "cache_dir: cache\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PIXEL_ASSET_MODEL", "env-model")
+
+    planned = runner.invoke(
+        app,
+        [
+            "plan",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--model",
+            "cli-model",
+            "--save",
+        ],
+    )
+    assert planned.exit_code == EXIT_OK
+
+    request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    table = ArtifactStore.for_asset(
+        isolated_env / "outputs", request.asset_id
+    ).load_job_table()
+    assert table is not None
+    assert next(iter(table)).input_fingerprint == input_fingerprint(
+        request, "mock", "cli-model"
+    )
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+    created = runner.invoke(
+        app,
+        [
+            "create-asset-pack",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--model",
+            "cli-model",
+            "--json",
+        ],
+    )
+
+    assert created.exit_code == EXIT_OK
+    payload = json.loads(created.stdout)
+    assert payload["model"] == "cli-model"
+    assert payload["counts"]["exported"] == 3
+
+
+def test_create_asset_pack_rejects_model_override_different_from_saved_plan(
+    examples_dir: Path, isolated_env: Path
+) -> None:
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\nmodel: config-model\noutput_dir: outputs\ncache_dir: cache\n",
+        encoding="utf-8",
+    )
+    planned = runner.invoke(
+        app,
+        [
+            "plan",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--model",
+            "planned-model",
+            "--save",
+        ],
+    )
+    assert planned.exit_code == EXIT_OK
+
+    result = runner.invoke(
+        app,
+        [
+            "create-asset-pack",
+            str(examples_dir / "potion_pack.yaml"),
+            "--config",
+            str(config),
+            "--model",
+            "execution-model",
+        ],
+    )
+
+    assert result.exit_code == EXIT_ERROR
+    assert "规划指纹与当前请求不一致" in result.stderr
+    assert "health_potion" in result.stderr
+    assert "pixel-asset plan" in result.stderr
+
+
 def test_create_asset_pack_requires_saved_plan(
     examples_dir: Path, isolated_env: Path
 ) -> None:
@@ -157,6 +264,83 @@ def test_create_asset_pack_rejects_stale_saved_plan(
     assert "规划指纹与当前请求不一致：health_potion" in result.stderr
     assert "pixel-asset plan" in result.stderr
     assert not (isolated_env / "outputs" / "_packs").exists()
+
+
+def test_create_asset_pack_returns_signal_exit_code(
+    examples_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def interrupted_run(*_args, control, **_kwargs):
+        control.request_stop(signal.SIGTERM)
+        summary = PackSummary(
+            pack_id="starter_potions",
+            pack_type="potion_pack",
+            provider="mock",
+            model="mock-image",
+            worker_count=1,
+            interrupted=True,
+            interrupted_by="SIGTERM",
+            assets=[
+                AssetOutcome(
+                    asset_id="health_potion",
+                    job_id="health_potion:static",
+                    input_fingerprint="a" * 64,
+                    provider="mock",
+                    model="mock-image",
+                    outcome="paused",
+                    job_status="planned",
+                    stage="planned",
+                    artifact_root="outputs/health_potion",
+                )
+            ],
+        )
+        summary.refresh_counts()
+        return summary
+
+    monkeypatch.setattr("pixel_asset_forge.cli.run_asset_pack", interrupted_run)
+
+    result = runner.invoke(
+        app, ["create-asset-pack", str(examples_dir / "potion_pack.yaml")]
+    )
+
+    assert result.exit_code == 128 + signal.SIGTERM
+
+
+def test_create_asset_pack_returns_validation_failed_exit_code(
+    examples_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def validation_failed_run(*_args, **_kwargs):
+        summary = PackSummary(
+            pack_id="starter_potions",
+            pack_type="potion_pack",
+            provider="mock",
+            model="mock-image",
+            worker_count=1,
+            assets=[
+                AssetOutcome(
+                    asset_id="health_potion",
+                    job_id="health_potion:static",
+                    input_fingerprint="a" * 64,
+                    provider="mock",
+                    model="mock-image",
+                    outcome="validation_failed",
+                    job_status="validation_failed",
+                    stage="validation_failed",
+                    artifact_root="outputs/health_potion",
+                )
+            ],
+        )
+        summary.refresh_counts()
+        return summary
+
+    monkeypatch.setattr(
+        "pixel_asset_forge.cli.run_asset_pack", validation_failed_run
+    )
+
+    result = runner.invoke(
+        app, ["create-asset-pack", str(examples_dir / "potion_pack.yaml")]
+    )
+
+    assert result.exit_code == EXIT_VALIDATION_FAILED
 
 
 def test_create_pack_and_export_by_asset_id(

@@ -38,6 +38,7 @@ PackOutcome = Literal[
     "processing_failed",
     "paused",
     "skipped",
+    "outcome_missing",
 ]
 
 
@@ -81,7 +82,7 @@ class PackSummary(BaseModel):
         counts = {name: 0 for name in (
             "total", "exported", "validation_failed", "provider_failed",
             "processing_failed", "paused", "skipped", "cached", "resumed",
-            "outcome_unknown",
+            "outcome_unknown", "outcome_missing",
         )}
         counts["total"] = len(self.assets)
         for asset in self.assets:
@@ -202,6 +203,27 @@ def _persist_summary(
     *,
     control: PackRunControl,
 ) -> PackSummary:
+    assets = []
+    for request in pack.expand_requests():
+        outcome = outcomes.get(request.asset_id)
+        if outcome is None:
+            outcome = AssetOutcome(
+                asset_id=request.asset_id,
+                job_id=f"{request.asset_id}:static",
+                input_fingerprint=input_fingerprint(
+                    request, config.provider, config.model
+                ),
+                provider=config.provider,
+                model=config.model,
+                outcome="outcome_missing",
+                job_status="unknown",
+                stage="outcome_missing",
+                error_code="outcome_missing",
+                error="资产未产生执行结果；汇总使用显式占位条目",
+                artifact_root=str(config.asset_dir(request.asset_id)),
+            )
+        assets.append(outcome)
+
     summary = PackSummary(
         pack_id=pack.pack_id,
         pack_type=pack.pack_type,
@@ -214,7 +236,7 @@ def _persist_summary(
             if control.signal_number is not None
             else None
         ),
-        assets=[outcomes[asset.asset_id] for asset in pack.assets if asset.asset_id in outcomes],
+        assets=assets,
     )
     summary.refresh_counts()
     atomic_write_json(_summary_path(config, pack.pack_id), summary.model_dump(mode="json"))

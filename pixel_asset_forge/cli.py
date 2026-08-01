@@ -96,9 +96,13 @@ def _fail(exc: PixelAssetError) -> None:
     raise typer.Exit(EXIT_ERROR)
 
 
-def _load_config(config_path: Path | None = None) -> Config:
+def _load_config(
+    config_path: Path | None = None,
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> Config:
     try:
-        return load_config(project_config=config_path)
+        return load_config(project_config=config_path, overrides=overrides)
     except PixelAssetError as exc:
         _fail(exc)
         raise  # pragma: no cover - _fail 永远抛出
@@ -293,12 +297,16 @@ def plan(
     config_path: Annotated[
         Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
     ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
 ) -> None:
     """解析请求并输出任务 DAG 与预计 API 调用次数。不调用 API、不生成任何图。
 
     大批量生成之前先跑它 —— 不要在用户不知情的情况下发起批量生成。
     """
-    config = _load_config(config_path)
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
     try:
         raw = yaml.safe_load(request_file.read_text(encoding="utf-8"))
         if isinstance(raw, dict) and "pack_type" in raw:
@@ -389,9 +397,13 @@ def create_asset_pack(
     config_path: Annotated[
         Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
     ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
 ) -> None:
     """并发生成、验证并导出一个静态 potion_pack。"""
-    config = _load_config(config_path)
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
     control = PackRunControl()
     previous: dict[int, Any] = {}
 

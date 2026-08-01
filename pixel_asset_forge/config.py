@@ -1,6 +1,6 @@
 """配置加载。
 
-优先级（PLAN §8 Sprint 1）：**环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值**。
+优先级（PLAN §8 Sprint 1）：**命令行覆盖 > 环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值**。
 
 API Key 只从环境变量读，**永远不从配置文件读、也永远不写入配置文件**。
 这不是为了省事 —— 是为了让"Key 泄漏到仓库里"这件事在结构上不可能发生。
@@ -210,7 +210,7 @@ def load_config(
 DEFAULT_CONFIG_TEMPLATE = f"""\
 # Pixel Asset Forge 项目配置
 #
-# 优先级：环境变量 > 本文件 > 用户级配置（{USER_CONFIG_PATH}）> 内置默认值
+# 优先级：命令行覆盖 > 环境变量 > 本文件 > 用户级配置（{USER_CONFIG_PATH}）> 内置默认值
 #
 # ⚠️ 绝不要在这里写 API Key。Key 只从环境变量读取：
 #      {" 或 ".join(API_KEY_ENV_VARS)}
