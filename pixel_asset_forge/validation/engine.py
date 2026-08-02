@@ -621,24 +621,42 @@ def validate_static_image(
         entry,
         key_color=key_color,
     )
+    # 两级判据，别把这两件事混成一个数（真实生成实测暴露的误报）：
+    #
+    # - **成品**里还有过近键控色的不透明像素 → FAIL。处理链在量化**前**就跑过
+    #   ``strip_key_residue`` 把它们删成透明了，成品里还剩就说明真没清干净
+    #   （例如显式色板里有近洋红色，量化又把像素映射了回去）。阈值是 0，不是 5%。
+    # - **量化前**删掉的比例高 → WARN。这个比例的大头是「被前景围住的封闭背景
+    #   区域」—— 钥匙的圆环孔、两腿之间、弓的弯里 —— 色键的漫水填充只清与画布
+    #   外缘连通的部分，这些本来就该在那一步删掉（见 ``strip_key_residue`` 文档）。
+    #   实测一个**完全合格**的金钥匙图标在这里报 6.4%，判 FAIL 就把它挡在了导出
+    #   之外。常量名 ``KEY_RESIDUE_WARN_RATIO`` 写的就是 WARN，pipeline 里也一直
+    #   只当告警用。"一个天天误报的验证器最终会被开发者关掉"（PLAN §9.1/§9.2）。
     _, final_key_residue = strip_key_residue(frame, hex_to_rgb(key_color))
-    key_residue = max(source_key_residue, final_key_residue)
-    key_residue_failed = key_residue > KEY_RESIDUE_WARN_RATIO
+    if final_key_residue > 0:
+        residue_result = CheckResult.FAIL
+        residue_message = (
+            f"成品里仍有 {final_key_residue:.1%} 的前景像素过近键控色 —— "
+            "量化前已经清过一遍，这里还剩说明没清干净"
+        )
+    elif source_key_residue > KEY_RESIDUE_WARN_RATIO:
+        residue_result = CheckResult.WARN
+        residue_message = (
+            f"量化前删掉了 {source_key_residue:.1%} 的前景像素（过近键控色）。"
+            "大头通常是被前景围住的封闭背景区（孔洞、两腿之间），属正常；"
+            "但比例这么高也可能是主体配色与键控色撞了 —— 请看 contact sheet 确认"
+        )
+    else:
+        residue_result = CheckResult.PASS
+        residue_message = None
     checks.append(
         Check.make(
             "key_color_residue",
             target,
-            CheckResult.FAIL if key_residue_failed else CheckResult.PASS,
-            measured=round(key_residue, 4),
+            residue_result,
+            measured=round(max(source_key_residue, final_key_residue), 4),
             threshold=KEY_RESIDUE_WARN_RATIO,
-            message=(
-                None
-                if not key_residue_failed
-                else (
-                    f"量化前/成品键控色残留最高占前景 {key_residue:.1%}，"
-                    f"超过 {KEY_RESIDUE_WARN_RATIO:.0%}"
-                )
-            ),
+            message=residue_message,
         )
     )
 

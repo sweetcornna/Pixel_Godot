@@ -198,9 +198,22 @@ def test_static_key_color_residue_defect_fails(static_store: ArtifactStore) -> N
     assert _check(report, "key_color_residue").result is CheckResult.FAIL
 
 
-def test_static_prequant_key_residue_fails_even_when_final_palette_is_clean(
+def test_static_prequant_key_residue_warns_but_does_not_block(
     static_store: ArtifactStore,
 ) -> None:
+    """量化前的残留只告警，不阻断 —— 判 FAIL 会误伤任何带孔洞的资产。
+
+    这个比例的大头是**被前景围住的封闭背景区**（钥匙的圆环孔、两腿之间、
+    弓的弯里）：色键的漫水填充只清与画布外缘连通的部分，这些区域本来就该在
+    ``strip_key_residue`` 那一步删掉，而那一步在量化**之前**，成品是干净的。
+
+    真实生成实测（gpt-image-2，4 个资产）：唯一超过 5% 的样本是一个
+    **完全合格**的金钥匙图标（6.4%，成品洋红像素为 0，视觉无瑕疵），
+    判 FAIL 会把它挡在导出之外。另外三个资产都是 0.0%。
+    "一个天天误报的验证器最终一定会被开发者关掉"（PLAN §9.1/§9.2）。
+
+    真正该拦的是**成品**里还剩键控色 —— 见上一条测试。
+    """
     manifest = AssetManifest.load(static_store.manifest_path)
     assert manifest.static_image is not None
     source_path = static_store.root / manifest.static_image.source_image
@@ -217,7 +230,8 @@ def test_static_prequant_key_residue_fails_even_when_final_palette_is_clean(
 
     assert _check(report, "artifact_hash").result is CheckResult.PASS
     assert _check(report, "palette_membership").result is CheckResult.PASS
-    assert _check(report, "key_color_residue").result is CheckResult.FAIL
+    assert _check(report, "key_color_residue").result is CheckResult.WARN
+    assert report.passed, "告警不能阻断导出"
 
 
 def test_static_palette_overflow_defect_fails_at_max_colors_six(

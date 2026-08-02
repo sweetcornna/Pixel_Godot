@@ -1351,6 +1351,81 @@ plan 前置闸门拒绝未规划执行 → `plan --save` → 三件环境物件�
 状态机等六项）记入交接文档 §7.2 待拍板/backlog，不在本次范围。
 全套件 819 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
+#### 7.4 `spell_bundle` —— 动画资产进 pack · 🚧 待实现
+
+**本次范围只有 `spell_bundle`。** `combat_bundle` 不在本次范围。
+
+##### 冲突与决策
+
+动画资产有 **canonical seed 的人工批准闸门**（§2.5，唯一的人工闸门），
+而 pack 的语义是**批量自动执行**。静态家族之所以没这个问题，是因为静态
+pickup 从不伪装 seed（§7.1）。
+
+**决策：seed 闸门保留，靠既有的断点续跑承接，不发明新的暂停语义。**
+
+理由是 `awaiting_approval` **本身就是一个断点**。pack 第一遍跑完所有 seed 后，
+每个资产自然停在这个状态；人工逐个批准后**重跑同一条 `create-asset-pack`
+命令**即续跑进动画阶段。这条路：
+
+- 不需要新的「跑到一半暂停」机制，也不必与 `PackRunControl` 的协作式暂停纠缠
+  —— 那是为 Ctrl-C 设计的，与「等人看图」是两回事；
+- 与 7.1 起就有的「重跑同一条命令即续跑」完全一致，用户不用学新命令；
+- 人审责任不前移（对比「预批准」路线），seed 仍然一个一个过眼。
+
+代价是一个 pack 需要跑两次命令。这个代价是**必须付的** ——
+seed 不对则下游全部动画作废重来，而这正是人审存在的理由。
+
+##### 输入契约
+
+沿用 `asset-pack.schema.json`，新增动画字段：
+
+```yaml
+schema_version: "1.0"
+pack_type: spell_bundle
+pack_id: fire_spells
+shared:
+  style: { ... }            # 同静态 pack
+  background: { ... }
+  export: { targets: [...] }
+  palette: { name: ..., colors: [...] }
+  animations:               # ← 新增：整包共享的动作定义
+    - name: cast
+      frames: 6
+      fps: 12
+      loop: false
+assets:
+  - asset_id: fireball
+    description: ...
+```
+
+- `pack_type: spell_bundle → spell`（映射表加一行，同 7.2/7.3 的做法）。
+- `shared.animations` 对全部资产生效，与 `shared.style` 同一口径 ——
+  一个 bundle 里的法术共享动作集，这正是 bundle 的意义。
+- 每个资产展开为带 `animations` 的 `spell` 请求，进 seed → 动画链，
+  **不走静态流水线**。`STATIC_ASSET_TYPES` 不扩，静态路径继续拒绝 `spell`。
+
+##### 执行契约
+
+- `plan` 对动画 pack 汇总时必须**分别列出 seed 与动画的预计调用数**：
+  一个 3 资产 × 1 动作 × 4 方向的 bundle 是 3 次 seed + 12 次动画，
+  与静态 pack 的「资产数 = 调用数」差一个量级，不分开列会让人误判成本。
+- 第一遍执行：所有资产跑到 seed 产出即停，各自写 contact sheet，
+  `pack-summary` 用 `awaiting_approval` 计数与逐资产条目明确标出
+  **「等你看图，看完重跑同一条命令」**。
+- 人工批准沿用既有入口（`create-animation --approve-seed`，逐资产）。
+- 第二遍执行：已批准的资产继续跑动画；未批准的仍报 `awaiting_approval`
+  且**不计为失败** —— 它们是在等人，不是坏了。
+- 其余契约（固定 worker、失败隔离、指纹闸门、`--retry-failed`、逐资产目录
+  与导出）逐字继承 7.1–7.3，零新语义。
+
+##### 退出门槛（仅对 `spell_bundle` 主张）
+
+- ⬜ `examples/spell_bundle.yaml` 走完 plan → 第一遍（全停 seed）→ 逐个批准
+  → 第二遍（动画完成）→ 逐资产 export 全链路（mock 集成测试 + CLI 实测）
+- ⬜ `plan` 分别报出 seed 与动画调用数，有测试
+- ⬜ 未批准资产在第二遍不计为失败、且不消耗动画调用，有测试
+- ⬜ 静态路径对 `spell` 仍拒绝；7.1–7.3 全部既有测试不回归、不削弱断言
+
 ---
 
 ### Sprint 8：Tileset 与地图 · **第 10 周**
