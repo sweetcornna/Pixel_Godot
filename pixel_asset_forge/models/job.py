@@ -74,6 +74,9 @@ class JobKind(StrEnum):
     DERIVED = "derived"
     """由其他方向翻转 derive，不调用 API（ADR-006）。"""
 
+    TILE = "tile"
+    """tileset 里的一块 tile。一个 tileset 资产下有 N 个，共用一份调色板。"""
+
 
 TERMINAL_STATES: frozenset[JobStatus] = frozenset(
     {JobStatus.EXPORTED, JobStatus.APPROVED, JobStatus.FAILED}
@@ -258,7 +261,12 @@ class Job(BaseModel):
     @property
     def calls_api(self) -> bool:
         """本任务在正常路径上是否需要 API 调用。derived 任务永远不需要。"""
-        return self.kind in (JobKind.STATIC, JobKind.SEED, JobKind.ANIMATION)
+        return self.kind in (
+            JobKind.STATIC,
+            JobKind.SEED,
+            JobKind.ANIMATION,
+            JobKind.TILE,
+        )
 
     # -- 状态机 -----------------------------------------------------------
 
@@ -330,6 +338,8 @@ def make_job_id(
         return f"{asset_id}:seed"
     if kind is JobKind.STATIC:
         return f"{asset_id}:static"
+    if kind is JobKind.TILE:
+        return f"{asset_id}:tile:{action or 'unknown'}"
     parts = [asset_id, action or "unknown"]
     if direction:
         parts.append(direction)

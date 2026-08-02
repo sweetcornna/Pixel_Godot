@@ -69,6 +69,9 @@
         "$ref": "#/$defs/animation"
       }
     },
+    "tileset": {
+      "$ref": "#/$defs/tileset"
+    },
     "export": {
       "type": "object",
       "additionalProperties": false,
@@ -110,6 +113,37 @@
           "animations"
         ]
       }
+    },
+    {
+      "description": "tileset 必须声明 tiles，且不接受 animations 与 background —— tile 是满幅不透明的，去背景那一步不会执行。",
+      "if": {
+        "properties": {
+          "asset_type": {
+            "const": "tileset"
+          }
+        },
+        "required": [
+          "asset_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "tileset"
+        ],
+        "not": {
+          "anyOf": [
+            { "required": ["animations"] },
+            { "required": ["background"] }
+          ]
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "tileset"
+          ]
+        }
+      }
     }
   ],
   "$defs": {
@@ -128,6 +162,48 @@
         96,
         128
       ]
+    },
+    "tileset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tile_size",
+        "tiles"
+      ],
+      "properties": {
+        "tile_size": {
+          "description": "每个 tile 的边长。tile 要精确等于这个尺寸，不走 style.target_size 那套「内容占画布比例」。",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/logical_size"
+          }
+        },
+        "tiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tile_id",
+              "description"
+            ],
+            "properties": {
+              "tile_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{1,63}$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 2000
+              }
+            }
+          }
+        }
+      }
     },
     "style": {
       "type": "object",

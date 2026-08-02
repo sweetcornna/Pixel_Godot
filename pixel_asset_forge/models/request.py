@@ -160,6 +160,40 @@ class BackgroundSpec(_Base):
     conflict_hint: str | None = None
 
 
+class TileSpec(_Base):
+    """tileset 里的一块 tile。"""
+
+    tile_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    description: str = Field(min_length=8, max_length=2000)
+
+
+class TilesetSpec(_Base):
+    """一套 tile 的共同约束。
+
+    ``tile_size`` 不复用 ``style.target_size``：静态资产那套说的是"内容占画布的
+    比例"，而 tile 要的是**精确等于**这个尺寸，两者不是一回事（PLAN §8.1）。
+    """
+
+    tile_size: tuple[int, int]
+    tiles: tuple[TileSpec, ...] = Field(min_length=1)
+
+    @field_validator("tile_size")
+    @classmethod
+    def _check_tile_size(cls, value: tuple[int, int]) -> tuple[int, int]:
+        for side in value:
+            if side not in LOGICAL_SIZES:
+                raise ValueError(f"逻辑尺寸只支持 {LOGICAL_SIZES}，收到 {side}")
+        return value
+
+    @model_validator(mode="after")
+    def _check_unique_tile_ids(self) -> TilesetSpec:
+        ids = [tile.tile_id for tile in self.tiles]
+        duplicates = sorted({t for t in ids if ids.count(t) > 1})
+        if duplicates:
+            raise ValueError(f"tile_id 必须唯一，重复的有：{', '.join(duplicates)}")
+        return self
+
+
 class MirroringSpec(_Base):
     enabled: bool
     source_direction: Literal["left", "right"] = "left"
@@ -288,7 +322,28 @@ class AssetRequest(_Base):
     background: BackgroundSpec = BackgroundSpec()
     mirroring: MirroringSpec | None = None
     animations: tuple[AnimationSpec, ...] | None = None
+    tileset: TilesetSpec | None = None
     export: ExportSpec
+
+    @model_validator(mode="after")
+    def _check_tileset_contract(self) -> AssetRequest:
+        """``tileset`` 与其余资产类型互斥。
+
+        JSON Schema 那层还额外拒收 tileset 上的 ``background`` —— 那个字段有默认值，
+        到 pydantic 这里已经分不清"没写"和"写了默认值"了。
+        """
+        if self.asset_type == "tileset":
+            if self.tileset is None:
+                raise ValueError("tileset 资产必须声明 tileset.tiles")
+            if self.animations:
+                raise ValueError("tileset 是静态贴图，不接受 animations")
+        elif self.tileset is not None:
+            raise ValueError(f"{self.asset_type} 不接受 tileset 字段")
+        return self
+
+    @property
+    def tile_list(self) -> tuple[TileSpec, ...]:
+        return self.tileset.tiles if self.tileset else ()
 
     @property
     def mirroring_enabled(self) -> bool:

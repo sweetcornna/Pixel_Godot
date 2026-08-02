@@ -47,7 +47,7 @@ from .errors import (
 from .logging_utils import configure_logging
 from .models.job import JobKind, JobStatus
 from .models.pack import load_pack
-from .models.request import STATIC_ASSET_TYPES, load_request
+from .models.request import STATIC_ASSET_TYPES, AssetRequest, load_request
 from .pipelines import approve_seed as run_approve_seed
 from .pipelines import create_animation as run_create_animation
 from .pipelines import create_character as run_create_character
@@ -94,6 +94,22 @@ def _fail(exc: PixelAssetError) -> None:
         raise typer.Exit(EXIT_NOT_IMPLEMENTED)
     err_console.print(f"[red]✗[/red] [{exc.code}] {exc.message}")
     raise typer.Exit(EXIT_ERROR)
+
+
+def _next_step_hint(request: AssetRequest) -> str:
+    """`plan` 之后该跑哪条命令。
+
+    以前无论什么资产都指向 `create-character` —— 对静态资产与 tileset 都是错的，
+    tileset 照做只会拿到一个"角色"。
+    """
+    if request.tileset is not None:
+        return "create-tileset 生成整套 tile → validate 查无缝平铺 → export。"
+    if request.asset_type in STATIC_ASSET_TYPES and not request.animation_list():
+        return "create-asset 一条命令跑完生成 → 处理 → 验证 → 导出。"
+    return (
+        "create-character 产出 canonical seed → 【人工闸门】确认 seed → "
+        "create-animation → validate。"
+    )
 
 
 def _load_config(
@@ -645,6 +661,7 @@ def _render_plan(result: Any, *, resumed: bool) -> None:
             JobKind.SEED: "[magenta]seed[/magenta]",
             JobKind.ANIMATION: "animation",
             JobKind.DERIVED: "[cyan]derived[/cyan]",
+            JobKind.TILE: "[green]tile[/green]",
         }[job.kind]
         jobs.add_row(
             str(index),
@@ -670,10 +687,7 @@ def _render_plan(result: Any, *, resumed: bool) -> None:
         console.print(f"[yellow]![/yellow] {warning}")
 
     console.print()
-    console.print(
-        "[dim]下一步：create-character 产出 canonical seed → "
-        "【人工闸门】确认 seed → create-animation → validate。[/dim]"
-    )
+    console.print(f"[dim]下一步：{_next_step_hint(result.request)}[/dim]")
 
 
 @app.command("create-character")

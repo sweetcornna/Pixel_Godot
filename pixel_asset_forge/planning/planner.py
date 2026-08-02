@@ -257,7 +257,27 @@ def plan_request(
     animation_specs = request.animation_list()
     animations: tuple[PlannedAnimation, ...] = ()
 
-    if request.asset_type in STATIC_ASSET_TYPES and not animation_specs:
+    if request.tileset is not None:
+        # 每块 tile 一次调用。tile 之间没有 seed 那种身份依赖 —— 共享的是
+        # 调色板与风格，那两样在 prompt 与处理链里落实，不需要人工闸门。
+        fingerprint = input_fingerprint(
+            request,
+            provider or "<default-provider>",
+            model or "<default-model>",
+        )
+        tile_layout = seed_layout()
+        for tile in request.tileset.tiles:
+            table.add(
+                Job(
+                    id=make_job_id(request.asset_id, JobKind.TILE, tile.tile_id),
+                    asset_id=request.asset_id,
+                    kind=JobKind.TILE,
+                    action=tile.tile_id,
+                    physical_size=tile_layout.size,
+                    input_fingerprint=fingerprint,
+                )
+            )
+    elif request.asset_type in STATIC_ASSET_TYPES and not animation_specs:
         static_id = make_job_id(request.asset_id, JobKind.STATIC)
         static_layout = seed_layout()
         fingerprint = input_fingerprint(
