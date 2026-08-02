@@ -1442,7 +1442,123 @@ assets:
 `STATIC_ASSET_TYPES` 仍为 5 类静态型，`spell` 不在其中。
 全套件 866 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
+**7.5 追加**：跨动作缩放基准的自动收敛（见 §7.5）对 `spell_bundle` 一并生效 ——
+`shared.animations` 允许多动作，逐键顶替在这里同样会发生。
+
 > 至此 Sprint 7 只剩 `combat_bundle`。总退出门槛按既定口径**仍不打勾**。
+
+#### 7.5 `combat_bundle` —— 一个角色的整套战斗动作 · ✅ 已完成
+
+**语义已定：A 路线 —— 同一角色的多个战斗动作**（`attack` / `hurt` / `death`
+打包），不是"多个战斗单位"。Sprint 7 的最后一块。
+
+##### 与 `spell_bundle` 的关系
+
+结构**同构**，`combat_bundle → character` 入同一张映射表，`shared.animations`
+装战斗动作集。`assets` 通常只有一条（就是那个角色）；写多条时机制天然支持
+多个角色各自来一套战斗动作，但那不是本次要主张的范围。
+
+seed 闸门、两遍执行、失败隔离、指纹闸门、`--retry-failed`、`plan` 分列
+seed/动画调用数 —— 全部逐字继承 §7.4，零新语义。
+
+##### 真正的增量：跨动作缩放基准必须收敛
+
+这个问题**首先在 `combat_bundle` 上兑现**，但它不是 `combat_bundle` 独有的
+（实现阶段复核修正，见 7.5 完成记录）—— 必须在契约里解决。
+
+跨动作缩放基准（`manifest.scale_profile`）的规则是「取幅度最大的那个动作」，
+而增量生成**看不到未来**，只能边走边顶替（`pipelines/animation.py`）。
+顶替发生时，此前已经生成的动作是按**旧基准**出的图，代码自己会告警
+「跑一次 `pixel-asset process`」。
+
+单跑 `create-animation` 时这个负担落在用户身上还算合理 —— 他一次只做一个动作，
+看得见告警。但战斗动作恰恰是幅度最大、最容易互相顶替的一组：
+`attack` 挥剑前冲、`death` 倒地，谁当基准取决于生成顺序。批量跑完之后
+用户拿到的是**一批基准不一致的动作**，而 pack 的卖点正是"一条命令跑完"。
+
+**契约：批量结束时若基准被顶替过，协调器自动重跑一次 `process` 统一全部动作**
+（纯本地、零 API 调用），并在 `pack-summary` 里显式记录"因基准顶替重跑了处理"。
+不静默做也不留给用户做 —— 静默会让人不知道图被改过，留给用户就等于
+把 pack 的承诺打了折。
+
+**这条义务属于批量协调器，对所有动画 pack 生效**，不按 `pack_type` 分叉：
+基准是按「动作_方向」逐个键顶替的，`spell_bundle` 的 `shared.animations`
+同样能声明 `cast` + `impact` 这种幅度悬殊的组合。按类型分叉等于让一半用户
+悄悄拿到基准不一致的动作。
+
+##### 输入契约
+
+```yaml
+pack_type: combat_bundle
+pack_id: knight_combat
+shared:
+  style: { ... }          # 同 §7.4
+  background: { ... }
+  export: { ... }
+  palette: { ... }
+  animations:             # 战斗动作集；帧数/fps/loop 缺省走 ACTION_DEFAULTS
+    - name: attack
+    - name: hurt
+    - name: death
+assets:
+  - asset_id: knight_01
+    description: ...
+```
+
+`death` 在验证阈值表里是**刻意豁免**几何检查的（PLAN §9.1：倒地是形变的极端
+情况，几何检查无意义）。批量路径必须让这条豁免照常生效，且在报告里以
+`action_exempt` 显式记录 —— 不能因为走了 pack 就退化成"没查"。
+
+##### 退出门槛（仅对 `combat_bundle` 主张）
+
+- ✅ `examples/combat_bundle.yaml` 走完 plan → 第一遍（停 seed）→ 批准 →
+  第二遍（三个战斗动作完成）→ export 全链路（mock 集成测试 + CLI 实测）
+- ✅ 基准被顶替时自动重跑 `process` 并在 summary 显式记录，有测试；
+  未顶替时**不**多跑（别浪费一次全量处理），也有测试
+- ✅ 批量路径下 `death` 的几何检查豁免照常生效且记为 `action_exempt`，有测试
+- ✅ §7.4 与 7.1–7.3 全部既有测试不回归、不削弱断言
+
+**7.5 完成记录**：`combat_bundle → character` 入映射表，与 `spell_bundle` 同构，
+动作缺省值走 `ACTION_DEFAULTS`（schema 里 `combat_animation` 只强制 `name`，
+其余 pack 的 `animation` 继续强制 `frames`/`fps`）。基准收敛靠 Manifest 新增的
+`scale_profile.needs_reprocess`：`store_profile` 顶替时置位，批量跑完由协调器
+重跑一次全量 `process` 清零，`pack-summary` 记「因基准顶替重跑了处理」。
+`death` 的几何豁免以 `validation_exemptions`（`skip_reason=action_exempt`）
+抬进 summary 与 CLI 表格，不再只躺在验证报告里。
+
+编排方独立复核挖出**两个契约漏洞**，都已修掉并各自补了有判别力的测试
+（临时回退修复可复现失败）：
+
+1. **`process --only X` 会把 `needs_reprocess` 静默清零。** `--only` 那条路径
+   明确沿用 Manifest 里的既有基准（它看不到别的动作），收敛不了任何东西，
+   却照样重写了整个 `scale_profile`。用户在两遍之间跑一次 `process --only`
+   或走一次 repair（`repair/executor.py` 也是 `only=`），标记就没了，
+   批量收敛随之静默失效。改为只有全量跑（`only is None`）才有资格清零。
+2. **收敛按 `pack_type` 分叉是错的。** 契约初稿写的「`combat_bundle` 独有」
+   不成立：基准是按「动作_方向」逐个键顶替的，`spell_bundle` 的
+   `shared.animations` 同样能声明 `cast` + `impact` 这种幅度悬殊的组合。
+   按类型分叉等于让一半用户悄悄拿到基准不一致的动作。经确认后去掉
+   `converge_scale_profile` 开关 —— 收敛是**批量协调器**的义务，
+   §7.4 的 `spell_bundle` 同享，并补了对应测试。
+
+CLI 全链路实测（mock provider，7/7 通过）：未规划直接执行被拒 → `plan --save`
+报「总任务 13 · 预计 seed API 调用 1 · 预计动画 API 调用 12」→ 第一遍
+`awaiting_approval=1` → `--approve-seed` 解锁 12 个动画任务 → 第二遍
+`exported=1 / resumed=1`。**顶替是自然发生的**（不是测试构造）：日志记
+「跨动作缩放基准取自 death_down」，summary 随之写下重跑记录与 4 条
+`death_*` 的 `action_exempt`，Manifest 收在 `needs_reprocess=false`。
+再走默认 contact sheet 的 `export`（`.tres` + png + `GODOT-README.md`）与
+本地 `process` 重跑，`generation-log` 前后都是 13 条 —— 重跑零 API 调用。
+
+非阻断观察（未改，留给后续切）：`processing/pixel_grid.py:421` 的建议尺寸写死
+`min(96, …)`，于是 `target_size` 已经是 96 时仍会提示「建议 target_size 提到
+96 或更高」。`combat_bundle` 按 §7.4 复审结论正用 96，这条自相矛盾的提示
+每个动作都会刷一次。
+
+全套件 874 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
+
+> `combat_bundle` 完成后，Sprint 7 的五种 pack 全部落地，**总退出门槛届时才逐条
+> 复核打勾**（那五条要对全部 pack 类型成立，不是对某一切成立）。
 
 ---
 

@@ -20,6 +20,7 @@ from ..models.job import JobKind, JobStatus
 from ..models.manifest import AssetManifest
 from ..models.pack import StaticAssetPack, input_fingerprint, load_pack
 from ..models.request import AssetRequest, load_request
+from ..models.validation import ValidationReport
 from ..processing.background import resolve_key_color
 from ..prompts import compile_static_prompt
 from ..providers import ImageProvider, Throttle, get_provider
@@ -29,6 +30,7 @@ from ..storage.cache import GenerationCache
 from .animation import create_animation
 from .character import create_character
 from .export import CONTACT_SHEET_NAME, build_contact_sheet, run_export
+from .process import run_process
 from .static_asset import (
     StaticAssetResult,
     create_static_asset,
@@ -39,6 +41,7 @@ from .validation import run_validation, static_validation_binding
 logger = get_logger("pipeline.asset_pack")
 
 AWAITING_APPROVAL_MESSAGE = "等你看图，看完重跑同一条命令"
+SCALE_PROFILE_REPROCESS_MESSAGE = "因基准顶替重跑了处理"
 
 PackOutcome = Literal[
     "exported",
@@ -50,6 +53,15 @@ PackOutcome = Literal[
     "skipped",
     "outcome_missing",
 ]
+
+
+class ActionExemption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: str
+    action: str
+    checks: list[str]
+    skip_reason: Literal["action_exempt"] = "action_exempt"
 
 
 class AssetOutcome(BaseModel):
@@ -71,6 +83,9 @@ class AssetOutcome(BaseModel):
     error: str | None = None
     request_id: str | None = None
     artifact_root: str
+    scale_profile_reprocessed: bool = False
+    processing_notes: list[str] = Field(default_factory=list)
+    validation_exemptions: list[ActionExemption] = Field(default_factory=list)
 
 
 class PackSummary(BaseModel):
@@ -531,6 +546,23 @@ def _write_seed_contact_sheet(store: ArtifactStore) -> Path:
     )
 
 
+def _action_exemptions(report: ValidationReport) -> list[ActionExemption]:
+    """把验证报告里的设计性几何豁免抬进 pack-summary。"""
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for check in report.checks:
+        if check.skip_reason != "action_exempt" or check.action is None:
+            continue
+        grouped.setdefault((check.target, check.action), []).append(check.id)
+    return [
+        ActionExemption(
+            target=target,
+            action=action,
+            checks=sorted(checks),
+        )
+        for (target, action), checks in sorted(grouped.items())
+    ]
+
+
 def _awaiting_approval_outcome(
     item: _WorkItem,
     config: Config,
@@ -716,6 +748,8 @@ def _run_one_animated(
 
         cached = False
         request_id: str | None = None
+        processing_notes: list[str] = []
+        scale_profile_reprocessed = False
         for job in animation_jobs:
             if job.status is JobStatus.VALIDATION_FAILED:
                 return AssetOutcome(
@@ -753,6 +787,20 @@ def _run_one_animated(
         if control.stop.is_set():
             raise PauseRequested(f"{item.asset_id} 已停在阶段边界")
 
+        # 增量生成看不到未来的动作，基准只能边走边顶替；顶替之前出的图是按旧
+        # 基准缩的。单跑 create-animation 时这个负担落在用户身上还算合理 ——
+        # 他一次只做一个动作，看得见告警。批量跑完却把一批基准不一致的动作直接
+        # 交出去，就等于把「一条命令跑完」的承诺打了折。这里替用户跑完那次
+        # process（纯本地、零 API 调用），并在 summary 里显式记一笔。
+        #
+        # 这是**批量协调器**的义务，与 pack 类型无关：spell_bundle 一样可以在
+        # shared.animations 里声明 cast + impact 这种幅度悬殊的组合。
+        manifest = AssetManifest.load(store.manifest_path)
+        if manifest.scale_profile is not None and manifest.scale_profile.needs_reprocess:
+            run_process(store.root)
+            scale_profile_reprocessed = True
+            processing_notes.append(SCALE_PROFILE_REPROCESS_MESSAGE)
+
         table = store.load_job_table()
         if table is None:
             raise RuntimeError(f"{item.asset_id} 动画完成后任务表丢失")
@@ -775,13 +823,17 @@ def _run_one_animated(
                 resumed=resumed,
                 request_id=request_id,
                 artifact_root=str(store.root),
+                scale_profile_reprocessed=scale_profile_reprocessed,
+                processing_notes=processing_notes,
             )
 
+        validation_exemptions: list[ActionExemption] = []
         if any(
             job.status in (JobStatus.PROCESSED, JobStatus.VALIDATING)
             for job in current_animation_jobs
         ):
             report = run_validation(store.root)
+            validation_exemptions = _action_exemptions(report)
             if not report.passed:
                 return AssetOutcome(
                     asset_id=item.asset_id,
@@ -796,6 +848,9 @@ def _run_one_animated(
                     resumed=resumed,
                     request_id=request_id,
                     artifact_root=str(store.root),
+                    scale_profile_reprocessed=scale_profile_reprocessed,
+                    processing_notes=processing_notes,
+                    validation_exemptions=validation_exemptions,
                 )
 
         run_export(store.root, targets=targets)
@@ -812,6 +867,9 @@ def _run_one_animated(
             resumed=resumed,
             request_id=request_id,
             artifact_root=str(store.root),
+            scale_profile_reprocessed=scale_profile_reprocessed,
+            processing_notes=processing_notes,
+            validation_exemptions=validation_exemptions,
         )
     except PauseRequested as exc:
         table = store.load_job_table()

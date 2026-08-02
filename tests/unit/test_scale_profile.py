@@ -170,6 +170,7 @@ def test_profile_survives_the_manifest(tmp_path) -> None:
     loaded = AssetManifest.load(manifest.save(tmp_path / "m.json"))
     assert loaded.scale_profile is not None
     assert loaded.scale_profile.reference == "walk_down"
+    assert loaded.scale_profile.needs_reprocess is False
 
 
 def test_synthetic_grid_renders(tmp_path) -> None:

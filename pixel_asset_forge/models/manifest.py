@@ -98,6 +98,8 @@ class ScaleProfileInfo(_Base):
     reference: str
     subject_ratio: float = Field(gt=0)
     canvas_fraction: float = Field(gt=0)
+    needs_reprocess: bool = False
+    """基准曾被别的动作顶替；全量 ``process`` 成功后清零。"""
 
 
 class MirroringInfo(_Base):

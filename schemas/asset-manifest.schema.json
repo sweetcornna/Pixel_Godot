@@ -267,6 +267,11 @@
           "description": "参考动作的 输出内容高度 / 目标画布高度。",
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "needs_reprocess": {
+          "description": "增量生成时基准曾被别的动作顶替；全量 process 成功后恢复为 false。",
+          "type": "boolean",
+          "default": false
         }
       }
     }

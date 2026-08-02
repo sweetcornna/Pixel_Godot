@@ -15,9 +15,11 @@ from pixel_asset_forge.config import Config
 from pixel_asset_forge.errors import ProcessingError
 from pixel_asset_forge.models import AssetManifest, load_pack
 from pixel_asset_forge.models.job import JobKind, JobStatus
+from pixel_asset_forge.models.manifest import ScaleProfileInfo
 from pixel_asset_forge.pipelines import approve_seed, asset_pack
 from pixel_asset_forge.pipelines.asset_pack import (
     AWAITING_APPROVAL_MESSAGE,
+    SCALE_PROFILE_REPROCESS_MESSAGE,
     run_asset_pack,
 )
 from pixel_asset_forge.pipelines.static_asset import create_static_asset
@@ -267,6 +269,90 @@ class _BadSeedBytesProvider(MockImageProvider):
         self, prompt: str, size: tuple[int, int], model: str
     ) -> tuple[bytes, str | None]:
         return b"provider-success-but-not-an-image", "req-bad-spell-seed"
+
+
+def test_spell_bundle_also_converges_a_superseded_scale_profile(
+    examples_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """收敛基准是**批量协调器**的义务，不是 combat_bundle 的特权。
+
+    spell_bundle 的 ``shared.animations`` 同样能声明 cast + impact 这种幅度
+    悬殊的组合，逐动作顶替一样会发生 —— 按 pack 类型分叉就会让这一半用户
+    悄悄拿到一批基准不一致的动作。
+    """
+    monkeypatch.chdir(tmp_path)
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+    data = yaml.safe_load(
+        (examples_dir / "spell_bundle.yaml").read_text(encoding="utf-8")
+    )
+    data["pack_id"] = "spell_profile_convergence"
+    data["assets"] = data["assets"][:1]
+    pack_path = tmp_path / "spell-convergence.yaml"
+    pack_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    config_path = _write_config(tmp_path / "mock.yaml", max_concurrency=1)
+    asset_id = data["assets"][0]["asset_id"]
+
+    planned = runner.invoke(
+        app, ["plan", str(pack_path), "--config", str(config_path), "--save"]
+    )
+    assert planned.exit_code == EXIT_OK
+    first = runner.invoke(
+        app,
+        ["create-asset-pack", str(pack_path), "--config", str(config_path), "--json"],
+    )
+    assert first.exit_code == EXIT_OK
+    assert json.loads(first.stdout)["counts"]["awaiting_approval"] == 1
+    approved = runner.invoke(
+        app,
+        [
+            "create-animation", "--asset", asset_id,
+            "--action", "cast", "--direction", "down",
+            "--approve-seed", "--config", str(config_path),
+        ],
+    )
+    assert approved.exit_code == EXIT_OK
+
+    # 造一个真实的"已有旧基准"续跑：下一个方向必然顶替它。
+    store = ArtifactStore.for_asset(tmp_path / "outputs", asset_id)
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.scale_profile is not None
+    assert manifest.scale_profile.needs_reprocess is False
+    manifest.scale_profile = ScaleProfileInfo(
+        reference=manifest.scale_profile.reference,
+        subject_ratio=0.01,
+        canvas_fraction=manifest.scale_profile.canvas_fraction,
+    )
+    manifest.save(store.manifest_path)
+
+    process_calls: list[Path] = []
+    real_run_process = asset_pack.run_process
+
+    def tracking_run_process(asset_dir: str | Path, *, only: str | None = None):
+        process_calls.append(Path(asset_dir))
+        return real_run_process(asset_dir, only=only)
+
+    monkeypatch.setattr(asset_pack, "run_process", tracking_run_process)
+    second = runner.invoke(
+        app,
+        ["create-asset-pack", str(pack_path), "--config", str(config_path), "--json"],
+    )
+    assert second.exit_code == EXIT_OK
+    outcome = json.loads(second.stdout)["assets"][0]
+
+    assert outcome["outcome"] == "exported"
+    assert [path.resolve() for path in process_calls] == [store.root.resolve()]
+    assert outcome["scale_profile_reprocessed"] is True
+    assert outcome["processing_notes"] == [SCALE_PROFILE_REPROCESS_MESSAGE]
+
+    profile = AssetManifest.load(store.manifest_path).scale_profile
+    assert profile is not None
+    assert profile.needs_reprocess is False
 
 
 def test_retry_failed_reclaims_failed_spell_seed(

@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .. import PACK_SCHEMA_VERSION, PIPELINE_VERSION, REQUEST_SCHEMA_VERSION
+from ..constants import ACTION_DEFAULTS
 from ..errors import RequestValidationError
 from ..schema_registry import check_schema_version, validate_against
 from .request import (
@@ -29,12 +30,14 @@ PackType = Literal[
     "weapon_pack",
     "environment_pack",
     "spell_bundle",
+    "combat_bundle",
 ]
 PACK_ASSET_TYPES: Final[Mapping[PackType, AssetType]] = {
     "potion_pack": "pickup",
     "weapon_pack": "weapon",
     "environment_pack": "environment_object",
     "spell_bundle": "spell",
+    "combat_bundle": "character",
 }
 
 
@@ -67,6 +70,37 @@ class StaticAssetPack(_Base):
     shared: PackShared
     assets: tuple[PackAsset, ...] = Field(min_length=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_combat_animation_defaults(cls, value: Any) -> Any:
+        """combat_bundle 的动作缺省值沿用全局 ACTION_DEFAULTS。"""
+        if not isinstance(value, Mapping) or value.get("pack_type") != "combat_bundle":
+            return value
+        shared = value.get("shared")
+        if not isinstance(shared, Mapping):
+            return value
+        animations = shared.get("animations")
+        if not isinstance(animations, list):
+            return value
+
+        resolved: list[Any] = []
+        for raw in animations:
+            if not isinstance(raw, Mapping):
+                resolved.append(raw)
+                continue
+            animation = dict(raw)
+            name = animation.get("name")
+            defaults = ACTION_DEFAULTS.get(name) if isinstance(name, str) else None
+            if defaults is not None:
+                animation.setdefault("frames", defaults.frames)
+                animation.setdefault("fps", defaults.fps)
+                animation.setdefault("loop", defaults.loop)
+            resolved.append(animation)
+        return {
+            **value,
+            "shared": {**shared, "animations": resolved},
+        }
+
     @model_validator(mode="after")
     def _check_pack_contract(self) -> StaticAssetPack:
         ids = [asset.asset_id for asset in self.assets]
@@ -93,9 +127,11 @@ class StaticAssetPack(_Base):
                     "请换一个 background.color/fallback_colors，或改用 transparent_model。"
                 )
 
-        if self.pack_type == "spell_bundle":
+        if self.pack_type in ("spell_bundle", "combat_bundle"):
             if not self.shared.animations:
-                raise ValueError("spell_bundle 必须在 shared.animations 声明至少一个动作")
+                raise ValueError(
+                    f"{self.pack_type} 必须在 shared.animations 声明至少一个动作"
+                )
         elif self.shared.animations is not None:
             raise ValueError(f"{self.pack_type} 是静态 pack，shared.animations 必须省略")
         return self

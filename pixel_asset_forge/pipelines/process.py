@@ -689,7 +689,8 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
 
     if summaries:
         _update_manifest(store, manifest, request, base, animations, sheets,
-                         palette_colors, seed_threshold, profile)
+                         palette_colors, seed_threshold, profile,
+                         converged=only is None)
     return summaries
 
 
@@ -703,11 +704,18 @@ def _update_manifest(
     palette_colors: list[str],
     threshold: float | None,
     profile: ScaleProfile | None = None,
+    *,
+    converged: bool = True,
 ) -> None:
     """把这次处理的结果写回 Manifest。
 
     各动作的阈值已经写在自己的 ``animations[*].key_threshold`` 里；
     这里的 ``threshold`` 只是种子图的。
+
+    ``converged`` 只有跑全量时才为真。``--only`` 那条路径沿用 Manifest 里既有的
+    基准（见 :func:`run_process` 的注释），一个动作对不齐另外几个动作，
+    所以 ``needs_reprocess`` 必须原样留着 —— 清零会让"基准被顶替过"这件事
+    在下一次批量收敛时凭空消失。
     """
     from ..models.manifest import (
         BackgroundInfo,
@@ -753,10 +761,19 @@ def _update_manifest(
         manifest.palette.colors = palette_colors
         manifest.status = "processed"
         if profile is not None:
+            stale = (
+                False
+                if converged
+                else (
+                    manifest.scale_profile is not None
+                    and manifest.scale_profile.needs_reprocess
+                )
+            )
             manifest.scale_profile = ScaleProfileInfo(
                 reference=profile.reference,
                 subject_ratio=profile.subject_ratio,
                 canvas_fraction=profile.canvas_fraction,
+                needs_reprocess=stale,
             )
 
     manifest.animations = animations

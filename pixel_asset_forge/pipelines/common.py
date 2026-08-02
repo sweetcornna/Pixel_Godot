@@ -235,10 +235,16 @@ def store_profile(
     # 重新生成参考动作本身时，新值直接覆盖旧值 —— 那不是"被别的动作顶替"，
     # 否则会报出 "walk_down 比原参考动作 walk_down 幅度更大" 这种废话。
     if current is not None and current.reference == key:
+        stored_needs_reprocess = (
+            manifest.scale_profile.needs_reprocess
+            if manifest.scale_profile is not None
+            else False
+        )
         manifest.scale_profile = ScaleProfileInfo(
             reference=candidate.reference,
             subject_ratio=candidate.subject_ratio,
             canvas_fraction=candidate.canvas_fraction,
+            needs_reprocess=stored_needs_reprocess,
         )
         return (candidate, False)
     if current is not None and current.subject_ratio >= candidate.subject_ratio:
@@ -248,6 +254,7 @@ def store_profile(
         reference=candidate.reference,
         subject_ratio=candidate.subject_ratio,
         canvas_fraction=candidate.canvas_fraction,
+        needs_reprocess=current is not None,
     )
     return (candidate, current is not None)
 

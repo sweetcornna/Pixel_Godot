@@ -17,7 +17,7 @@
       "const": "1.0"
     },
     "pack_type": {
-      "enum": ["potion_pack", "weapon_pack", "environment_pack", "spell_bundle"]
+      "enum": ["potion_pack", "weapon_pack", "environment_pack", "spell_bundle", "combat_bundle"]
     },
     "pack_id": {
       "type": "string",
@@ -48,12 +48,9 @@
           "$ref": "#/$defs/palette"
         },
         "animations": {
-          "description": "整包共享的动作列表。spell_bundle 必填，静态 pack 必须省略。",
+          "description": "整包共享的动作列表。动画 bundle 必填，静态 pack 必须省略。",
           "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/animation"
-          }
+          "minItems": 1
         }
       }
     },
@@ -88,7 +85,7 @@
       "if": {
         "properties": {
           "pack_type": {
-            "const": "spell_bundle"
+            "enum": ["spell_bundle", "combat_bundle"]
           }
         },
         "required": ["pack_type"]
@@ -105,6 +102,42 @@
           "shared": {
             "not": {
               "required": ["animations"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "pack_type": {
+            "const": "combat_bundle"
+          }
+        },
+        "required": ["pack_type"]
+      },
+      "then": {
+        "properties": {
+          "shared": {
+            "properties": {
+              "animations": {
+                "items": {
+                  "$ref": "#/$defs/combat_animation"
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "shared": {
+            "properties": {
+              "animations": {
+                "items": {
+                  "$ref": "#/$defs/animation"
+                }
+              }
             }
           }
         }
@@ -227,10 +260,9 @@
         }
       }
     },
-    "animation": {
+    "animation_fields": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "frames", "fps"],
       "properties": {
         "name": {
           "type": "string",
@@ -282,6 +314,15 @@
           "enum": ["one_shot", "loop", "gait"]
         }
       }
+    },
+    "animation": {
+      "$ref": "#/$defs/animation_fields",
+      "required": ["name", "frames", "fps"]
+    },
+    "combat_animation": {
+      "$ref": "#/$defs/animation_fields",
+      "description": "combat_bundle 动作；frames/fps/loop 缺省时走 ACTION_DEFAULTS。",
+      "required": ["name"]
     }
   }
 }

@@ -74,6 +74,7 @@ def test_example_expands_to_static_pickup_requests(examples_dir: Path) -> None:
         ("weapon_pack", "weapon"),
         ("environment_pack", "environment_object"),
         ("spell_bundle", "spell"),
+        ("combat_bundle", "character"),
     ],
 )
 def test_pack_type_maps_to_asset_type(pack_type: str, asset_type: str) -> None:
@@ -89,6 +90,8 @@ def test_pack_type_maps_to_asset_type(pack_type: str, asset_type: str) -> None:
                 "loop": False,
             }
         ]
+    elif pack_type == "combat_bundle":
+        data["shared"]["animations"] = [{"name": "attack"}]
 
     requests = parse_pack(data).expand_requests()
 
@@ -104,6 +107,7 @@ def test_pack_schema_exposes_all_supported_pack_types() -> None:
             "weapon_pack",
             "environment_pack",
             "spell_bundle",
+            "combat_bundle",
         ]
     }
 
@@ -147,6 +151,47 @@ def test_spell_bundle_example_expands_three_spells_with_shared_animation(
     assert all(request.style.target_size == (64, 64) for request in requests)
     assert all(request.animations == pack.shared.animations for request in requests)
     assert all(request.style.palette_colors == pack.shared.palette.colors for request in requests)
+
+
+def test_combat_bundle_requires_animations_and_applies_action_defaults() -> None:
+    data = pack_data()
+    data["pack_type"] = "combat_bundle"
+    with pytest.raises(RequestValidationError) as exc:
+        parse_pack(data)
+    assert any(error["path"] == "shared" for error in exc.value.errors)
+
+    data["shared"]["animations"] = [
+        {"name": "attack"},
+        {"name": "hurt"},
+        {"name": "death"},
+    ]
+    pack = parse_pack(data)
+    request = pack.expand_requests()[0]
+
+    assert request.asset_type == "character"
+    assert [(spec.name, spec.frames, spec.fps, spec.loop) for spec in request.animation_list()] == [
+        ("attack", 6, 12, False),
+        ("hurt", 4, 8, False),
+        ("death", 8, 8, False),
+    ]
+
+
+def test_combat_bundle_example_expands_one_character_with_three_combat_actions(
+    examples_dir: Path,
+) -> None:
+    pack = load_pack(examples_dir / "combat_bundle.yaml")
+    requests = pack.expand_requests()
+
+    assert pack.pack_type == "combat_bundle"
+    assert [request.asset_id for request in requests] == ["knight_01"]
+    assert requests[0].asset_type == "character"
+    assert requests[0].style.target_size == (96, 96)
+    assert [spec.name for spec in requests[0].animation_list()] == [
+        "attack",
+        "hurt",
+        "death",
+    ]
+    assert requests[0].animations == pack.shared.animations
 
 
 def test_static_pack_rejects_shared_animations() -> None:

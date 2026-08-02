@@ -536,13 +536,19 @@ def create_asset_pack(
         table.add_column("恢复", justify="center")
         table.add_column("说明")
         for asset in summary.assets:
+            details = [note for note in (asset.error, *asset.processing_notes) if note]
+            if asset.validation_exemptions:
+                exempt_targets = ", ".join(
+                    exemption.target for exemption in asset.validation_exemptions
+                )
+                details.append(f"{exempt_targets} 几何检查=action_exempt")
             table.add_row(
                 asset.asset_id,
                 asset.outcome,
                 asset.stage,
                 "✓" if asset.cached else "—",
                 "✓" if asset.resumed else "—",
-                asset.error or "",
+                "；".join(details),
             )
         console.print(table)
         summary_path = _summary_display_path(config, summary.pack_id)

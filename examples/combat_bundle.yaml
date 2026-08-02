@@ -1,0 +1,55 @@
+# ============================================================
+# knight_combat — 同一名持剑骑士的整套战斗动作
+#
+# target_size 参照 knight.yaml 使用 96：带武器人形压到 48px 会丢失
+# 约 85% 的真实生成细节，剑与肢体动作都难以辨认。
+# ============================================================
+
+schema_version: "1.0"
+pack_type: combat_bundle
+pack_id: knight_combat
+
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [96, 96]
+    max_colors: 32
+    outline: single_pixel_dark
+    shading: two_tone
+    antialiasing: false
+    lighting: fixed_top_left
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+    fallback_colors: ["#00FF00", "#00FFFF"]
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: forest_knight
+    colors:
+      - "#211A2C"
+      - "#F1D3B3"
+      - "#A86F4C"
+      - "#68402A"
+      - "#274C3A"
+      - "#39705A"
+      - "#6F9B67"
+      - "#A8C686"
+      - "#4B4F5C"
+      - "#777C8C"
+      - "#A7A9B4"
+      - "#D8DAE2"
+      - "#6E4B32"
+      - "#A36A3F"
+      - "#D39A5A"
+      - "#EEE8D5"
+  animations:
+    - name: attack
+    - name: hurt
+    - name: death
+
+assets:
+  - asset_id: knight_01
+    description: >-
+      Young forest knight, short brown hair, green cloak, leather armor,
+      short sword held in the right hand. Slim build, no shield, no cape hood.

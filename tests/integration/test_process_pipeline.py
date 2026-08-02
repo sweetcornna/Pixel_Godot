@@ -228,6 +228,31 @@ def test_process_only_targets_one_action(asset_dir: Path) -> None:
     assert not (asset_dir / "frames" / "idle_down").exists()
 
 
+def test_process_only_keeps_the_pending_reprocess_flag(asset_dir: Path) -> None:
+    """``--only`` 沿用既有基准，收敛不了别的动作，所以待收敛标记必须留着。
+
+    清零过一次就等于把"基准被顶替过"抹掉了 —— 之后 combat_bundle 批量跑完
+    不会补那次全量处理，用户拿到一批基准不一致的动作且毫不知情。
+    """
+    run_process(asset_dir)
+    manifest_path = asset_dir / "asset-manifest.json"
+    manifest = AssetManifest.load(manifest_path)
+    assert manifest.scale_profile is not None
+    manifest.scale_profile.needs_reprocess = True
+    manifest.save(manifest_path)
+
+    run_process(asset_dir, only="walk_down")
+    profile = AssetManifest.load(manifest_path).scale_profile
+    assert profile is not None
+    assert profile.needs_reprocess is True
+
+    # 全量跑才看得见所有动作，也只有它有资格清零。
+    run_process(asset_dir)
+    profile = AssetManifest.load(manifest_path).scale_profile
+    assert profile is not None
+    assert profile.needs_reprocess is False
+
+
 def test_process_ignores_archived_sources(asset_dir: Path) -> None:
     """归档的历史版本（``.r1``）不该被当成新动作再处理一遍。"""
     archived = asset_dir / "source" / "walk-down-original.r1.png"
