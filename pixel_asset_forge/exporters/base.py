@@ -37,6 +37,38 @@ class AnimationView:
         return self.frame_count / self.fps if self.fps else 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class TileView:
+    """导出器看到的一块 tile。"""
+
+    tile_id: str
+    image: str
+
+
+def tile_views(manifest: AssetManifest) -> list[TileView]:
+    """把 Manifest 的 tileset 展开成导出器要的形态。
+
+    按 ``tile_id`` 排序 —— 图集里的坐标必须可复现，否则同一套 tile 每次导出
+    落在不同格子上，地图里已经摆好的 tile 会集体错位。
+    """
+    if manifest.tileset is None:
+        return []
+    return [
+        TileView(tile_id=tile_id, image=entry.image)
+        for tile_id, entry in sorted(manifest.tileset.tiles.items())
+    ]
+
+
+def load_tiles(root: Path, views: list[TileView]) -> list[np.ndarray]:
+    images = []
+    for view in views:
+        path = root / view.image
+        if not path.is_file():
+            raise ExportError(f"tile {view.tile_id} 的成品缺失：{path}")
+        images.append(np.array(Image.open(path).convert("RGBA")))
+    return images
+
+
 @dataclass
 class ExportResult:
     target: str

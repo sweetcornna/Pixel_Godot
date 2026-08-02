@@ -22,6 +22,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
+| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile 首纵切已完成（生成 → 无缝验证 → Godot TileSet 导出）；邻接、autotile、地图生成未开工 |
 
 ### 未达标项
 
@@ -38,10 +39,11 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 理由与实测数据见 `pixel_asset_forge/validation/frame_order.py` 的模块文档。
 `export` 产出的 `previews/contact-sheet.png` 就是为这条缺口准备的。
 
-**3. Godot 加载未经真实工程验证。** PLAN §8 Sprint 6 的门槛写的是"用真实 Godot 工程验证，
-不是理论上兼容" —— 我没有 Godot 环境。`.tres` 的结构（`load_steps` 计数、
-`&"name"` StringName、`speed` 语义、`Rect2` 区域）都有测试覆盖，
-但**真人在 Godot 里拖一次**仍是必需的。
+**3. Godot TileSet 尚未真机验证。** `SpriteFrames`（角色动画）那条链已于 2026-07-29
+在 **Godot 4.3 真机验证**通过（载入、核对帧数/fps/loop、挂到 `AnimatedSprite2D` 播放），
+重跑见 `tools/godot-gate/`。但 Sprint 8 新增的 `TileSet` `.tres` **还没有** ——
+它只按文档格式写并做了结构断言（`tile_size` 与 `texture_region_size` 一致、
+每格 `列:行/0 = 0` 齐全）。导出说明里也如实写了这一句。
 
 ---
 
@@ -144,7 +146,41 @@ uv run pixel-asset create-asset requests/rusty_key.yaml   # 生成 → 处理 �
 （与 `create-character` 同口径）。动画请求会被拒收并指向 `create-character`。
 
 > `requests/rusty_key.yaml` 是你自己写的单资产 request（`init` 会建好 `requests/` 目录）；
-> `examples/` 下目前只有角色示例与五份 pack 示例。
+> `examples/` 下目前有角色示例、五份 pack 示例与一份 tileset 示例。
+
+### 地面 Tileset
+
+一套可平铺的地面 tile 走 `tileset` 请求，**不是 pack** —— pack 的产物是 N 个各自
+独立导出的资产，而 Godot TileSet 与 Tiled 要的是一张图集加一份网格定义，
+N 块 tile 属于同一个资产。
+
+```bash
+uv run pixel-asset plan examples/grass_field.yaml           # 每块 tile 各一次调用
+uv run pixel-asset create-tileset examples/grass_field.yaml # 逐块生成 → 整套统一处理
+uv run pixel-asset validate outputs/grass_field             # 查无缝平铺
+uv run pixel-asset export   outputs/grass_field             # TileSet .tres + 图集 + JSON
+```
+
+tile 与其它资产有两处不同，照抄示例时容易踩空：
+
+- **不写 `background`。** tile 是满幅不透明的，去背景那一步根本不会执行，
+  写了会被直接拒收。
+- **`tile_size` 独立于 `style.target_size`。** 前者是"每块 tile 精确多大"，
+  后者是静态资产那套"内容占画布多少"，不是一回事。
+
+`validate` 对 tile 跑两条判据，各抓一种平铺失败 —— 它们是这条链存在的意义：
+
+| 判据 | 抓什么 | 平铺后看到什么 |
+|---|---|---|
+| `tile_seam` | 对边接不上（如整幅左右渐变） | 每隔一格一道突变 |
+| `tile_border` | 带边框 / 暗角 | 一片规则网格线 |
+
+第二条不能省：带边框的 tile 接缝处是"边框接边框"，两边一样暗，**接缝判据对它
+恒判通过**，而它恰恰是模型最常见的失败形态。两条都是 fatal —— 拼不起来等于整套
+不可用。阈值尚未用真实 tile 校准。
+
+`export` 产出的 contact sheet 会把每块 tile 铺成 3×3：判据只算数值，
+平铺起来像不像、有没有肉眼可见的重复图案，还得人看。
 
 `plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
 键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**
@@ -166,6 +202,7 @@ uv run pixel-asset create-asset requests/rusty_key.yaml   # 生成 → 处理 �
 | `create-animation --asset A --action X --direction D` | 生成完整动作网格 | ✅ | ✅ |
 | `create-asset <request.yaml>` | 单个静态资产完整链：生成 → 处理 → 验证 → 导出 | ✅ | ✅ |
 | `create-asset-pack <pack.yaml>` | 批量生成共享约束的一组资产（静态三种 + 动画 `spell_bundle` / `combat_bundle`） | ✅ | ✅ |
+| `create-tileset <request.yaml>` | 生成一整套地面 tile：逐块生成 → 整套统一处理 | ✅ | ✅ |
 | `import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ | ✅ |
 | `interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ | ✅ |
 | `validate <outputs/A>` | 运行验证引擎 | ❌ | ✅ |

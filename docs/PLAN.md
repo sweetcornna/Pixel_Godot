@@ -637,6 +637,7 @@ MCP 仍保持少量高层语义工具。详见 [ADR-005 修订](adr/ADR-005-cli-
 | `pixel-asset create-animation --asset A --action X --direction D` | 生成动作网格 | ✅ |
 | `pixel-asset create-asset <request.yaml>` | 生成单个静态资产（生成 → 处理 → 验证 → 导出） | ✅ |
 | `pixel-asset create-asset-pack <pack.yaml>` | 生成一组共享约束的资产（静态 pack 一遍跑完；动画 bundle 停 seed 闸门，批准后重跑同一条命令续跑） | ✅ |
+| `pixel-asset create-tileset <request.yaml>` | 生成一整套地面 tile（逐块生成，整套统一处理与调色板） | ✅ |
 | `pixel-asset import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ |
 | `pixel-asset interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ |
 | `pixel-asset process <outputs/A>` | **仅重跑本地处理** | ❌ |
@@ -1614,7 +1615,7 @@ WFC 的 Simple Tiled Model 适合作为可选地图生成后端。
 推进纪律沿用 Sprint 7：**一个纵切一次范围**，契约先写死再实现，每切只对自己的
 范围主张完成，上面这五条总门槛在全部纵切落地前**不打勾**。
 
-#### 8.1 基础地面 tile 首纵切 · 🚧 待实现
+#### 8.1 基础地面 tile 首纵切 · ✅ 已完成
 
 **本次范围只有「一组基础地面 tile 的最小完整链」**：生成 → 定尺寸处理 →
 无缝平铺验证 → 导出。**不含**邻接规则推导、autotile、WFC、地图生成、
@@ -1730,13 +1731,55 @@ export:
 
 ##### 退出门槛（仅对 8.1 主张）
 
-- ⬜ `examples/` 的 tileset 示例走完 `plan` → `create-tileset` → `validate`
+- ✅ `examples/grass_field.yaml` 走完 `plan` → `create-tileset` → `validate`
   → `export` 全链路（mock 集成测试 + CLI 实测）
-- ⬜ 每个 tile 的产出尺寸**精确等于** `tile_size`，有测试
-- ⬜ 无缝检查对"带边框反例"判失败、对可平铺 tile 判通过，**两侧都有测试**
-- ⬜ 整套 tile 共享同一份调色板，有测试
-- ⬜ `plan` 对 tileset 不再提示走 `create-character`，有测试
-- ⬜ Sprint 7 及之前全部既有测试不回归、不削弱断言
+- ✅ 每个 tile 的产出尺寸**精确等于** `tile_size`，有测试
+- ✅ 无缝检查对"带边框反例"判失败、对可平铺 tile 判通过，**两侧都有测试**
+- ✅ 整套 tile 共享同一份调色板，有测试
+- ✅ `plan` 对 tileset 不再提示走 `create-character`，有测试
+- ✅ Sprint 7 及之前全部既有测试不回归、不削弱断言
+
+**8.1 完成记录**：`tileset` 此前是个**悬空类型** —— 它在 `AssetType` 与两份
+schema 里各占一格，却没有任何执行路径：`create-asset` 明确拒收它，而 `plan`
+照常给它算 1 次调用预算并提示"下一步 create-character"。现在有了完整一条链：
+请求契约（schema + pydantic 双层）→ 每块 tile 一个 `JobKind.TILE` 任务 →
+`create-tileset` → 整套一起处理 → 无缝验证 → Godot TileSet 与 generic-json 导出。
+
+实现过程中挖出并修掉的问题，按"只跑命令发现不了"排序：
+
+1. **判据写错过一次。** 初稿只有"接缝差异"一条，构造带边框反例时发现它**恒判
+   通过** —— 带边框的 tile 接缝处是"边框接边框"，两边一样暗。补上
+   `border_deviation` 才抓得到。它的分母也是被反例逼出来的：取内部标准差时，
+   暗角自己把标准差抬高了，等于拿失败信号归一化失败信号，实测 32×32 暗角只算出
+   1.07 判通过。
+2. **`plan` 把整套 tile 的预算报成 0 次调用** —— `JobKind.TILE` 没进
+   `Job.calls_api`。命令跑得好好的，数字是错的。
+3. **mock provider 产不出可平铺 tile。** 它画的是"键控色底 + 居中主体 + 四周
+   留白"，对 tile 而言正是"带边框"，实测 `border_deviation` 130（阈值 2），
+   整套必然判失败 —— 离线走不完这条链，而 Sprint 1 的门槛就是"不调用真实 API
+   即可走完整工作流"。按 ADR-002「mock 是一等公民不是桩」给它加了 tile 分支。
+4. **`artifact_exists` 在顺利路径上从报告里消失** —— 初版只在 tile 缺失时才发出
+   该检查项。这正是"列全防线"要防的事，改成通过时也记一笔。
+
+`plan` 的"下一步"提示此前无论什么资产都指向 `create-character`，对 tileset 与
+静态资产都是错的，一并按资产类型分支。
+
+Manifest 侧：`BackgroundInfo.mode` 新增 `opaque`（满幅不透明、从未做过去背景），
+键控三件套对它无意义故改为可空；为了不让 `None` 扩散到十个读取点，加了
+`background.key_color` 属性 —— 读到 `opaque` 直接抛错，因为会读它的全是结构上
+必然做过去背景的链，真读到说明调用路径本身错了。
+
+CLI 全链路实测（mock，7/7）：`plan` 报「共 3 个任务 · 预计 API 调用 3 次」并提示
+走 `create-tileset` → 未生成就导出被拒 → `create-tileset` 出 3 块 32×32、共享
+14 色 → **未验证就导出被拒** → `validate` 34 项全过（15 跑 + 19 显式记为不适用）
+→ `export` 产出 `.tres` + 图集 + `GODOT-README.md` + generic-json → 重跑
+`create-tileset`，`generation-log` 前后都是 3 条，零重复计费。
+
+**未做（诚实记账）**：Godot TileSet 的 `.tres` **没有真机验证过**。SpriteFrames
+那条链 2026-07-29 在 Godot 4.3 上验过，TileSet 这条只按文档格式写并做了结构断言
+—— 导出说明里也如实写了这一句。补验见 `tools/godot-gate/`。
+
+全套件 935 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
 > 8.1 只主张"一组基础地面 tile 可用"。邻接、autotile、地图与 Tiled 导出
 > 不在本切范围，Sprint 8 总门槛继续不打勾。

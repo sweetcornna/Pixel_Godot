@@ -49,8 +49,10 @@ from .base import (
     animation_views,
     load_frames,
     load_static_image,
+    load_tiles,
+    tile_views,
 )
-from .generic_json import build_atlas
+from .generic_json import build_atlas, build_tile_atlas
 
 #: Godot 4 的资源格式版本。
 RESOURCE_FORMAT = 3
@@ -144,10 +146,86 @@ def _handoff_doc(manifest: AssetManifest, lines: list[str]) -> str:
     )
 
 
+def build_tileset(
+    manifest: AssetManifest,
+    coords: dict[str, tuple[int, int]],
+    texture_path: str,
+    tile_size: tuple[int, int],
+) -> str:
+    """生成 Godot 4 的 ``TileSet`` ``.tres`` 文本。
+
+    结构与 ``SpriteFrames`` 不同，容易写错的是这两处：
+
+    1. **图块用 ``列:行/0 = 0`` 声明**，不是 ``region``。左边是图集里的格坐标，
+       ``/0`` 是该格的第 0 个 alternative tile，右边的 0 是它的 ID。少写这一行，
+       Godot 认为那一格是空的 —— 图集里明明有图，编辑器里却选不中。
+    2. **``tile_size`` 在 ``[resource]`` 段、``texture_region_size`` 在 source 段**，
+       两个都要写且必须一致；只写其一时 Godot 会用默认的 16×16 去切图集。
+
+    ``ext_resource`` 同样用相对路径，理由与 SpriteFrames 那边一致
+    （整目录复制进项目也要能加载）。
+    """
+    atlas_id = "1_atlas"
+    source_id = "TileSetAtlasSource_000"
+    width, height = tile_size
+
+    cells = "\n".join(f"{col}:{row}/0 = 0" for col, row in sorted(coords.values()))
+    return (
+        f'[gd_resource type="TileSet" load_steps=3 format={RESOURCE_FORMAT}]\n\n'
+        f'[ext_resource type="Texture2D" path="{texture_path}" id="{atlas_id}"]\n\n'
+        f'[sub_resource type="TileSetAtlasSource" id="{source_id}"]\n'
+        f'texture = ExtResource("{atlas_id}")\n'
+        f"texture_region_size = Vector2i({width}, {height})\n"
+        f"{cells}\n\n"
+        f"[resource]\n"
+        f"tile_size = Vector2i({width}, {height})\n"
+        f'sources/0 = SubResource("{source_id}")\n'
+    )
+
+
 class GodotExporter(Exporter):
     target = "godot"
 
+    def _export_tileset(
+        self, manifest: AssetManifest, root: Path, out_dir: Path
+    ) -> ExportResult:
+        assert manifest.tileset is not None
+        result = ExportResult(target=self.target)
+        self.ensure_dir(out_dir)
+
+        views = tile_views(manifest)
+        atlas, coords, (columns, rows) = build_tile_atlas(views, load_tiles(root, views))
+        texture_name = f"{manifest.asset_id}.png"
+        result.files.append(save_png(atlas, out_dir / texture_name))
+
+        tres = build_tileset(
+            manifest, coords, texture_name, manifest.tileset.tile_size
+        )
+        tres_path = out_dir / f"{manifest.asset_id}_tileset.tres"
+        tres_path.write_text(tres, encoding="utf-8")
+        result.files.append(tres_path)
+
+        listing = "、".join(
+            f"{tile_id}=({col},{row})" for tile_id, (col, row) in sorted(coords.items())
+        )
+        notes = [
+            f"把 {out_dir.name}/ 整个目录复制进 Godot 项目，再把 "
+            f"{tres_path.name} 拖到 TileMapLayer 的 Tile Set 属性上。",
+            f"图集 {columns}×{rows}，格坐标：{listing}。",
+            _FILTER_NOTE,
+            "本 TileSet 尚未在真机 Godot 上验证 —— SpriteFrames 那条链验过，"
+            "这条还没有。首次导入若报错请回报（PLAN §8.1）。",
+        ]
+        result.notes.extend(notes)
+        handoff = out_dir / HANDOFF_NAME
+        handoff.write_text(_handoff_doc(manifest, notes), encoding="utf-8")
+        result.files.append(handoff)
+        return result
+
     def export(self, manifest: AssetManifest, root: Path, out_dir: Path) -> ExportResult:
+        if manifest.tileset is not None:
+            return self._export_tileset(manifest, root, out_dir)
+
         views = animation_views(manifest, root)
         result = ExportResult(target=self.target)
         if not views:

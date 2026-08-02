@@ -534,17 +534,20 @@ def validate_tileset(
     expected = entry.tile_size
     for tile_id, tile in sorted(entry.tiles.items()):
         image_path = root / tile.image
-        if not image_path.is_file():
-            checks.append(
-                Check.make(
-                    "artifact_exists",
-                    tile_id,
-                    CheckResult.FAIL,
-                    measured=False,
-                    threshold=True,
-                    message=f"tile 成品缺失：{image_path}",
-                )
+        exists = image_path.is_file()
+        # 通过时也要记一笔 —— 只在缺失时才发出的检查项，会在顺利路径上
+        # 从报告里整条消失，那正是"列全防线"要防的事。
+        checks.append(
+            Check.make(
+                "artifact_exists",
+                tile_id,
+                CheckResult.PASS if exists else CheckResult.FAIL,
+                measured=exists,
+                threshold=True,
+                message=None if exists else f"tile 成品缺失：{image_path}",
             )
+        )
+        if not exists:
             continue
 
         image = np.array(Image.open(image_path).convert("RGBA"))

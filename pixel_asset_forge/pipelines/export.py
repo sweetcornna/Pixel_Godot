@@ -65,12 +65,66 @@ class ExportSummary:
     notes: list[str] = field(default_factory=list)
 
 
+#: contact sheet 上每块 tile 各铺几次。
+#:
+#: **必须 ≥2。** 只画一块看不出接缝 —— 无缝与否只有在"接起来"之后才显形，
+#: 而这张图的全部意义就是让人用眼睛复核那两条自动判据。
+TILE_REPEAT = 3
+
+
+def _tileset_contact_sheet(manifest: AssetManifest, root: Path, out: Path) -> Path:
+    """每块 tile 铺成 3×3 的一小片，一行一块。
+
+    自动判据能算出"接缝比内部差多少"，但一片草地平铺起来到底像不像草地、
+    有没有肉眼可见的重复图案，只有人能判。
+    """
+    assert manifest.tileset is not None
+    entries = sorted(manifest.tileset.tiles.items())
+    if not entries:
+        raise ExportError("tileset 里没有任何 tile，无法生成 contact sheet")
+
+    width, height = manifest.tileset.tile_size
+    patch_w = width * TILE_REPEAT * CONTACT_SCALE
+    patch_h = height * TILE_REPEAT * CONTACT_SCALE
+    canvas = Image.new(
+        "RGB", (LABEL_WIDTH + patch_w, patch_h * len(entries)), BACKGROUND
+    )
+    draw = ImageDraw.Draw(canvas)
+
+    for row, (tile_id, entry) in enumerate(entries):
+        path = root / entry.image
+        if not path.is_file():
+            raise ExportError(f"tile {tile_id} 的成品缺失：{path}")
+        tile = Image.open(path).convert("RGBA").resize(
+            (width * CONTACT_SCALE, height * CONTACT_SCALE), Image.Resampling.NEAREST
+        )
+        top = row * patch_h
+        for ty in range(TILE_REPEAT):
+            for tx in range(TILE_REPEAT):
+                canvas.paste(
+                    tile,
+                    (
+                        LABEL_WIDTH + tx * width * CONTACT_SCALE,
+                        top + ty * height * CONTACT_SCALE,
+                    ),
+                    tile,
+                )
+        draw.text((6, top + patch_h // 2 - 6), tile_id, fill=(220, 220, 230))
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out)
+    return out
+
+
 def build_contact_sheet(manifest: AssetManifest, root: Path, out: Path) -> Path:
     """一屏看完所有动作，供一次性人工审核。
 
     每行一个动作、行首标注动作名 —— 帧序是否正确、朝向是否搞反、
     某一帧是否塌掉，都只能靠这张图和 GIF 用眼睛看出来。
     """
+    if manifest.tileset is not None:
+        return _tileset_contact_sheet(manifest, root, out)
+
     views = animation_views(manifest, root)
     if not views:
         if manifest.static_image is not None:
@@ -150,7 +204,13 @@ def run_export(
         or manifest.static_image is not None
     )
     revalidated_reason: str | None = None
-    if is_static:
+    if manifest.tileset is not None:
+        # tileset 与静态资产共用同一条硬闸：没验过就不许交付。
+        if manifest.status not in ("validated", "exported"):
+            raise ExportError(
+                f"Manifest 状态为 {manifest.status}，只有 validated/exported 可导出"
+            )
+    elif is_static:
         if manifest.static_image is None:
             raise ExportError(
                 f"{manifest.asset_id} 是静态资产，但 Manifest 缺少 static_image"
@@ -198,11 +258,20 @@ def run_export(
         summary.contact_sheet = build_contact_sheet(
             manifest, root, store.previews / CONTACT_SHEET_NAME
         )
-        summary.notes.append(
-            "帧序被打乱无法自动检测 —— 请看 contact sheet 与 previews/*.gif 确认播放顺序。"
-            if manifest.animations
-            else "静态资产的 contact sheet 供构图与配色的人工审核。"
-        )
+        if manifest.animations:
+            note = (
+                "帧序被打乱无法自动检测 —— 请看 contact sheet 与 previews/*.gif "
+                "确认播放顺序。"
+            )
+        elif manifest.tileset is not None:
+            note = (
+                f"contact sheet 把每块 tile 铺成 {TILE_REPEAT}×{TILE_REPEAT} —— "
+                "自动判据只算接缝与边缘的数值，平铺起来像不像、有没有肉眼可见的"
+                "重复图案，还得看这张图。"
+            )
+        else:
+            note = "静态资产的 contact sheet 供构图与配色的人工审核。"
+        summary.notes.append(note)
 
     if revalidated_reason is not None:
         summary.notes.append(

@@ -78,6 +78,7 @@ export PIXEL_ASSET_API_KEY="…"      # 也接受 OPENAI_API_KEY
 | "做一批药水 / 武器 / 场景物件" | 写对应静态 pack YAML（不写 `model`）→ `plan pack.yaml` → 用户确认 → `create-asset-pack pack.yaml` → 逐 `asset_id` 审核 / 导出 |
 | "做一组法术特效" | 写 `spell_bundle` YAML → 同上，但要跑**两遍**：第一遍停 seed 闸门，逐个批准后重跑同一条命令 |
 | "给这个角色做整套战斗动作" | 写 `combat_bundle` YAML（`attack` / `hurt` / `death`）→ 同 `spell_bundle` 的两遍流程 |
+| "做一套地面 / 草地 / 地砖" | 写 `tileset` request（**不是 pack**）→ `plan` → `create-tileset` → `validate` 查无缝 → `export` |
 | "续跑刚才失败的药水" | 用同一份 pack YAML 再跑 `create-asset-pack pack.yaml`；已完成资产去重，只续跑未完成/可重试资产 |
 | "帮我看看有没有问题" | `validate outputs/X` |
 | "颜色不对 / 背景没抠干净 / 位置歪了" | 先 `process`（离线重跑），再 `validate` |
@@ -165,6 +166,33 @@ pixel-asset create-asset-pack combat.yaml                      # 跑完全部动
 动画 bundle 跑完后，若日志或 `pack-summary` 里出现「因基准顶替重跑了处理」，
 那是协调器自动做的**本地**统一处理（零 API 调用），不是错误，也不需要重跑生成 ——
 如实告诉用户图被重新处理过即可。
+
+### 地面 tile：`tileset` 请求，不走 pack
+
+用户要"一套地面/ 草地 / 地砖"时用 `asset_type: tileset` 的**单个 request**，
+不要写成 pack：pack 的产物是 N 个各自独立导出的资产，而 Godot TileSet 与 Tiled
+要的是一张图集加一份网格定义，N 块 tile 属于同一个资产。
+
+```bash
+pixel-asset plan grass.yaml            # 每块 tile 各一次调用
+pixel-asset create-tileset grass.yaml  # 逐块生成 → 整套统一处理（共享调色板）
+pixel-asset validate outputs/grass_field
+pixel-asset export   outputs/grass_field
+```
+
+写 request 时两处**必须**注意，写错会被直接拒收或产出废图：
+
+- **不写 `background`。** tile 满幅不透明，去背景那一步不会执行。
+- **`tile_size` 与 `style.target_size` 是两回事**，前者是"每块 tile 精确多大"。
+- 每块 tile 的 `description` 里明确写 **"no border"**、"fills the whole square"
+  —— 模型最常见的失败就是画成一张带边框的方形贴图。
+
+`validate` 的两条 tile 判据都是 **fatal**：`tile_seam`（对边接不上）与
+`tile_border`（带边框 / 暗角）。报失败时**不要**建议用户忽略——平铺后是满屏
+可见的网格线或接缝。让他改 description 再 `create-tileset --regenerate`。
+
+导出后一定要让用户看 `previews/contact-sheet.png`：它把每块 tile 铺成 3×3，
+判据只算数值，平铺起来像不像只有人能判。
 
 ---
 

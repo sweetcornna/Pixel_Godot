@@ -10,20 +10,25 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from ..errors import ExportError
 from ..models.manifest import AssetManifest
 from ..processing.spritesheet import save_png
 from .base import (
     AnimationView,
     Exporter,
     ExportResult,
+    TileView,
     animation_views,
     load_frames,
     load_static_image,
+    load_tiles,
+    tile_views,
 )
 
 SCHEMA = "pixel-asset-forge.generic.v1"
@@ -55,10 +60,91 @@ def build_atlas(
     return atlas, regions
 
 
+def build_tile_atlas(
+    views: list[TileView], images: list[np.ndarray]
+) -> tuple[np.ndarray, dict[str, tuple[int, int]], tuple[int, int]]:
+    """把整套 tile 拼成一张近方形的图集，返回 ``(图集, tile→格坐标, (列, 行))``。
+
+    近方形而不是一行排开：tileset 的图集会被引擎按固定网格切，一行 20 个 tile
+    在 32px 下就是 640×32 的长条，编辑器里根本没法看。
+
+    格坐标（列、行）而不是像素矩形：Godot 的 ``TileSetAtlasSource`` 本来就按
+    ``列:行`` 寻址，给像素矩形反而要调用方自己再除一遍。
+    """
+    if not views:
+        raise ValueError("没有可导出的 tile")
+    height, width = images[0].shape[:2]
+    sizes = {image.shape[:2] for image in images}
+    if len(sizes) > 1:
+        raise ExportError(f"tile 尺寸不一致，无法拼图集：{sorted(sizes)}")
+
+    columns = math.ceil(math.sqrt(len(views)))
+    rows = math.ceil(len(views) / columns)
+    atlas = np.zeros((height * rows, width * columns, 4), dtype=np.uint8)
+
+    coords: dict[str, tuple[int, int]] = {}
+    for index, (view, image) in enumerate(zip(views, images, strict=True)):
+        col, row = index % columns, index // columns
+        atlas[row * height : (row + 1) * height, col * width : (col + 1) * width] = image
+        coords[view.tile_id] = (col, row)
+    return atlas, coords, (columns, rows)
+
+
 class GenericJsonExporter(Exporter):
     target = "generic-json"
 
+    def _export_tileset(
+        self, manifest: AssetManifest, root: Path, out_dir: Path
+    ) -> ExportResult:
+        assert manifest.tileset is not None
+        result = ExportResult(target=self.target)
+        self.ensure_dir(out_dir)
+
+        views = tile_views(manifest)
+        atlas, coords, (columns, rows) = build_tile_atlas(views, load_tiles(root, views))
+        texture_name = f"{manifest.asset_id}.png"
+        result.files.append(save_png(atlas, out_dir / texture_name))
+
+        width, height = manifest.tileset.tile_size
+        payload: dict[str, Any] = {
+            "schema": SCHEMA,
+            "asset_id": manifest.asset_id,
+            "asset_type": manifest.asset_type,
+            "pipeline_version": manifest.pipeline_version,
+            "palette": manifest.palette.colors,
+            "tile_size": {"width": width, "height": height},
+            "atlas": {
+                "image": texture_name,
+                "columns": columns,
+                "rows": rows,
+            },
+            "tiles": {
+                view.tile_id: {
+                    "column": coords[view.tile_id][0],
+                    "row": coords[view.tile_id][1],
+                    "x": coords[view.tile_id][0] * width,
+                    "y": coords[view.tile_id][1] * height,
+                    "width": width,
+                    "height": height,
+                }
+                for view in views
+            },
+        }
+        path = out_dir / f"{manifest.asset_id}.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        result.files.append(path)
+        result.notes.append(
+            f"{len(views)} 块 tile 排成 {columns}×{rows} 图集；"
+            "tiles[*] 同时给了格坐标与像素坐标，按引擎习惯取其一。"
+        )
+        return result
+
     def export(self, manifest: AssetManifest, root: Path, out_dir: Path) -> ExportResult:
+        if manifest.tileset is not None:
+            return self._export_tileset(manifest, root, out_dir)
+
         views = animation_views(manifest, root)
         result = ExportResult(target=self.target)
 
