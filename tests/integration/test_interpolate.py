@@ -193,3 +193,41 @@ def test_the_frame_order_is_reported(imported, config) -> None:  # type: ignore[
     assert len(out.order) == 9
     assert out.order[0] == "key:0"
     assert sum(1 for tag in out.order if tag.startswith("key:")) == 3
+
+
+def _four_frame_grid(tmp_path: Path) -> tuple[ArtifactStore, tuple[int, int, int]]:
+    """造一个 4 格 × 64px 的源网格，每格一个可区分的实心方块。"""
+    key_rgb = (255, 0, 255)
+    store = ArtifactStore(tmp_path / "asset")
+    store.source.mkdir(parents=True, exist_ok=True)
+    grid = Image.new("RGB", (256, 64), key_rgb)
+    for index in range(4):
+        block = Image.new("RGB", (32, 40), (20 + index * 40, 90, 140))
+        grid.paste(block, (index * 64 + 16, 16))
+    grid.save(store.source / "hurt-down-original.png")
+    return store, key_rgb
+
+
+def test_reinterpolating_reads_the_grid_not_the_previous_output(tmp_path) -> None:
+    """补第二次时，关键帧仍从源网格来 —— 不能被上一轮的成品帧数带偏。
+
+    源网格 4 格、成品 8 帧，拿 8 去切 4 格的图会把每格劈成两半，
+    每张"关键帧"都是半个角色，补出来的中间帧整张空白。
+    """
+    from pixel_asset_forge.models.manifest import GeneratedAnimation, GridInfo
+    from pixel_asset_forge.pipelines.interpolate import _keyframes_from_grid
+
+    store, key_rgb = _four_frame_grid(tmp_path)
+    entry = GeneratedAnimation(
+        fps=12,
+        loop=False,
+        grid=GridInfo(cols=4, rows=1, cell=(64, 64), requested_size=(256, 64),
+                      actual_size=(256, 64)),
+        source_image="source/hurt-down-original.png",
+        key_threshold=100,
+        # 补过一次之后的状态：成品 8 帧，源网格仍是 4 格
+        frames=[f"frames/hurt_down/hurt_down_{i:02d}.png" for i in range(8)],
+        keyframe_count=4,
+        keyframe_fps=12,
+    )
+    assert len(_keyframes_from_grid(store, "hurt_down", entry, key_rgb)) == 4

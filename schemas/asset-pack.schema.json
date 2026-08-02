@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pixel-asset-forge/pixel-asset-forge/schemas/asset-pack.schema.json",
+  "title": "Pixel Asset Forge — Static Asset Pack",
+  "description": "共享风格、背景、导出设置与显式色板的一组静态资产。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pack_type",
+    "pack_id",
+    "shared",
+    "assets"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "pack_type": {
+      "enum": ["potion_pack", "weapon_pack", "environment_pack"]
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "shared": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "style",
+        "background",
+        "export",
+        "palette"
+      ],
+      "properties": {
+        "style": {
+          "$ref": "#/$defs/style"
+        },
+        "background": {
+          "$ref": "#/$defs/background"
+        },
+        "export": {
+          "$ref": "#/$defs/export"
+        },
+        "palette": {
+          "$ref": "#/$defs/palette"
+        }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "asset_id",
+          "description"
+        ],
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_]*$",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "description": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 2000
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hex_color": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "logical_size": {
+      "enum": [16, 24, 32, 48, 64, 96, 128]
+    },
+    "style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "perspective",
+        "target_size",
+        "max_colors"
+      ],
+      "properties": {
+        "perspective": {
+          "enum": ["top_down_3_4", "top_down", "side_view", "isometric"]
+        },
+        "target_size": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/logical_size"
+          }
+        },
+        "max_colors": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 256
+        },
+        "outline": {
+          "enum": ["none", "single_pixel_dark", "single_pixel_colored"],
+          "default": "single_pixel_dark"
+        },
+        "shading": {
+          "enum": ["flat", "two_tone", "three_tone"],
+          "default": "two_tone"
+        },
+        "antialiasing": {
+          "type": "boolean",
+          "default": false
+        },
+        "lighting": {
+          "enum": ["fixed_top_left", "fixed_top", "fixed_top_right", "none"],
+          "default": "fixed_top_left"
+        },
+        "strict_lighting": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "background": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["chroma_key", "transparent_model", "rembg"],
+          "default": "chroma_key"
+        },
+        "color": {
+          "$ref": "#/$defs/hex_color",
+          "default": "#FF00FF"
+        },
+        "fallback_colors": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/hex_color"
+          },
+          "default": ["#00FF00", "#00FFFF"]
+        },
+        "conflict_hint": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targets"],
+      "properties": {
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["generic-json", "godot", "phaser", "tiled"]
+          }
+        }
+      }
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["colors"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "colors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/hex_color"
+          }
+        }
+      }
+    }
+  }
+}

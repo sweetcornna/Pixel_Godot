@@ -33,7 +33,7 @@ from ..logging_utils import get_logger
 from ..models.manifest import AssetManifest, GeneratedAnimation
 from ..models.request import load_request
 from ..planning.framerate import FrameBudget, frame_order, plan_inbetweens
-from ..planning.grid_layout import GridLayout, layout_for_frames
+from ..planning.grid_layout import GridLayout, layout_matching_cell
 from ..processing.anchor import BOTTOM_CENTER, align_frames, anchor_drift
 from ..processing.background import resolve_key_color
 from ..processing.chroma_key import apply_chroma_key, hex_to_rgb
@@ -41,7 +41,11 @@ from ..processing.component_split import split_frames
 from ..processing.crop import crop_all
 from ..processing.palette import snap_to_palette
 from ..processing.pixel_cleanup import cleanup_frames
-from ..processing.resize import nearest_resize
+from ..processing.resize import (
+    AREA_DOWNSCALE_RATIO,
+    block_median_resize,
+    nearest_resize,
+)
 from ..processing.spritesheet import compose_spritesheet, save_frames, save_gif, save_png
 from ..prompts.inbetween import compile_inbetween_prompt
 from ..providers import ReferenceImage, bypass_cache, get_provider
@@ -102,8 +106,12 @@ def _keyframes_from_grid(
         raise ProcessingError(f"{key} 的源网格不在了：{source}")
 
     grid = entry.grid
+    # 格数只能来自**网格本身**。用 ``len(entry.frames)`` 是错的：补过一次之后
+    # 成品帧数就与源网格脱钩了（4 格的网格、8 张成品帧），再拿 8 去切 4 格的图，
+    # 每张"关键帧"都是半个角色 —— 实测第二次补间因此拿到 8 个半身像作输入，
+    # 补出来的中间帧整张空白（键控后背景占比 100%）。
     layout = GridLayout(
-        frames=len(entry.frames) or grid.cols * grid.rows,
+        frames=grid.cols * grid.rows,
         cols=grid.cols,
         rows=grid.rows,
         cell=(grid.cell[0], grid.cell[1]),
@@ -136,6 +144,18 @@ def _keyframes(
             f"{key} 只拆出 {len(frames)} 帧，补间至少要两帧"
         )
     return frames
+
+
+def _median_cell(sources: list[bytes]) -> tuple[int, int]:
+    """关键帧的单元格尺寸（各帧尺寸的中位数）。
+
+    导入的关键帧逐张尺寸可能不一致，取中位数比取第一张稳。
+    """
+    sizes = [Image.open(io.BytesIO(data)).size for data in sources]
+    return (
+        int(np.median([w for w, _h in sizes])),
+        int(np.median([h for _w, h in sizes])),
+    )
 
 
 def _tile(image: Image.Image, size: tuple[int, int], cols: int, rows: int) -> bytes:
@@ -188,6 +208,8 @@ def run_interpolate(
     canvas = (manifest.canvas.width, manifest.canvas.height)
 
     sources = _keyframes(store, key, entry, key_rgb)
+    # 关键帧格子的尺寸 —— 间隔网格照它定，中间帧才会与关键帧同取景、同细节密度。
+    key_cell = _median_cell(sources)
     # 用**关键帧自己的**帧率，不是 entry.fps —— 后者补完一次就被改成目标帧率了，
     # 再拿它当源帧率会算出"已经够了，不需要补间"。
     keyframe_fps = entry.keyframe_fps or entry.fps
@@ -231,7 +253,7 @@ def run_interpolate(
         start = Image.open(io.BytesIO(sources[gap])).convert("RGB")
         end_bytes = sources[(gap + 1) % len(sources)]
 
-        layout = layout_for_frames(count)
+        layout = layout_matching_cell(count, key_cell)
         prompt = compile_inbetween_prompt(
             request,
             action=action,
@@ -319,7 +341,14 @@ def run_interpolate(
             own_content = _content_height(raw_frame)
             factor = wanted / max(1, own_content)
             size = (max(1, round(own_w * factor)), max(1, round(own_h * factor)))
-            ordered.append(nearest_resize(raw_frame, size))
+            # 中间帧的源分辨率往往是关键帧的两倍（端点不按请求尺寸返回，实测
+            # 关键帧格 543×724、间隔格 1136×1384），缩小倍数因此大得多。
+            # 这个倍数下最近邻丢的是内容本身 —— 弓被采成一条断续虚线。
+            # 分块中位取的是块内主导色，轮廓连续而不掉对比度（见 resize 模块）。
+            resample = (
+                block_median_resize if factor < 1 / AREA_DOWNSCALE_RATIO else nearest_resize
+            )
+            ordered.append(resample(raw_frame, size))
 
     frames = align_frames(ordered, canvas, anchor=BOTTOM_CENTER)
 

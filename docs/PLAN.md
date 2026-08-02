@@ -14,7 +14,7 @@
 | **生成策略** | 种子图（canonical seed）+ **一次生成完整动作网格**，绝不逐帧独立生成 |
 | **物理布局** | 因 API 尺寸约束无法直接产出 32×32 或长条，改为生成大尺寸二维网格后本地缩小 |
 | **透明化** | `gpt-image-2` 不支持透明背景 → 纯色键控为主，多级降级阶梯兜底 |
-| **接口面** | CLI 9 个命令（核心实现）· MCP 6 个工具（只暴露高层语义） |
+| **接口面** | CLI 按完整业务动作演进（核心实现）· MCP 6 个高层工具（适配层、刻意收敛） |
 | **MVP 定义** | 一个 YAML → 四方向 × `idle`/`walk`，经自动切帧、透明化、脚底对齐、调色板量化、质量验证，Godot 可直接加载 |
 
 **第一个技术里程碑**（一切的前提）：
@@ -623,19 +623,25 @@ stateDiagram-v2
 
 CLI 与 MCP 是**两套不同的接口面**，两者规模不同是设计意图：
 
-### 6.1 CLI（9 个命令，核心实现）
+### 6.1 CLI（核心实现）
+
+CLI 命令面按**完整业务动作**收敛并随已实现能力演进，不机械固定数量；
+MCP 仍保持少量高层语义工具。详见 [ADR-005 修订](adr/ADR-005-cli-core-mcp-adapter.md)。
 
 | 命令 | 用途 | 是否调用 API |
 |---|---|:---:|
 | `pixel-asset init` | 初始化配置与目录 | ❌ |
 | `pixel-asset doctor` | 检测配置、依赖、API 连通性 | 仅探测 |
-| `pixel-asset plan <request.yaml>` | 解析请求并输出任务 DAG，不执行 | ❌ |
+| `pixel-asset plan <input.yaml>` | 自动识别单资产请求或 pack，输出任务 DAG，不执行 | ❌ |
 | `pixel-asset create-character <request.yaml>` | 生成 canonical seed | ✅ |
 | `pixel-asset create-animation --asset A --action X --direction D` | 生成动作网格 | ✅ |
+| `pixel-asset create-asset-pack <pack.yaml>` | 生成一组共享约束的静态资产 | ✅ |
+| `pixel-asset import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ |
+| `pixel-asset interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ |
 | `pixel-asset process <outputs/A>` | **仅重跑本地处理** | ❌ |
 | `pixel-asset validate <outputs/A>` | 运行验证引擎 | ❌ |
 | `pixel-asset repair <outputs/A/walk_down>` | 执行修复计划 | 视修复类型 |
-| `pixel-asset export <outputs/A> --target godot` | 导出引擎格式 | ❌ |
+| `pixel-asset export <asset-dir-or-id> --target godot` | 按资产目录或 `asset_id` 导出引擎格式 | ❌ |
 
 `create-character` 输出：
 
@@ -644,7 +650,8 @@ seed-original.png · seed-transparent.png · seed-pixel.png
 character-reference.json · palette.png
 ```
 
-**9 个命令中有 5 个完全不调用 API** —— 这是刻意设计：调试与迭代应尽量在离线侧完成。
+`plan`、`process`、`validate`、`export` 等离线入口使调试与迭代不必重复调用生成 API；
+这项边界比固定统计命令数量更重要。
 
 ### 6.2 MCP（6 个工具，适配层）
 
@@ -653,8 +660,9 @@ create_character · create_animation · create_asset_pack
 validate_asset   · repair_asset     · export_asset
 ```
 
-**为什么 MCP 只暴露 6 个而非 9 个**：`init` / `doctor` / `plan` 是运维与调试命令，对模型没有语义价值。
-更重要的是，不要向模型暴露几十个像素级工具 —— 工具数量增加会显著推高上下文开销与选错工具的概率。
+**为什么 MCP 保持 6 个，而不机械镜像 CLI**：`init` / `doctor` / `plan` / `import` / `interpolate`
+等是开发者工作流入口，不需要逐项变成 MCP 工具。更重要的是，不要向模型暴露几十个像素级工具 ——
+工具数量增加会显著推高上下文开销与选错工具的概率。
 MCP 层的职责是**收敛**，不是镜像 CLI。详见 [ADR-005](adr/ADR-005-cli-core-mcp-adapter.md)。
 
 `SKILL.md` 的职责是把用户自然语言映射到这些稳定命令，而**不是**让 Agent 自由组合底层脚本。
@@ -1064,9 +1072,97 @@ attack      690
 落在内置动作之间，同量级。产出确实是翻滚：蹲伏 → 缩身 → 完全蜷成球
 （脚在头顶上方）→ 落地 → 起身。
 
+#### 6.8.5 移动形态 —— 姿势节拍不能只服务双足 · ✅ 已完成
+
+用户报的三个问题里最根本的一个：**史莱姆"形象不统一"**。
+它的 idle / attack / hurt / death 都是无腿圆团，唯独 walk 长出了两条腿和脚 ——
+因为 `walk` 的节拍句句写"左脚向前迈、右脚在后"，模型照做，给一团没有腿的
+身体现编了腿。同一个角色四个动作一个样、第五个换了物种。
+
+请求新增可选字段 `locomotion`（`biped` / `legless` / `floating` / `quadruped`），
+省略时从 `description` 推断（slime→legless、ghost→floating、wolf→quadruped）。
+存量 YAML 一个字不用改也能立刻受益。
+
+三处按它分支：
+
+| 层 | 分支的原因 |
+|---|---|
+| `prompts/poses.py` `LOCOMOTION_CYCLES` | 无腿角色走路靠压缩—弹跳，漂浮靠上下浮沉，四足靠对角腿交替 |
+| `pipelines/process.py` `_PEAK_CLAMPED_WALK` | 弹跳的高度变化**是动作本身**，按中位数钳会把它拉平；改看峰值（最高点该回到站立高度） |
+| `constants.py` `LOCOMOTION_THRESHOLDS` | 弹跳的 height_variation 0.82、silhouette_variation 0.59，双足阈值是 0.12 / 0.20，与 `death` 同理豁免 |
+
+另外两条 prompt 硬约束（对所有形态生效）：
+
+- **不许现编肢体**："只用模板里这个角色真有的部件；没有腿就不要造腿"
+- **谁负责表现运动**："腿才是承载运动的部件；翅膀、披风、尾巴、头发在每一格里
+  保持同样的展幅和轮廓" —— 小恶魔走路时腿几乎不动、翅膀每格换展幅，
+  播起来就是用户报的"行走镜像鬼畜"
+
+#### 6.8.6 补间的清晰度与尺寸 · ✅ 已完成
+
+用户报的"尺寸不一致、形象不清晰"，两个独立成因：
+
+1. **补过间的动作绕过了所有跨动作一致性。** `process` 整个跳过它们，于是它们
+   既不进共用调色板也不进尺寸带 —— 弓手补过间的 hurt 停在 85px，其余四个
+   动作已统一到 70~74px。现在补间产出会走一趟 `_normalise_interpolated`。
+2. **中间帧的源分辨率是关键帧的两倍。** 端点不按请求尺寸返回（关键帧格
+   543×724、间隔格 1136×1384），同样缩到 74px，缩小倍数差一倍。
+   三种滤镜逐图比过：最近邻把弓采成断续虚线，面积平均把 1px 描边和填充
+   平均成中间调、整张掉对比度，**分块中位**取块内主导色 —— 轮廓连续、
+   对比度保住。大比例缩小改用它。
+
+顺带修掉的两个真 bug：
+
+- `_keyframes_from_grid` 用 `len(entry.frames)` 当格数。补过一次之后成品帧数
+  就与源网格脱钩（4 格的网格、8 张成品帧），第二次补间因此拿到 8 个半身像作
+  输入，补出来的中间帧整张空白。
+- `save_frames` 只写不删。帧数变少时留下孤儿帧，而 `_normalise_interpolated`
+  是按目录 glob 的。
+
+**实测（6 角色 × 5 动作）**
+
+| | 修前 | 修后 |
+|---|---|---|
+| 站立类动作高度极差（均值） | 17% | 11% |
+| 最差的那个角色 | 27% | 17% |
+| 弓手（补过间） | 22% | 5% |
+| `mirror_flip` 报出的翻面 | 4 | 0 |
+| `validate` 通过的角色 | 4 / 6 | 6 / 6 |
+
+#### 6.8.7 正视步态不能用侧视措辞 · ✅ 已完成
+
+上一轮把小恶魔的翅膀按住之后，用户接着指出：**「走路朝向怎么是侧着的」**。
+躯干、头、翅膀正对镜头，腿却是侧视的 —— 一条腿甩到身侧老远、脚尖朝外。
+
+两条**我自己写的**指令在同时要求水平位移：
+
+| 位置 | 原文 | 为什么错 |
+|---|---|---|
+| `poses.py` 正面节拍 | "the left foot **steps forward**… the right heel is lifted **well behind**… the stride at its **widest**" | 「向前迈」「在后」「跨到最开」都是侧视才成立的说法 |
+| `compiler.py` 连续性块 | "the gap between the two feet must be **at least as wide as the character's shoulders**" | 一肩宽的左右间距在侧视里是跨步，在正视里是**劈叉** |
+
+模型要同时满足「正对镜头」和「两脚拉开一肩宽」，只能把躯干画成正面、
+把腿画成侧视，出来是个拼接怪物。
+
+改法：正视里跨步是**朝镜头方向**的，画面上表现为抬脚、脚在画布上更低更靠前、
+以及整个身体的上下起伏 —— 横向间距始终不超过胯宽，脚尖始终朝向镜头。
+跨步宽度那条规则改成 `_stride_rule(direction)`，正视与侧视各一套。
+
+**实测**：三个角色重生成后腿全部正过来，相邻帧轮廓变化 13~19%（原来 12.4%），
+运动量没有因此变小。
+
+顺带又挖出两个 bug：
+
+- **`bear` 子串命中了 "white beard"**，把一个拄杖的老法师判成了四足动物 ——
+  走路节拍于是要求它用对角腿交替。拉丁词改成整词匹配，中日韩仍按子串。
+- **四足的 `NEUTRAL` 与 `SUSPEND` 两拍一个方位词都没有。** `half_cycle` 的后半
+  周期靠左右互换生成，没有方位词的节拍互换后与原文一字不差，
+  `create-animation` 直接报「出现重复描述」。现在有一条参数化测试覆盖
+  4 形态 × 4 方向 × 全部帧数档位，不再靠人逐拍检查。
+
 ---
 
-### Sprint 7：道具、特效与批量任务 · **第 9 周**
+### Sprint 7：道具、特效与批量任务 · **第 9 周** · 🚧 进行中
 
 **新资产类型**：`prop` · `weapon` · `projectile` · `impact` · `spell` · `pickup` · `ui_icon` · `environment_object`
 
@@ -1074,13 +1170,168 @@ attack      690
 
 **任务调度**：`asyncio` 并发（复用 Sprint 2 的并发控制）· 每资产独立失败 · 暂停与恢复 · 任务去重 · 失败汇总
 
-**退出门槛**
+#### 7.1 `potion_pack` 首纵切 · ✅ 已完成
 
-- ✅ 单个失败不导致整包失败
-- ✅ 可断点续跑
-- ✅ 可重新处理而不重新生成
-- ✅ 可按 `asset_id` 单独导出
-- ✅ 同批资产共享风格与调色板定义
+**本次范围只有 `potion_pack`。** 它由多个静态 `pickup` 构成；不据此宣称
+`weapon_pack`、`spell_bundle`、其余资产类型或整个 Sprint 7 已完成。
+
+##### 输入契约
+
+```yaml
+schema_version: "1.0"
+pack_type: potion_pack
+pack_id: starter_potions
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [32, 32]
+    max_colors: 8
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: starter_potions
+    colors: ["#261B2D", "#F4E6C1", "#D43D4F", "#4C9BE8"]
+assets:
+  - asset_id: health_potion
+    description: round red healing potion in a corked glass bottle
+  - asset_id: mana_potion
+    description: tall blue mana potion in a corked glass bottle
+```
+
+- `shared.style`、`shared.background`、`shared.export` 与 `shared.palette.colors`
+  对全部资产生效；色板必须显式列色，资产项只提供唯一 `asset_id` 与描述。
+- 每个资产展开为无动画的 `pickup`，只创建静态生成任务。静态 pickup **不伪装**
+  canonical seed 或 animation，不进入 seed 人工批准闸门，也没有其他人工批准闸门。
+- pack **不得写 `model`，也不负责选择模型**。运行时统一使用 `Config` 解析后的有效
+  `model`：当前内置默认值为 `gpt-image-2`，并继续服从既有优先级「命令行覆盖 >
+  环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值」。同一次 pack 运行中的资产
+  使用同一份解析后配置。
+
+##### 命令契约
+
+```bash
+pixel-asset plan potion-pack.yaml
+pixel-asset create-asset-pack potion-pack.yaml
+pixel-asset export outputs/health_potion --target godot
+pixel-asset export health_potion --target godot
+```
+
+- `plan` 自动识别单资产 request 与 pack；pack 计划汇总总任务数、预计 API 调用数，
+  同时保留逐 `asset_id` 的任务 DAG。规划完全离线，批量执行前必须先运行。
+- `pixel-asset create-asset-pack <pack.yaml>` 是 CLI 核心的完整业务入口，不要求调用方
+  用 shell 循环拼装批次语义。
+- `export` 同时接受资产目录和 `asset_id`；二者都只导出一个资产，pack 生成后可逐项审核、
+  逐项导出。
+
+##### 执行与产物契约
+
+- 批次使用固定数量的 `asyncio` workers；数量取自运行时 `Config`，启动后不随队列长度
+  漂移。
+- 单资产失败隔离：一个资产失败不取消其余资产；协作式暂停停止领取新任务，运行中的任务
+  收尾后可恢复。相同输入指纹与已完成任务会去重，续跑只领取未完成或可重试资产。
+- pack 级 `pack-summary` 汇总成功、失败、跳过/去重与暂停状态，并列出各 `asset_id`
+  的结果；单资产错误保留在对应条目中，不把整包抹成一个不透明失败。
+- 每个资产仍写入自己的 `outputs/<asset_id>/`，拥有独立 request 副本、Manifest、
+  JobTable 与 artifacts；`pack-summary` 只是批次索引，不取代任何单资产溯源记录。
+- 静态 pickup 可对自己的原始生成物重跑确定性处理而不重新生成。
+
+**Sprint 7 总退出门槛（尚未全部完成）**
+
+- ⬜ 单个失败不导致整包失败
+- ⬜ 可断点续跑
+- ⬜ 可重新处理而不重新生成
+- ⬜ 可按 `asset_id` 单独导出
+- ⬜ 同批资产共享风格与调色板定义
+
+> 7.1 完成时只标记 `potion_pack` 首纵切；其余 pack 与 Sprint 7 总状态继续保持未完成。
+> 上述五条门槛 `potion_pack` 已逐条有测试与 CLI 实测背书，但按本节口径，
+> 其余 pack 类型落地前总门槛不打勾。
+
+**7.1 完成记录**：实现落地时挖出并修掉了三类问题 ——
+① pack 需要的「验证后才可导出」硬闸被错误地全局应用，连带 Manifest 版本全局升
+2.1，打回 8 个既有测试；现闸门只对带 `static_image` 的静态资产生效，旧动画路径
+保持 2.0 契约。② `export <asset_id>` 默认 contact sheet 路径用错相对化基准，
+README 文档化用法必崩；唯一测试恰好加了 `--no-contact-sheet` 掩掉了它。
+③ 「批量执行前必须先 plan」与「重跑处理不重新生成」当时只是 README 行文：
+前者零强制（直接跑就花钱），后者更糟 —— 通用 `process` 没有 static 分支，会把
+单图原件当成叫 "static" 的动作按帧网格切坏。现在 `create-asset-pack` 逐资产核对
+已保存任务表与输入指纹，`process` 识别静态资产走单图链并写回 `static_image`。
+另修 worker 汇总落盘异常导致 `queue.join()` 永久挂起的死锁，补 `--retry-failed`
+复位入口与暂停/恢复集成测试（此前「可断点续跑」零测试覆盖）。
+全套件 774 passed / 5 skipped / 0 failed。
+
+#### 7.2 `weapon_pack` 第二纵切 · ✅ 已完成
+
+**本次范围只有 `weapon_pack`，以及为它付出的最小泛化。** 不据此宣称
+`spell_bundle`、`combat_bundle`、`environment_pack` 或其余资产类型已完成。
+
+##### 泛化契约
+
+- 7.1 的 pack 模型从 potion 专名泛化为静态 pack 通用：`PotionPack` 更名
+  `StaticAssetPack`，`pack_type` 从字面量改为映射表 ——
+  `potion_pack → pickup`、`weapon_pack → weapon`。展开的 `asset_type`
+  由映射决定，除此之外 7.1 的全部契约逐字继承：shared 注入、显式色板、
+  无人工闸门、plan 前置闸门与指纹、固定 worker、失败隔离、断点续跑、
+  `--retry-failed`、`pack-summary`、逐资产目录与导出、静态重处理。
+- 静态流水线放行无动画的 `pickup` 与 `weapon`；其余类型**继续拒绝**，
+  错误消息列出当前允许的类型。planner 的静态分支同步放行。
+- JSON Schema 的 `pack_type` 从 `const` 改为二值 `enum`；两种 pack 共用
+  同一份 `asset-pack.schema.json`，不复制 schema。
+- 若提示词编译器存在按资产类型分块的措辞，为 `weapon` 补图标朝向惯例
+  （刀尖/枪口朝右上对角）；若编译器对静态类型本就无差别，则不加特殊措辞，
+  以实际代码为准，不为不存在的分块发明配置。
+
+##### 退出门槛（仅对 `weapon_pack` 主张）
+
+- ✅ `examples/weapon_pack.yaml` 走完 plan → create-asset-pack → 逐资产
+  export 全链路（mock 下集成测试 + CLI 实测）
+- ✅ `pack_type → asset_type` 映射有测试；静态流水线对 weapon 放行、
+  对未支持类型仍拒绝有测试
+- ✅ 泛化重命名后 7.1 的全部既有测试不回归、不削弱断言
+
+**7.2 完成记录**：泛化按契约走完 —— `StaticAssetPack` + `PACK_ASSET_TYPES`
+映射（potion_pack→pickup、weapon_pack→weapon），静态放行集合在 request 校验、
+planner、静态流水线、validation 四处统一为 {pickup, weapon}，拒绝消息列出
+允许类型。编译器静态 prompt 分流：pickup 措辞一字未动，weapon 用
+"one single isolated weapon" 并加对角朝向惯例（刀尖/枪口朝右上）。
+CLI 实测 `starter_weapons` 三件武器全链路（plan → create → 逐资产 export
+→ 静态重处理零 API）。全套件 793 passed / 5 skipped / 0 failed。
+
+#### 7.3 静态家族收官 · 🚧 正在实现
+
+**本次范围：`environment_pack` + 静态单资产类型补全（`prop` / `ui_icon` /
+`environment_object`）+ 单资产 CLI 入口。** 动画类 pack（`spell_bundle`、
+`combat_bundle`）不在本次范围，静态收官不改变它们的未完成状态。
+
+##### 契约
+
+- 映射表加一行：`environment_pack → environment_object`；schema 的
+  `pack_type` enum 扩为三值。pack 行为契约与 7.1/7.2 逐字一致，零新语义。
+- `STATIC_ASSET_TYPES` 扩为 {pickup, weapon, prop, ui_icon,
+  environment_object}；拒绝消息继续枚举允许集合。`character` 与其余
+  动画类型在静态路径继续拒绝。
+- 静态 prompt 按类型给最小合理措辞：pickup 与 weapon **一字不动**；
+  prop / environment_object 用对应名词措辞；`ui_icon` 额外声明 UI 图标
+  惯例（正面平视、无地面接触、剪影可读）。不为类型发明超出一句话的
+  风格系统。
+- 新增 CLI `create-asset <request.yaml>`：单个静态资产的完整入口，
+  走与 pack 内单资产相同的链（生成 → 处理 → 验证 → 导出）与同一份
+  `Config` 解析。单资产一次 API 调用，不设 plan 前置闸门（与
+  `create-character` 同口径）；帮助文本说明这点。动画请求一律拒收并
+  指向 `create-character`。
+- `examples/environment_pack.yaml` 新增（3 件环境物件，显式色板）。
+
+##### 退出门槛（仅对本次范围主张）
+
+- ⬜ `environment_pack` 走完 plan → create-asset-pack → 逐资产 export
+  全链路（集成测试 + CLI 实测）
+- ⬜ `create-asset` 对 `prop` 与 `ui_icon` 各有一条端到端集成测试；
+  对动画请求拒收有测试
+- ⬜ 映射、放行/拒绝、prompt 措辞差异有测试；7.1/7.2 全部既有测试
+  不回归、不削弱断言
 
 ---
 

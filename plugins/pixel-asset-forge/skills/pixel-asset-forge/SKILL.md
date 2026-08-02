@@ -39,7 +39,7 @@ export PIXEL_ASSET_API_KEY="…"      # 也接受 OPENAI_API_KEY
 
 ## 不可违背的规则
 
-这五条是系统正确性的前提，任何情况下都不要绕过：
+这些规则是系统正确性的前提，任何情况下都不要绕过：
 
 1. **绝不逐帧生成动画。** 永远用 `create-animation` 一次生成完整动作网格。
    逐帧生成会导致服装、武器、比例和朝向漂移。
@@ -50,14 +50,18 @@ export PIXEL_ASSET_API_KEY="…"      # 也接受 OPENAI_API_KEY
 3. **API 返回成功 ≠ 资产合格。** 生成之后**必须**跑 `validate`。
    模型经常产出帧数错误、姿势跨格、身份漂移的图，这些只有验证器能发现。
 
-4. **大批量生成之前先跑 `plan`。** 它会输出任务 DAG 与预计调用次数，
-   让用户在执行前看清楚要生成什么。不要在用户不知情的情况下发起批量生成。
+4. **大批量生成之前先跑 `plan`。** 它会自动识别单资产 request 或 pack，输出任务 DAG
+   与预计调用次数，让用户在执行前看清楚要生成什么。不要在用户不知情的情况下发起批量生成。
 
-5. **能离线解决的就离线解决。** 命令里有一半不调用 API。
+5. **pack 中绝不写 `model`。** 生成模型统一来自 Config；当前默认是 `gpt-image-2`，
+   需要覆盖时沿用既有优先级「CLI > 环境变量 > 项目配置 > 用户配置 > 内置默认值」，
+   不把运行配置混进业务输入。
+
+6. **能离线解决的就离线解决。** 命令里有一半不调用 API。
    处理逻辑或验证阈值的问题用 `process` / `validate` 重跑，不要重新生成。
    重复请求会命中 prompt hash 缓存，所以重跑失败任务是安全的。
 
-6. **用户上传素材时，先问清意图再动手。** 同一批文件对应两种完全不同的处理，
+7. **用户上传素材时，先问清意图再动手。** 同一批文件对应两种完全不同的处理，
    光看文件数量分不出来。问法见下面「用户上传素材」一节。
    `import` 不给 `--as` 会直接报错 —— 那是最后一道防线，不是让你去试的。
 
@@ -71,6 +75,8 @@ export PIXEL_ASSET_API_KEY="…"      # 也接受 OPENAI_API_KEY
 | "给他加个走路动画" | `create-animation --asset X --action walk --direction down` |
 | "四个方向都要" | 对每个 direction 各跑一次 `create-animation` |
 | "五种动作都要" | idle / walk / attack / hurt / death 逐一执行 |
+| "做一批药水 / 一套药水 pickup" | 写 `potion_pack` YAML（不写 `model`）→ `plan pack.yaml` → 用户确认 → `create-asset-pack pack.yaml` → 逐 `asset_id` 审核 / 导出 |
+| "续跑刚才失败的药水" | 用同一份 pack YAML 再跑 `create-asset-pack pack.yaml`；已完成资产去重，只续跑未完成/可重试资产 |
 | "帮我看看有没有问题" | `validate outputs/X` |
 | "颜色不对 / 背景没抠干净 / 位置歪了" | 先 `process`（离线重跑），再 `validate` |
 | "这个动作重做一下" | `repair outputs/X/<action>_<direction>` |
@@ -100,6 +106,37 @@ seed 不对则后续生成的全部动画都要作废重来。把 seed 图展示
 
 **批量生成多个角色时，先完整跑通一个。** 确认质量达标后再批量执行 ——
 风格与调色板的问题在第一个角色上就会暴露，不要等到二十个角色都生成完才发现。
+
+### 一批药水：`potion_pack` 首纵切
+
+用户要「一批药水」时，不要逐个写单资产 request，也不要用 shell 循环
+拼装批次。写一份 `potion_pack` YAML：
+
+- `shared` 中统一写 `style`、`background`、`export` 与显式 `palette.colors`
+- `assets` 中每项只写唯一 `asset_id` 与具体描述
+- **不要写 `model`**；模型统一从 Config 读取
+- 每项都是独立静态 `pickup`，不是 canonical seed，也不是动画，因此没有 seed 人工批准闸门
+
+执行顺序固定为：
+
+```bash
+pixel-asset plan potions.yaml
+pixel-asset create-asset-pack potions.yaml
+pixel-asset export outputs/health_potion --target godot
+pixel-asset export mana_potion --target godot
+```
+
+`plan` 之后先把资产列表、预计调用次数和共享色板告诉用户，得到批量执行确认再运行。
+生成结束后解读 `pack-summary`，列出成功、失败、跳过/去重的 `asset_id`；再按每个
+`asset_id` 查看其独立 Manifest / artifacts，逐项给用户审核并按目录或 `asset_id` 导出。
+不要把「整包命令完成」当成「每件资产都已审核」。
+
+批次中的单资产失败与其余资产隔离。失败或协作暂停后，使用**同一份 pack YAML**
+重跑 `create-asset-pack`：输入去重会保留已完成资产，只续跑未完成或可重试资产；
+不要拆掉 pack 逐个重建，也不要为了续跑修改 `asset_id`。
+
+当前范围仅是 `potion_pack` 首纵切；不要把 `weapon_pack`、`spell_bundle` 或整个
+Sprint 7 说成已经可用。
 
 ---
 
@@ -264,6 +301,9 @@ Key 相关问题一律用 `doctor` 排查。
 - ❌ 不要逐帧调用生成接口
 - ❌ 不要跳过 `validate` 直接交付
 - ❌ 不要在 seed 未经确认时批量生成动画
+- ❌ 不要跳过 `plan` 直接执行 pack
+- ❌ 不要在 pack 中写 `model`
+- ❌ 不要因单资产失败就重做整个 pack —— 用同一输入续跑
 - ❌ 不要在参数错误时反复重试 —— 先修正请求
 - ❌ 不要猜 `mirroring.enabled`
 - ❌ 不要把生成失败当成 API 故障 —— 多数情况是模型画错了，走修复流程

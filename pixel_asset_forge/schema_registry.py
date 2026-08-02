@@ -24,6 +24,7 @@ from .errors import ConfigError, RequestValidationError, SchemaVersionError
 
 SCHEMA_FILES = {
     "asset-request": "asset-request.schema.json",
+    "asset-pack": "asset-pack.schema.json",
     "asset-manifest": "asset-manifest.schema.json",
     "validation-report": "validation-report.schema.json",
 }

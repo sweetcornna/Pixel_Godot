@@ -196,6 +196,12 @@ class ValidationFailedError(PixelAssetError):
     code = "validation_failed"
 
 
+class PauseRequested(PixelAssetError):
+    """批次已请求协作暂停；当前资产已停在可恢复阶段边界。"""
+
+    code = "pause_requested"
+
+
 class RepairLimitExceededError(PixelAssetError):
     """超过 ``max_repair_rounds``。"""
 

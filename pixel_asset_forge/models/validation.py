@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -17,17 +16,23 @@ from .. import PIPELINE_VERSION, REPORT_SCHEMA_VERSION
 from ..constants import (
     ACTION_THRESHOLDS,
     DIRECTION_MULTIPLIER,
+    LOCOMOTION_THRESHOLDS,
     PALETTE_OVERFLOW_MAX,
     THRESHOLDS_CALIBRATED,
     Direction,
 )
 from ..schema_registry import validate_against
+from ..storage.atomic import atomic_write_json
 
 CheckId = Literal[
+    "artifact_exists",
+    "artifact_hash",
     "frame_count",
     "frame_size",
     "blank_frame",
     "cell_overflow",
+    "content_bounds",
+    "palette_membership",
     "transparent_rgb_residue",
     "frame_order_continuity",
     "beat_signature",
@@ -67,10 +72,14 @@ class CheckResult(StrEnum):
 
 #: 各检查项的固有严重度（PLAN §9.2）。严重度是检查项的属性，不由调用方随意指定。
 CHECK_SEVERITY: dict[CheckId, Severity] = {
+    "artifact_exists": Severity.FATAL,
+    "artifact_hash": Severity.FATAL,
     "frame_count": Severity.FATAL,
     "frame_size": Severity.FATAL,
     "blank_frame": Severity.FATAL,
     "cell_overflow": Severity.FATAL,
+    "content_bounds": Severity.HIGH,
+    "palette_membership": Severity.HIGH,
     "transparent_rgb_residue": Severity.FATAL,
     # 实测不可判定（见 validation/frame_order.py）。保留检查项是为了在报告里
     # 显式记录"这条防线是缺的"，而不是让它悄悄消失 —— 但绝不允许它阻断放行。
@@ -104,6 +113,7 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
 LOCALLY_REPAIRABLE: frozenset[CheckId] = frozenset(
     {
         "transparent_rgb_residue",
+        "palette_membership",
         "palette_overflow",
         "anchor_drift",
         "frame_size",
@@ -113,7 +123,10 @@ LOCALLY_REPAIRABLE: frozenset[CheckId] = frozenset(
 #: 只能靠重生成解决的检查项 —— 构图已经错了，本地补不回被切掉的像素。
 REQUIRES_REGENERATION: frozenset[CheckId] = frozenset(
     {
+        "artifact_exists",
+        "artifact_hash",
         "cell_overflow",
+        "content_bounds",
         "frame_count",
         "frame_order_continuity",
         "beat_signature",
@@ -160,12 +173,21 @@ class Check(BaseModel):
 Thresholds = dict[str, float | int | None]
 
 
-def thresholds_for(action: str, direction: Direction | None = None) -> Thresholds:
+def thresholds_for(
+    action: str,
+    direction: Direction | None = None,
+    locomotion: str = "biped",
+) -> Thresholds:
     """查 per-action 阈值，并对 ``up`` 方向做 ×1.3 的轮廓类修正（PLAN §9.1）。
 
     锚点漂移是像素单位的绝对量，不参与方向修正 —— 背面再不稳定，脚也该踩在同一条线上。
+
+    ``locomotion`` 有专用阈值时优先（弹跳式走路的形变量级与双足完全不同，
+    见 ``LOCOMOTION_THRESHOLDS``）。
     """
-    base = ACTION_THRESHOLDS.get(action)
+    base = LOCOMOTION_THRESHOLDS.get(locomotion, {}).get(action) or ACTION_THRESHOLDS.get(
+        action
+    )
     if base is None:
         # 自定义动作没有 per-action 阈值 —— 我们不知道一个 dodge_roll 该有
         # 多大的高度变化，猜一个数只会产出一堆无意义的红叉或绿勾。
@@ -252,7 +274,4 @@ class ValidationReport(BaseModel):
     def save(self, path: str | Path) -> Path:
         payload = self.to_dict()
         validate_against("validation-report", payload, what=f"{self.asset_id} 的验证报告")
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return p
+        return atomic_write_json(path, payload)

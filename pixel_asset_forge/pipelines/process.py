@@ -21,16 +21,24 @@ from PIL import Image
 from ..constants import ACTION_DEFAULTS, ACTION_SIZE_BAND, split_animation_key
 from ..errors import ProcessingError
 from ..logging_utils import get_logger
-from ..models.manifest import AssetManifest, GeneratedAnimation, GridInfo
+from ..models.job import JobKind
+from ..models.manifest import (
+    AnchorInfo,
+    AssetManifest,
+    GeneratedAnimation,
+    GridInfo,
+    StaticImageInfo,
+)
 from ..models.request import AssetRequest, load_request
 from ..planning.grid_layout import GridLayout, layout_for_frames
-from ..processing.anchor import BOTTOM_CENTER, align_frames
-from ..processing.palette import quantize_frames
+from ..processing.anchor import BOTTOM_CENTER, CENTER, align_frames, place_on_canvas
+from ..processing.palette import quantize_frames, snap_to_palette
 from ..processing.pipeline import ProcessOptions, ProcessResult, process_grid
 from ..processing.resize import nearest_resize
 from ..processing.scale_profile import ScaleProfile, derive_profile
 from ..processing.spritesheet import compose_spritesheet, save_frames, save_gif, save_png
 from ..storage.artifacts import ArtifactStore
+from ..storage.hashes import hash_file
 
 logger = get_logger("pipeline.process")
 
@@ -139,14 +147,115 @@ def _threshold_for(key: str, manifest: AssetManifest | None) -> float | None:
     return getattr(entry, "key_threshold", None)
 
 
+def _has_static_job(store: ArtifactStore) -> bool:
+    table = store.load_job_table()
+    return bool(table is not None and table.of_kind(JobKind.STATIC))
+
+
+def _process_static(
+    store: ArtifactStore,
+    request: AssetRequest | None,
+    manifest: AssetManifest | None,
+    *,
+    only: str | None,
+) -> list[dict[str, Any]]:
+    """从不可变的单张原图重跑静态资产处理链。"""
+    if only not in (None, "static"):
+        raise ProcessingError("静态资产只支持 `process --only static`")
+    if manifest is None:
+        raise ProcessingError("静态任务缺少 Manifest，无法可靠恢复既有处理参数")
+
+    existing = manifest.static_image
+    source_path = (
+        store.root / existing.source_image
+        if existing is not None
+        else store.source_path("static")
+    )
+    if not source_path.exists():
+        raise ProcessingError(f"静态资产原图不存在：{source_path}")
+
+    image = np.array(Image.open(source_path).convert("RGB"))
+    source_size = (image.shape[1], image.shape[0])
+    final_size = (manifest.canvas.width, manifest.canvas.height)
+    inner_size = (max(1, final_size[0] - 2), max(1, final_size[1] - 2))
+    palette = list(manifest.palette.colors) or (
+        list(request.style.palette_colors)
+        if request is not None and request.style.palette_colors is not None
+        else None
+    )
+    options = ProcessOptions(
+        key_color=manifest.background.color_used,
+        key_threshold=existing.key_threshold if existing is not None else None,
+        target_size=inner_size,
+        max_colors=manifest.palette.max_colors,
+        anchor=CENTER,
+        crop_padding=1,
+        grid_block_size=existing.grid_block_size if existing is not None else None,
+        palette=palette,
+    )
+    layout = GridLayout(frames=1, cols=1, rows=1, cell=source_size)
+    result = process_grid(image, layout, options)
+    final_frame = place_on_canvas(result.frames[0], final_size, anchor=CENTER)
+    image_path = (
+        store.root / existing.image
+        if existing is not None
+        else store.frames / "static.png"
+    )
+    save_png(final_frame, image_path)
+
+    table = store.load_job_table()
+    static_jobs = table.of_kind(JobKind.STATIC) if table is not None else ()
+    planned_size = static_jobs[0].physical_size if static_jobs else None
+    requested_size = (
+        existing.requested_size
+        if existing is not None
+        else (planned_size or source_size)
+    )
+    actual_size = existing.actual_size if existing is not None else source_size
+    manifest.anchor = AnchorInfo(type="center", x=0.5, y=0.5)
+    manifest.palette.colors = palette or result.palette.colors
+    manifest.static_image = StaticImageInfo(
+        source_image=str(source_path.relative_to(store.root)),
+        image=str(image_path.relative_to(store.root)),
+        requested_size=requested_size,
+        actual_size=actual_size,
+        key_threshold=result.key_threshold,
+        grid_block_size=(
+            result.grid_snap.block_size
+            if result.grid_snap is not None and result.grid_snap.applied
+            else None
+        ),
+        source_hash=hash_file(source_path),
+        processed_hash=hash_file(image_path),
+    )
+    manifest.status = "processed"
+    manifest.save(store.manifest_path)
+
+    return [
+        {
+            "key": "static",
+            "frames": 1,
+            "frame_size": f"{final_size[0]}×{final_size[1]}",
+            "threshold": result.key_threshold,
+            "background_ratio": result.background_ratio,
+            "colors": result.palette.color_count,
+            "quantization_error": result.palette.quantization_error_ratio,
+            "anchor_drift": result.anchor_drift_px,
+            "split_method": result.split.method.value if result.split else "slots",
+            "fragments": result.split.fragments_attached if result.split else 0,
+            "sprites_found": 1,
+            "source_size": result.source_size,
+            "warnings": list(result.warnings),
+        }
+    ]
+
+
 @dataclass
 class Survey:
     """量测趟的产出：跨动作缩放基准 + 跨动作共用调色板 + 站立基准高度。"""
 
     profile: ScaleProfile | None
     palette: list[str]
-    standing_height: float
-    """站立类动作输出高度的中位数。各动作的尺寸区间以它为基准。"""
 
 
 def _survey(
@@ -163,12 +272,14 @@ def _survey(
        seed 的构图约定与动作网格不可比。
     2. **跨动作共用调色板** —— 各动作各自量化的话，同一个角色在不同动作里
        会换色。实测 6 个角色，跨动作调色板重合度 **0%**。
-    3. **站立基准高度** —— 站立类动作输出高度的中位数，用来判断某个动作
-       是不是被模型画得离谱地大或小。
+
+    **站立基准高度不在这里量。** 这一趟是**不套缩放基准**跑的，每个动作都
+    填满画布，量出来的高度全是画布高；而最终产出是套了基准之后的、要小得多。
+    拿这两个不同尺度的数去比，钳出来的结果是往上撑（实测 "1.37× 钳回"）。
+    基准高度必须从**实际产出**求，见 ``run_process`` 的第二段。
     """
     best: tuple[float, str, ProcessResult] | None = None
     swatches: list[np.ndarray] = []
-    standing: list[int] = []
 
     for path in sources:
         key = _source_key(path)
@@ -191,12 +302,9 @@ def _survey(
             best = (ratio, key, result)
 
         swatches.extend(result.frames)
-        action, _direction = split_animation_key(key)
-        if ACTION_SIZE_BAND.get(action) is not None:
-            standing.append(result.output_content_height)
 
     if best is None:
-        return Survey(None, [], 0.0)
+        return Survey(None, [])
 
     # 一次性从全部动作的帧上解出调色板 —— 这才是"共用"的字面意思。
     shared = quantize_frames(swatches, base.max_colors).colors if swatches else []
@@ -212,7 +320,6 @@ def _survey(
             output_height=result.output_content_height,
         ),
         palette=shared,
-        standing_height=float(np.median(standing)) if standing else 0.0,
     )
 
 
@@ -234,40 +341,152 @@ def _is_interpolated(key: str, manifest: AssetManifest | None) -> bool:
     return len(entry.frames) > entry.keyframe_count
 
 
-def _clamp_to_size_band(
-    result: ProcessResult,
-    key: str,
-    standing: float,
-    base: ProcessOptions,
-    summaries: list[dict[str, Any]],
-) -> ProcessResult:
-    """把输出内容高度钳进该动作的可信区间。区间为 None 的动作原样返回。"""
+def _standing_height(results: dict[str, ProcessResult]) -> float:
+    """站立类动作**实际产出**高度的中位数。
+
+    必须用实际产出，不能用量测趟的 —— 那一趟不套缩放基准，每个动作都填满画布。
+    """
+    heights = [
+        float(r.output_content_height)
+        for key, r in results.items()
+        if ACTION_SIZE_BAND.get(split_animation_key(key)[0]) is not None
+        and r.output_content_height > 0
+    ]
+    return float(np.median(heights)) if heights else 0.0
+
+
+#: 这些移动形态的 ``walk`` 按**峰值帧**而不是中位帧钳。
+#:
+#: 尺寸带的前提是"站着的角色高度大致恒定"。这对无腿和漂浮的角色不成立 ——
+#: 它们的走路**就是**压缩与拉伸：实测史莱姆一个弹跳周期的高度中位数只有待机的
+#: 55%，那不是漂移，那是动作本身，按中位数钳会把弹跳整个拉平。
+#:
+#: 但也不能干脆不钳：不钳的那一版史莱姆整个弹跳周期都偏小，峰值只有待机的 73%
+#: —— 弹到最高点还比站着矮四分之一，这就是真漂移了。
+#: 所以改看峰值：**弹跳的最高点应当回到站立高度**，压扁的帧按比例跟着走。
+_PEAK_CLAMPED_WALK = frozenset({"legless", "floating"})
+
+#: 峰值帧的可信区间。比站立带宽 —— 弹跳的最高点本来就可以略高于站立。
+_PEAK_BAND = (0.85, 1.15)
+
+
+def _peak_height(frames: list[np.ndarray]) -> float:
+    """一组帧里最高的那一帧的内容高度。"""
+    heights = []
+    for frame in frames:
+        rows = np.nonzero(frame[:, :, 3].any(axis=1))[0]
+        if rows.size:
+            heights.append(int(rows.max() - rows.min() + 1))
+    return float(max(heights)) if heights else 0.0
+
+
+def _band_factor(
+    height: float, key: str, standing: float, locomotion: str = "biped"
+) -> float:
+    """该动作要乘多少才能落回可信区间。已在区间内返回 1.0。
+
+    跨动作缩放基准的前提是"尺寸差异是真实的姿势差异"，于是把模型的随机漂移
+    也原样保住了 —— 实测弓手攻击 74px、待机 96px，挥一刀不会让人矮两成。
+    真实的姿势差异是有界的，超出的部分判为漂移。
+    """
+    action = split_animation_key(key)[0]
+    if action == "walk" and locomotion in _PEAK_CLAMPED_WALK:
+        # 调用方传的已经是峰值高度，见 _representative_height
+        band: tuple[float, float] | None = _PEAK_BAND
+    else:
+        band = ACTION_SIZE_BAND.get(action)
+    if band is None or height <= 0 or standing <= 0:
+        return 1.0
+    wanted = min(max(height, standing * band[0]), standing * band[1])
+    return 1.0 if abs(wanted - height) < 1.0 else wanted / height
+
+
+def _representative_height(
+    result: ProcessResult, key: str, locomotion: str
+) -> float:
+    """拿哪一帧的高度去比尺寸带。
+
+    默认是跨帧中位数；弹跳/浮沉式的走路看峰值（见 ``_PEAK_CLAMPED_WALK``）。
+    """
+    if split_animation_key(key)[0] == "walk" and locomotion in _PEAK_CLAMPED_WALK:
+        return _peak_height(result.frames)
+    return float(result.output_content_height)
+
+
+def _band_warning(key: str, standing: float, before: int, after: int) -> str:
     action, _direction = split_animation_key(key)
-    band = ACTION_SIZE_BAND.get(action)
-    if band is None or result.output_content_height <= 0:
-        return result
-
-    low, high = standing * band[0], standing * band[1]
-    current = float(result.output_content_height)
-    wanted = min(max(current, low), high)
-    if abs(wanted - current) < 1.0:
-        return result
-
-    factor = wanted / current
-    canvas = base.target_size
-    frames = []
-    for frame in result.frames:
-        height, width = frame.shape[:2]
-        size = (max(1, round(width * factor)), max(1, round(height * factor)))
-        frames.append(nearest_resize(frame, size))
-    frames = align_frames(frames, canvas, anchor=base.anchor)
-
-    result.warnings.append(
-        f"输出高度 {current:.0f}px 超出 {action} 相对站立基准 {standing:.0f}px 的"
-        f"可信区间 {band[0]:.0%}~{band[1]:.0%}，已按 {factor:.2f}× 钳回 {wanted:.0f}px —— "
+    band = ACTION_SIZE_BAND[action]
+    assert band is not None
+    return (
+        f"输出高度 {before}px 超出 {action} 相对站立基准 {standing:.0f}px 的"
+        f"可信区间 {band[0]:.0%}~{band[1]:.0%}，已重新按 {after}px 处理 —— "
         "模型把这个动作画得偏大或偏小，不是真实的姿势差异"
     )
-    return replace(result, frames=frames, output_content_height=round(wanted))
+
+
+def _normalise_interpolated(
+    key: str,
+    frames_dir: Path,
+    *,
+    standing: float,
+    palette: list[str] | None,
+    base: ProcessOptions,
+    locomotion: str = "biped",
+) -> tuple[dict[str, Any], list[np.ndarray]] | None:
+    """把补过间的动作拉回与其它动作同一套尺寸和配色。
+
+    补间的帧不是从单张网格切出来的，重跑不了 ``process_grid``；但"跨动作一致"
+    这件事对它同样成立 —— 实测弓手补过间的 hurt 停在 85px，而同一角色其余四个
+    动作已经统一到 70~74px，看上去就是换了个人。所以这里直接对成品帧做**一次**
+    缩放与调色板锁定，不碰它的帧内容。
+    """
+    paths = sorted(frames_dir.glob("*.png"))
+    if not paths:
+        return None
+    frames = [np.array(Image.open(p).convert("RGBA")) for p in paths]
+
+    heights = []
+    for frame in frames:
+        rows = np.nonzero(frame[:, :, 3].any(axis=1))[0]
+        if rows.size:
+            heights.append(int(rows.max() - rows.min() + 1))
+    if not heights:
+        return None
+    current = int(np.median(heights))
+
+    warnings: list[str] = []
+    factor = _band_factor(current, key, standing, locomotion)
+    if factor != 1.0:
+        wanted = round(current * factor)
+        resized = []
+        for frame in frames:
+            height, width = frame.shape[:2]
+            size = (max(1, round(width * factor)), max(1, round(height * factor)))
+            resized.append(nearest_resize(frame, size))
+        frames = align_frames(resized, base.target_size, anchor=base.anchor)
+        warnings.append(_band_warning(key, standing, current, wanted))
+        current = wanted
+
+    drift = 0.0
+    if palette:
+        frames, drift = snap_to_palette(frames, palette)
+        if drift > 0:
+            warnings.append(
+                f"已锁到跨动作共用调色板，最大色偏 {drift:.0f} —— "
+                "补间产生的中间色不在共用调色板里"
+            )
+
+    if not warnings:
+        return None
+    for path, frame in zip(paths, frames, strict=True):
+        save_png(frame, path)
+    summary = {
+        "key": key,
+        "frames": len(frames),
+        "frame_size": f"{frames[0].shape[1]}×{frames[0].shape[0]}",
+        "warnings": warnings,
+    }
+    return summary, frames
 
 
 def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[str, Any]]:
@@ -282,9 +501,13 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
 
     request = load_request(store.request_path) if store.request_path.exists() else None
     manifest = AssetManifest.load(store.manifest_path) if store.manifest_path.exists() else None
+    if (manifest is not None and manifest.static_image is not None) or _has_static_job(store):
+        return _process_static(store, request, manifest, only=only)
     base = _base_options(request, manifest)
 
     summaries: list[dict[str, Any]] = []
+    processed: dict[str, tuple[ProcessResult, ProcessOptions, GridLayout, Path]] = {}
+    interpolated: list[str] = []
     animations: dict[str, Any] = dict(manifest.animations) if manifest else {}
     sheets: dict[str, str] = dict(manifest.sheets) if manifest else {}
     palette_colors: list[str] = []
@@ -324,7 +547,9 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
         if key is None or (only and key != only):
             continue
         if _is_interpolated(key, manifest):
-            logger.info("%s 已补过间，跳过 —— 它的帧不是从单张网格来的", key)
+            # 帧不是从单张网格来的，重跑不了抽帧；但尺寸与配色的统一照样要做，
+            # 留到 standing 算出来之后。
+            interpolated.append(key)
             continue
 
         image = np.array(Image.open(path).convert("RGB"))
@@ -339,16 +564,70 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
             palette=(survey.palette if survey else (manifest.palette.colors if manifest else None))
                     or None,
         )
-        result = process_grid(image, layout, options)
+        processed[key] = (process_grid(image, layout, options), options, layout, path)
 
-        # 站立类动作的尺寸钳到可信区间内。
-        #
-        # 跨动作缩放基准的前提是"尺寸差异是真实的姿势差异"，于是把模型的随机
-        # 漂移也原样保住了 —— 实测史莱姆待机 70px、走路 45px，走路不会让角色
-        # 矮三成。真实的姿势差异是有界的，超出的部分判为漂移。
-        if key != "seed" and survey is not None and survey.standing_height > 0:
-            result = _clamp_to_size_band(result, key, survey.standing_height, base, summaries)
+    # -- 第二段：先有全部产出，才谈得上"跨动作一致" ------------------------
+    #
+    # 站立基准高度必须从**实际产出**求。量测那一趟不套缩放基准，每个动作都
+    # 填满画布，拿它当基准会把所有动作往上撑（实测 "1.37× 钳回"）。
+    # 钳位不是"把成品帧再缩一次"：那是第二次最近邻重采样，像素会糊。
+    # 把系数折进缩放基准重跑该动作，全程只从源分辨率缩一次。
+    locomotion = request.resolved_locomotion if request else "biped"
+    standing = _standing_height(
+        {k: r for k, (r, _o, _l, _p) in processed.items() if k != "seed"}
+    )
+    for key, (result, options, layout, path) in processed.items():
+        if key == "seed" or options.scale_profile is None:
+            continue
+        factor = _band_factor(
+            _representative_height(result, key, locomotion), key, standing, locomotion
+        )
+        if factor == 1.0:
+            continue
+        before = result.output_content_height
+        retuned = replace(
+            options,
+            scale_profile=replace(
+                options.scale_profile,
+                canvas_fraction=options.scale_profile.canvas_fraction * factor,
+            ),
+        )
+        image = np.array(Image.open(path).convert("RGB"))
+        result = process_grid(image, layout, retuned)
+        result.warnings.append(
+            _band_warning(key, standing, before, result.output_content_height)
+        )
+        processed[key] = (result, retuned, layout, path)
 
+    shared_palette = (
+        survey.palette if survey else (manifest.palette.colors if manifest else None)
+    ) or None
+    for key in interpolated:
+        extra = _normalise_interpolated(
+            key,
+            store.frames_of(key),
+            standing=standing,
+            palette=shared_palette,
+            base=base,
+            locomotion=locomotion,
+        )
+        if extra is None:
+            logger.info("%s 已补过间，尺寸与配色已一致", key)
+            continue
+        summary, frames = extra
+        summaries.append(summary)
+        # 帧改了，成品图也得跟着改 —— 否则 sheet 和 GIF 还是旧尺寸
+        sheet, _ = compose_spritesheet(frames)
+        sheets[key] = str(save_png(sheet, store.sheets / f"{key}.png").relative_to(store.root))
+        entry = manifest.animations.get(key) if manifest else None
+        fps = entry.fps if isinstance(entry, GeneratedAnimation) else 10
+        loop = entry.loop if isinstance(entry, GeneratedAnimation) else True
+        try:
+            save_gif(frames, store.previews / f"{key}.gif", fps=fps, loop=loop)
+        except Exception as exc:
+            logger.warning("生成 %s 预览 GIF 失败：%s", key, exc)
+
+    for key, (result, _options, layout, path) in processed.items():
         # seed 只产出一张标准图，不进 frames/ 的动画序列
         if key == "seed":
             save_png(result.frames[0], store.root / "seed-pixel.png")
@@ -443,6 +722,8 @@ def _update_manifest(
             logger.warning("既没有 manifest 也没有 request，跳过 manifest 写回")
             return
         manifest = AssetManifest(
+            # 2.1 只为静态资产新增 static_image；传统动画产物继续使用 2.0 契约。
+            schema_version="2.0",
             asset_id=request.asset_id,
             asset_type=request.asset_type,
             provider=ProviderInfo(name="mock", model="unknown"),

@@ -5,6 +5,7 @@ from .compiler import (
     CompiledPrompt,
     compile_animation_prompt,
     compile_seed_prompt,
+    compile_static_prompt,
 )
 from .inbetween import compile_inbetween_prompt
 from .negative_rules import negative_block
@@ -17,6 +18,7 @@ __all__ = [
     "compile_animation_prompt",
     "compile_inbetween_prompt",
     "compile_seed_prompt",
+    "compile_static_prompt",
     "negative_block",
     "numbered_poses",
     "pose_sequence",

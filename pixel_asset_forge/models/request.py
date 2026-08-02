@@ -11,8 +11,9 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 import yaml
 from pydantic import (
@@ -41,6 +42,52 @@ AssetType = Literal[
     "character", "prop", "weapon", "projectile", "impact",
     "spell", "pickup", "ui_icon", "environment_object", "tileset",
 ]
+STATIC_ASSET_TYPES: Final[frozenset[AssetType]] = frozenset(
+    {"pickup", "weapon", "prop", "ui_icon", "environment_object"}
+)
+
+#: 角色的移动形态。姿势节拍按它分支。
+#:
+#: **必须分。** ``walk`` 的节拍写的是"左脚向前迈、右脚在后"—— 这套描述对没有腿的
+#: 角色是灾难：实测史莱姆的 idle / attack / hurt / death 都是无腿的圆团，
+#: 唯独 walk 被模型**长出了两条腿和脚**，同一个角色四个动作一个样、第五个换了物种。
+#: 用户报的"形象不统一"就是这个。
+Locomotion = Literal["biped", "legless", "floating", "quadruped"]
+
+#: 描述里出现这些词就默认走对应的移动形态。
+#:
+#: 只在请求没写 ``locomotion`` 时兜底 —— 显式写了以显式的为准。存量 YAML
+#: 一个字不用改也能立刻受益，这是它存在的唯一理由。词表刻意保守：
+#: 宁可漏判回落到 biped（现状），也不要把一个有腿的角色判成无腿。
+_LOCOMOTION_HINTS: Final[tuple[tuple[Locomotion, tuple[str, ...]], ...]] = (
+    ("legless", ("slime", "blob", "ooze", "jelly", "pudding", "snake", "serpent",
+                 "worm", "caterpillar", "snail", "史莱姆", "黏液", "软泥", "蛇")),
+    ("floating", ("ghost", "spirit", "wraith", "phantom", "eyeball", "floating",
+                  "hovering", "levitating", "cloud", "wisp", "orb",
+                  "幽灵", "魂", "漂浮", "悬浮")),
+    ("quadruped", ("wolf", "dog", "cat", "horse", "boar", "bear", "spider",
+                   "lizard", "beetle", "crab", "quadruped", "four-legged",
+                   "狼", "犬", "猫", "马", "熊", "蜘蛛", "四足")),
+)
+
+
+def infer_locomotion(description: str) -> Locomotion:
+    """从描述里猜移动形态。猜不出回落 ``biped``。
+
+    拉丁词按**整词**匹配，不能用子串 —— ``bear`` 命中过 "white bear**d**"，
+    把一个拄杖的老法师判成了四足动物，走路节拍于是要求它用对角腿交替。
+    中日韩没有词边界，仍按子串匹配。
+    """
+    lowered = description.lower()
+    for kind, words in _LOCOMOTION_HINTS:
+        for word in words:
+            if word.isascii():
+                if re.search(rf"\b{re.escape(word)}\b", lowered):
+                    return kind
+            elif word in lowered:
+                return kind
+    return "biped"
+
 
 #: 内置动作。它们自带姿势模板与 per-action 验证阈值。
 BUILTIN_ACTIONS: Final = (
@@ -57,6 +104,7 @@ ACTION_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 CycleKind = Literal["one_shot", "loop", "gait"]
 
 ExportTarget = Literal["generic-json", "godot", "phaser", "tiled"]
+HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
 
 
 class _Base(BaseModel):
@@ -74,6 +122,8 @@ class StyleSpec(_Base):
     strict_lighting: bool = False
     """true 时禁用一切镜像，四方向全部独立生成（ADR-006）。"""
     palette_preset: str | None = None
+    palette_colors: tuple[HexColor, ...] | None = None
+    """显式锁定的共享色板。pack 展开时写入；数量不得超过 ``max_colors``。"""
 
     @field_validator("target_size")
     @classmethod
@@ -84,6 +134,23 @@ class StyleSpec(_Base):
                     f"逻辑尺寸只支持 {LOGICAL_SIZES}，收到 {side}"
                 )
         return value
+
+    @field_validator("palette_colors")
+    @classmethod
+    def _check_palette_not_empty(
+        cls, value: tuple[HexColor, ...] | None
+    ) -> tuple[HexColor, ...] | None:
+        if value is not None and not value:
+            raise ValueError("显式 palette_colors 不能为空")
+        return value
+
+    @model_validator(mode="after")
+    def _check_palette_limit(self) -> StyleSpec:
+        if self.palette_colors is not None and len(self.palette_colors) > self.max_colors:
+            raise ValueError(
+                f"显式色板有 {len(self.palette_colors)} 色，超过 max_colors={self.max_colors}"
+            )
+        return self
 
 
 class BackgroundSpec(_Base):
@@ -211,10 +278,12 @@ class ExportSpec(_Base):
 
 
 class AssetRequest(_Base):
-    schema_version: str = "1.0"
+    schema_version: str = REQUEST_SCHEMA_VERSION
     asset_id: str
     asset_type: AssetType
     description: str = Field(min_length=8, max_length=2000)
+    locomotion: Locomotion | None = None
+    """角色怎么移动。留空则从 ``description`` 推断（见 :func:`infer_locomotion`）。"""
     style: StyleSpec
     background: BackgroundSpec = BackgroundSpec()
     mirroring: MirroringSpec | None = None
@@ -236,6 +305,11 @@ class AssetRequest(_Base):
     def mirror_source(self) -> Direction:
         return self.mirroring.source_direction if self.mirroring else "left"
 
+    @property
+    def resolved_locomotion(self) -> Locomotion:
+        """显式优先，其次按描述推断。prompt 只该读这个，不该读原始字段。"""
+        return self.locomotion or infer_locomotion(self.description)
+
     def animation_list(self) -> tuple[AnimationSpec, ...]:
         return self.animations or ()
 
@@ -250,7 +324,7 @@ def parse_request(data: dict[str, Any], *, source: str = "<内存>") -> AssetReq
             f"{source}：请求必须是一个 YAML 映射（字典），实际是 {type(data).__name__}"
         )
 
-    version = data.get("schema_version", "1.0")
+    version = data.get("schema_version", REQUEST_SCHEMA_VERSION)
     if not isinstance(version, str):
         raise RequestValidationError(
             f"{source}：schema_version 必须是字符串",

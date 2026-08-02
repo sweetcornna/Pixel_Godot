@@ -16,6 +16,7 @@ from pixel_asset_forge.models.validation import (
     CheckResult,
     Severity,
     ValidationReport,
+    thresholds_for,
 )
 from pixel_asset_forge.repair import RepairAction, plan_repairs
 from pixel_asset_forge.validation import (
@@ -242,3 +243,26 @@ def test_severity_of_a_step_is_the_worst_of_its_reasons() -> None:
         )
     )
     assert plan.steps[0].severity is Severity.HIGH
+
+
+# -- 移动形态与补间：两个"校验器不认识新功能"的漏洞 ---------------------------
+
+
+def test_a_hopping_walk_is_exempt_from_the_deformation_checks() -> None:
+    """弹跳式走路的形变**就是动作**，与 death 同理豁免。
+
+    实测史莱姆一个弹跳周期 height_variation 0.82、silhouette_variation 0.59，
+    双足走路的阈值是 0.12 / 0.20。定一个放得过它的上限也拦不住任何真实缺陷。
+    """
+    hopping = thresholds_for("walk", "down", "legless")
+    assert hopping["height_variation_max"] is None
+    assert hopping["silhouette_variation_max"] is None
+    # 锚点仍然管着 —— 弹得再高，落地也该落在同一条线上
+    assert hopping["anchor_drift_max_px"] == 1
+
+    biped = thresholds_for("walk", "down", "biped")
+    assert biped["height_variation_max"] == 0.12
+
+
+def test_other_actions_of_a_hopping_character_keep_their_thresholds() -> None:
+    assert thresholds_for("idle", "down", "legless") == thresholds_for("idle", "down")

@@ -9,12 +9,15 @@ Sprint 1 交付 ``init`` / ``plan`` / ``doctor``；其余命令给出明确的"�
 
 from __future__ import annotations
 
+import asyncio
 import json
+import signal
 import sys
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -36,29 +39,33 @@ from .constants import (
     ALLOWED_FRAME_COUNTS,
     REPAIR_PLAN_FILE,
     THRESHOLDS_CALIBRATED,
-    VALIDATION_REPORT_FILE,
 )
 from .errors import (
     NotImplementedYetError,
     PixelAssetError,
+    PlanError,
     RequestValidationError,
 )
 from .logging_utils import configure_logging
 from .models.job import JobKind
-from .models.request import load_request
+from .models.pack import load_pack
+from .models.request import STATIC_ASSET_TYPES, load_request
 from .pipelines import approve_seed as run_approve_seed
 from .pipelines import create_animation as run_create_animation
 from .pipelines import create_character as run_create_character
 from .pipelines import import_keyframes as run_import_keyframes
 from .pipelines import import_seed as run_import_seed
 from .pipelines import next_pending, run_export, run_interpolate, run_process
-from .planning import layout_for_frames, plan_request, seed_layout
+from .pipelines.asset_pack import PackRunControl, run_asset_pack
+from .pipelines.static_asset import create_static_asset as run_create_static_asset
+from .pipelines.static_asset import validate_and_export_static_asset
+from .pipelines.validation import run_validation
+from .planning import layout_for_frames, plan_pack, plan_request, seed_layout
 from .repair import execute_plan as execute_repairs
 from .repair import plan_repairs
 from .repair import rounds_used as repair_rounds_used
 from .schema_registry import SCHEMA_FILES, schema_dir
 from .storage import ArtifactStore
-from .validation import validate_asset as run_validation
 
 app = typer.Typer(
     name="pixel-asset",
@@ -91,9 +98,13 @@ def _fail(exc: PixelAssetError) -> None:
     raise typer.Exit(EXIT_ERROR)
 
 
-def _load_config(config_path: Path | None = None) -> Config:
+def _load_config(
+    config_path: Path | None = None,
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> Config:
     try:
-        return load_config(project_config=config_path)
+        return load_config(project_config=config_path, overrides=overrides)
     except PixelAssetError as exc:
         _fail(exc)
         raise  # pragma: no cover - _fail 永远抛出
@@ -288,31 +299,235 @@ def plan(
     config_path: Annotated[
         Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
     ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
 ) -> None:
     """解析请求并输出任务 DAG 与预计 API 调用次数。不调用 API、不生成任何图。
 
     大批量生成之前先跑它 —— 不要在用户不知情的情况下发起批量生成。
     """
-    config = _load_config(config_path)
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
     try:
+        raw = yaml.safe_load(request_file.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and "pack_type" in raw:
+            pack = load_pack(request_file)
+            existing_by_asset = {
+                request.asset_id: table
+                for request in pack.expand_requests()
+                if (table := ArtifactStore.for_asset(
+                    config.output_dir, request.asset_id
+                ).load_job_table())
+                is not None
+            }
+            pack_plan = plan_pack(
+                pack,
+                existing=existing_by_asset,
+                provider=config.provider,
+                model=config.model,
+            )
+            if as_json:
+                console.print_json(json.dumps(pack_plan.to_dict(), ensure_ascii=False))
+            else:
+                pack_table = Table(
+                    title=f"Pack 规划 · {pack.pack_id}",
+                    header_style="bold",
+                )
+                pack_table.add_column("资产")
+                pack_table.add_column("任务", justify="right")
+                pack_table.add_column("API", justify="right")
+                pack_table.add_column("恢复", justify="center")
+                for asset in pack_plan.assets:
+                    pack_table.add_row(
+                        asset.request.asset_id,
+                        str(len(asset.jobs)),
+                        str(asset.estimated_api_calls),
+                        "✓" if asset.request.asset_id in existing_by_asset else "—",
+                    )
+                console.print(pack_table)
+                console.print(
+                    f"[dim]总资产 {len(pack_plan.assets)} · "
+                    f"总任务 {pack_plan.total_jobs} · "
+                    f"预计 API 调用 {pack_plan.estimated_api_calls} · "
+                    f"有效模型 {config.provider}/{config.model}[/dim]"
+                )
+            if save:
+                for asset in pack_plan.assets:
+                    store = ArtifactStore.for_asset(
+                        config.output_dir, asset.request.asset_id
+                    ).ensure()
+                    store.save_job_table(asset.jobs)
+                console.print("\n[green]✓[/green] 各资产任务表已写入输出目录")
+            return
+
         request = load_request(request_file)
         store = ArtifactStore.for_asset(config.output_dir, request.asset_id)
         existing = store.load_job_table() if save or store.job_table_path.exists() else None
-        result = plan_request(request, existing=existing)
+        request_plan = plan_request(
+            request,
+            existing=existing,
+            provider=config.provider,
+            model=config.model,
+        )
     except PixelAssetError as exc:
         _fail(exc)
         raise  # pragma: no cover
+    except ValueError as exc:
+        _fail(PlanError(str(exc)))
+        raise  # pragma: no cover
 
     if as_json:
-        console.print_json(json.dumps(result.to_dict(), ensure_ascii=False))
+        console.print_json(json.dumps(request_plan.to_dict(), ensure_ascii=False))
     else:
-        _render_plan(result, resumed=existing is not None)
+        _render_plan(request_plan, resumed=existing is not None)
 
     if save:
         store.ensure()
         store.save_request_copy(request_file)
-        path = store.save_job_table(result.jobs)
+        path = store.save_job_table(request_plan.jobs)
         console.print(f"\n[green]✓[/green] 任务表已写入 {path}")
+
+
+@app.command("create-asset")
+def create_asset(
+    request_file: Annotated[Path, typer.Argument(help="静态 Asset Request YAML")],
+    config_path: Annotated[
+        Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
+) -> None:
+    """单个静态资产完整链：生成 → 处理 → 验证 → 导出。
+
+    单资产一次 API 调用，无 plan 前置；批量请用 plan + create-asset-pack。
+    动画请求请使用 create-character。
+    """
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
+    try:
+        request = load_request(request_file)
+        if request.asset_type not in STATIC_ASSET_TYPES or request.animation_list():
+            allowed = ", ".join(sorted(STATIC_ASSET_TYPES))
+            raise RequestValidationError(
+                f"{request_file}：create-asset 只接受无 animations 的静态资产类型："
+                f"{allowed}。动画请求请使用 `pixel-asset create-character <request.yaml>`。"
+            )
+        result = run_create_static_asset(request_file, config)
+        completion = validate_and_export_static_asset(
+            config.asset_dir(request.asset_id),
+            targets=request.export.targets,
+        )
+    except PixelAssetError as exc:
+        _fail(exc)
+        raise  # pragma: no cover
+
+    if not completion.passed:
+        err_console.print(
+            f"[red]✗[/red] {request.asset_id} 验证未通过；未导出，"
+            f"详见 {config.asset_dir(request.asset_id) / 'validation-report.json'}"
+        )
+        raise typer.Exit(EXIT_VALIDATION_FAILED)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("资产", result.asset_id)
+    table.add_row("原图", str(result.source_path))
+    table.add_row("像素图", str(result.image_path))
+    table.add_row("验证", "通过")
+    if completion.export is not None:
+        table.add_row("导出", f"{len(completion.export.files)} 个文件")
+        table.add_row("目录", str(config.asset_dir(request.asset_id) / "exports"))
+    table.add_row("缓存", "命中（未计费）" if result.cached else "未命中")
+    console.print(table)
+    for warning in result.warnings:
+        console.print(f"[yellow]![/yellow] {warning}")
+
+
+@app.command("create-asset-pack")
+def create_asset_pack(
+    pack_file: Annotated[Path, typer.Argument(help="静态资产 Pack YAML")],
+    as_json: Annotated[bool, typer.Option("--json", help="输出 JSON 汇总")] = False,
+    retry_failed: Annotated[
+        bool, typer.Option("--retry-failed", help="重试任务表中处于 failed 的资产")
+    ] = False,
+    config_path: Annotated[
+        Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
+) -> None:
+    """并发生成、验证并导出一个静态资产 pack。"""
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
+    control = PackRunControl()
+    previous: dict[int, Any] = {}
+
+    def request_pause(signum: int, _frame: Any) -> None:
+        control.request_stop(signum)
+
+    for signal_number in (signal.SIGINT, signal.SIGTERM):
+        previous[signal_number] = signal.getsignal(signal_number)
+        signal.signal(signal_number, request_pause)
+    try:
+        summary = asyncio.run(
+            run_asset_pack(
+                pack_file,
+                config,
+                control=control,
+                retry_failed=retry_failed,
+            )
+        )
+    except PixelAssetError as exc:
+        _fail(exc)
+        raise  # pragma: no cover
+    finally:
+        for saved_signal, handler in previous.items():
+            signal.signal(saved_signal, handler)
+
+    if as_json:
+        console.print_json(
+            json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
+        )
+    else:
+        table = Table(title=f"Pack 执行 · {summary.pack_id}", header_style="bold")
+        table.add_column("资产")
+        table.add_column("结果")
+        table.add_column("阶段")
+        table.add_column("缓存", justify="center")
+        table.add_column("恢复", justify="center")
+        table.add_column("说明")
+        for asset in summary.assets:
+            table.add_row(
+                asset.asset_id,
+                asset.outcome,
+                asset.stage,
+                "✓" if asset.cached else "—",
+                "✓" if asset.resumed else "—",
+                asset.error or "",
+            )
+        console.print(table)
+        summary_path = _summary_display_path(config, summary.pack_id)
+        console.print(
+            f"[dim]有效模型 {summary.provider}/{summary.model} · "
+            f"worker {summary.worker_count} · 汇总 {summary_path}[/dim]"
+        )
+
+    if summary.interrupted:
+        raise typer.Exit(128 + (control.signal_number or signal.SIGINT))
+    if summary.counts.get("provider_failed", 0) or summary.counts.get(
+        "processing_failed", 0
+    ) or summary.counts.get("paused", 0):
+        raise typer.Exit(EXIT_ERROR)
+    if summary.counts.get("validation_failed", 0):
+        raise typer.Exit(EXIT_VALIDATION_FAILED)
+
+
+def _summary_display_path(config: Config, pack_id: str) -> Path:
+    return config.output_dir / "_packs" / pack_id / "pack-summary.json"
 
 
 def _split_label(item: dict[str, Any]) -> str:
@@ -378,6 +593,7 @@ def _render_plan(result: Any, *, resumed: bool) -> None:
     jobs.add_column("依赖")
     for index, job in enumerate(result.jobs.topological_order(), start=1):
         kind_style = {
+            JobKind.STATIC: "[green]static[/green]",
             JobKind.SEED: "[magenta]seed[/magenta]",
             JobKind.ANIMATION: "animation",
             JobKind.DERIVED: "[cyan]derived[/cyan]",
@@ -800,7 +1016,6 @@ def validate(
     config = _load_config(config_path)
     try:
         report = run_validation(asset_dir)
-        report.save(Path(asset_dir) / VALIDATION_REPORT_FILE)
         plan = plan_repairs(
             report,
             rounds_used=repair_rounds_used(asset_dir),
@@ -964,11 +1179,12 @@ def export(
     ] = None,
 ) -> None:
     """导出引擎格式并生成 Contact Sheet。**不调用 API。**"""
-    _load_config(config_path)
+    config = _load_config(config_path)
+    resolved_dir = asset_dir if asset_dir.exists() else config.asset_dir(str(asset_dir))
     targets = list(target) if target else ["generic-json", "godot"]
     try:
         summary = run_export(
-            asset_dir, targets=targets, contact_sheet=not no_contact_sheet
+            resolved_dir, targets=targets, contact_sheet=not no_contact_sheet
         )
     except PixelAssetError as exc:
         _fail(exc)
@@ -979,11 +1195,11 @@ def export(
     table.add_column("大小", justify="right")
     for path in summary.files:
         table.add_row(
-            str(path.relative_to(Path(asset_dir))), f"{path.stat().st_size / 1024:.1f} KB"
+            str(path.relative_to(resolved_dir)), f"{path.stat().st_size / 1024:.1f} KB"
         )
     if summary.contact_sheet:
         table.add_row(
-            str(summary.contact_sheet.relative_to(Path(asset_dir))),
+            str(summary.contact_sheet.relative_to(resolved_dir)),
             f"{summary.contact_sheet.stat().st_size / 1024:.1f} KB",
         )
     console.print(table)

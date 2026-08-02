@@ -1,0 +1,39 @@
+schema_version: "1.0"
+pack_type: potion_pack
+pack_id: starter_potions
+
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [32, 32]
+    max_colors: 12
+    outline: single_pixel_dark
+    shading: two_tone
+    antialiasing: false
+    lighting: fixed_top_left
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+    fallback_colors: ["#00FF00", "#00FFFF"]
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: starter_potions
+    colors:
+      - "#211A2C"
+      - "#EEE8D5"
+      - "#B7C9D3"
+      - "#D94B4B"
+      - "#7F1D2D"
+      - "#3978C5"
+      - "#244A91"
+      - "#D09A31"
+      - "#7C5A20"
+
+assets:
+  - asset_id: health_potion
+    description: Small round health potion bottle filled with bright red liquid and sealed with a cork.
+  - asset_id: mana_potion
+    description: Small round mana potion bottle filled with vivid blue liquid and sealed with a cork.
+  - asset_id: stamina_potion
+    description: Small round stamina potion bottle filled with warm golden liquid and sealed with a cork.

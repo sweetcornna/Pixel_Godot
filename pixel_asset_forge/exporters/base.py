@@ -102,6 +102,16 @@ def load_frames(root: Path, view: AnimationView) -> list[np.ndarray]:
     return frames
 
 
+def load_static_image(manifest: AssetManifest, root: Path) -> np.ndarray:
+    entry = manifest.static_image
+    if entry is None:
+        raise ExportError(f"{manifest.asset_id} 的 Manifest 没有 static_image")
+    path = root / entry.image
+    if not path.exists():
+        raise ExportError(f"静态成品文件缺失：{entry.image}")
+    return np.array(Image.open(path).convert("RGBA"))
+
+
 class Exporter(ABC):
     """导出器接口。"""
 

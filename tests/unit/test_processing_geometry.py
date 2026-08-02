@@ -16,6 +16,7 @@ from pixel_asset_forge.processing import (
     align_frames,
     anchor_drift,
     assert_uniform_size,
+    block_median_resize,
     content_anchor,
     content_bounds,
     crop_all,
@@ -25,6 +26,7 @@ from pixel_asset_forge.processing import (
     nearest_resize,
     normalize_cell_sizes,
     place_on_canvas,
+    save_frames,
     split_grid,
     union_bounds,
 )
@@ -312,3 +314,65 @@ def test_the_anchor_still_tracks_a_real_sidestep() -> None:
     b = content_anchor(swinging_sword_frame(0))
     assert a is not None and b is not None
     assert b[0] - a[0] == pytest.approx(8.0, abs=0.5)
+
+
+def test_saving_fewer_frames_removes_the_leftovers(tmp_path) -> None:
+    """帧数变少时旧帧必须消失 —— 按目录读帧的代码会把残帧算进去。"""
+    frames = [np.zeros((4, 4, 4), dtype=np.uint8) for _ in range(5)]
+    save_frames(frames, tmp_path, stem="walk_down")
+    assert len(list(tmp_path.glob("*.png"))) == 5
+
+    kept = save_frames(frames[:2], tmp_path, stem="walk_down")
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == [p.name for p in kept]
+
+
+# -- 大比例缩小 -------------------------------------------------------------
+
+
+def test_block_median_keeps_a_line_connected_where_nearest_breaks_it() -> None:
+    """一条与块同宽的斜线缩小 8 倍：最近邻会采成断续虚点，分块中位保持连续。
+
+    补间的中间帧就是这么糊掉的 —— 它的源分辨率是关键帧的两倍，同样缩到 74px，
+    弓被点采样打成一条虚线。
+    """
+    frame = np.zeros((64, 64, 4), dtype=np.uint8)
+    frame[:, :, 3] = 255
+    frame[:, :, :3] = 20
+    for row in range(64):  # 8px 宽的斜线，正好一个块
+        frame[row, row // 1 % 56 : row % 56 + 8] = [255, 255, 255, 255]
+
+    def lit_rows(out: np.ndarray) -> int:
+        return int((out[:, :, 0] > 128).any(axis=1).sum())
+
+    assert lit_rows(block_median_resize(frame, (8, 8))) >= lit_rows(
+        nearest_resize(frame, (8, 8))
+    )
+
+
+def test_block_median_drops_features_narrower_than_a_block() -> None:
+    """中位是多数决：占不满半个块的东西就是会消失，这是它的定义而不是缺陷。
+
+    写下来是为了别人改滤镜时知道边界在哪 —— 想保住细于块的特征，
+    该做的是提高目标分辨率，不是换滤镜。
+    """
+    frame = np.zeros((64, 64, 4), dtype=np.uint8)
+    frame[:, :, 3] = 255
+    frame[:, :, :3] = 20
+    frame[:, 30:32] = [255, 255, 255, 255]  # 2px 竖线，8px 的块里只占四分之一
+    assert block_median_resize(frame, (8, 8))[:, :, 0].max() == 20
+
+
+def test_block_median_keeps_alpha_binary() -> None:
+    frame = np.zeros((32, 32, 4), dtype=np.uint8)
+    frame[8:24, 8:24] = [200, 100, 50, 255]
+    out = block_median_resize(frame, (7, 7))
+    assert set(np.unique(out[:, :, 3])) <= {0, 255}
+
+
+def test_block_median_does_not_darken_the_edges() -> None:
+    """RGB 只能统计不透明像素 —— 把透明区那些被清零的 RGB 算进去，整圈边缘发黑。"""
+    frame = np.zeros((32, 32, 4), dtype=np.uint8)
+    frame[8:24, 8:24] = [255, 255, 255, 255]
+    out = block_median_resize(frame, (16, 16))
+    visible = out[out[:, :, 3] > 0][:, :3]
+    assert visible.min() > 200, visible.min()

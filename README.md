@@ -21,12 +21,14 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 4 | 种子图与动画网格流水线 · Prompt Compiler · 人工闸门 | ✅ 完成 |
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
+| 7 | 道具、特效与批量任务 | 🚧 `potion_pack` 首纵切正在实现；Sprint 7 未完成 |
 
 ### 未达标项
 
-**1. per-action 阈值仍未校准。** 真实样本只有 3 组、其中合格的只有 2 组，
-而 P95 需要的是分布 —— 用 3 个点定阈值只是把一个猜测换成另一个猜测。
-详见 [阈值校准记录](docs/threshold-calibration.md)（含数据指出的两处疑点）。
+**1. per-action 阈值只完成了五个角色动作的校准。** `idle` / `walk` / `attack` /
+`hurt` / `death` 已用 6 个角色、30 个动作复验；`cast` / `travel` / `impact` / `loop`
+仍无样本，`up` 方向修正系数也未验证。详见
+[阈值校准记录](docs/threshold-calibration.md)。
 
 **2. 帧序被打乱无法自动检测。** PLAN §9.2 称这是"捕捉静默失败的唯一自动手段"，
 但实测四种判据在正序与随机乱序上完全重叠，其中"局部离群"判据**方向相反**
@@ -76,8 +78,27 @@ uv run pixel-asset export  outputs/knight_01               # Godot + Generic JSO
 **人工闸门不要跳过。** seed 是所有动画的身份基准，它不对则后续动画全部作废重来 ——
 所以 `create-animation` 在 seed 未获批准时会直接拒绝执行。
 
-`plan` 完全离线：它输出任务 DAG、预计 API 调用次数、键控色冲突预检结果与风险告警，
-不生成任何图。**大批量生成之前先跑它。**
+### `potion_pack` 首纵切
+
+一批药水使用 pack YAML：每个条目都是独立的静态 `pickup`，共享
+`style` / `background` / `export` 和显式 `palette.colors`。pack 中不要写 `model`；
+pack 不选择模型；运行时使用 Config 解析后的有效 `model`（当前默认 `gpt-image-2`），
+仍可按既有配置优先级覆盖。单资产失败不会取消其余资产，同一 pack 可恢复续跑；
+完成后按 `asset_id` 逐项审核和导出。
+
+```bash
+uv run pixel-asset plan potions.yaml                 # 自动识别 pack，先核对批次计划
+uv run pixel-asset create-asset-pack potions.yaml    # 执行整包，无 seed/动画批准闸门
+uv run pixel-asset export outputs/health_potion -t godot      # 按资产目录导出
+uv run pixel-asset export mana_potion -t godot                # 或按 asset_id 导出
+```
+
+> `potions.yaml` 是你按 PLAN §7.1 契约创建的 pack 文件。
+> 这里只宣称 `potion_pack` 首纵切正在实现，不代表 `weapon_pack`、`spell_bundle`
+> 或整个 Sprint 7 已完成。
+
+`plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
+键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**
 
 ```
 共 9 个任务 · 预计 API 调用 7 次 · 镜像派生 2 个（不计费）
@@ -90,15 +111,19 @@ uv run pixel-asset export  outputs/knight_01               # Godot + Generic JSO
 |---|---|:---:|:---:|
 | `init` | 初始化配置与目录 | ❌ | ✅ |
 | `doctor` | 检测配置、依赖、Key、网格档位 | 仅探测 | ✅ |
-| `plan <request.yaml>` | 输出任务 DAG 与预计调用次数 | ❌ | ✅ |
+| `plan <input.yaml>` | 自动识别单资产或 pack，输出 DAG 与调用预算 | ❌ | 单资产 ✅；pack 首纵切 🚧 |
 | `process <outputs/A>` | 仅重跑本地处理链 | ❌ | ✅ |
 | `create-character <request.yaml>` | 生成 canonical seed | ✅ | ✅ |
 | `create-animation --asset A --action X --direction D` | 生成完整动作网格 | ✅ | ✅ |
+| `create-asset-pack <pack.yaml>` | 批量生成共享约束的静态 pickup | ✅ | `potion_pack` 首纵切 🚧 |
+| `import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ | ✅ |
+| `interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ | ✅ |
 | `validate <outputs/A>` | 运行验证引擎 | ❌ | ✅ |
 | `repair <outputs/A>` | 执行修复计划 | 视类型 | ✅ |
-| `export <outputs/A> -t godot` | 导出引擎格式 + Contact Sheet | ❌ | ✅ |
+| `export <asset-dir-or-id> -t godot` | 按目录或 `asset_id` 导出 + Contact Sheet | ❌ | 目录 ✅；`asset_id` 首纵切 🚧 |
 
-9 个命令中 5 个完全不调用 API —— 调试与迭代应尽量在离线侧完成。
+命令面按完整业务动作演进，不机械固定数量；MCP 仍保持少量高层语义工具。
+`plan`、`process`、`validate`、`export` 等离线入口让调试与迭代尽量不重复调用 API。
 
 ## 示例请求
 

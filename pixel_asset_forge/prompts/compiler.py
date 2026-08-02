@@ -17,7 +17,7 @@ from ..constants import Direction
 from ..models.request import AssetRequest
 from ..planning.grid_layout import GridLayout
 from .negative_rules import negative_block
-from .poses import PoseCycle, cycle_from_beats, numbered_poses
+from .poses import FRONTAL_DIRECTIONS, PoseCycle, cycle_from_beats, numbered_poses
 
 #: prompt 里要求的边距。**判定按 8%**（PLAN §2.3.2）。
 #:
@@ -69,6 +69,33 @@ _FACING = {
     ),
 }
 
+_STATIC_PERSPECTIVE = {
+    "top_down_3_4": "the camera slightly above the item, looking down at a shallow angle",
+    "top_down": "the camera directly overhead, looking straight down at the item",
+    "side_view": "the camera level with the item, looking straight at it from the side",
+    "isometric": "an isometric camera looking at the item",
+}
+
+_STATIC_SUBJECT = {
+    "pickup": "Crisp pixel art of one single isolated pickup item.",
+    "weapon": "Crisp pixel art of one single isolated weapon.",
+    "prop": "Crisp pixel art of one single isolated prop object.",
+    "ui_icon": "Crisp pixel art of one single isolated UI icon.",
+    "environment_object": (
+        "Crisp pixel art of one single isolated environment object."
+    ),
+}
+
+_WEAPON_ORIENTATION = (
+    "Weapon orientation: place the weapon diagonally, with its blade tip or muzzle "
+    "pointing toward the upper right, following the standard game icon convention."
+)
+
+_UI_ICON_CONVENTION = (
+    "UI icon convention: show the icon straight-on in a front-facing view, with no "
+    "ground contact or cast shadow, and keep its silhouette clearly readable."
+)
+
 _SHADING = {
     "flat": "flat single-tone shading",
     "two_tone": "two-tone shading (one base tone plus one shadow tone)",
@@ -87,6 +114,36 @@ _LIGHTING = {
     "fixed_top_right": "the light source fixed at the top-right",
     "none": "no directional lighting, the subject is self-lit",
 }
+
+
+def _stride_rule(direction: str | None) -> str:
+    """跨步幅度的写法**必须分视角**，否则会写出一个正面看的侧视姿势。
+
+    原来这条对所有视角都写"striding 的格子里两脚间距至少一个肩宽"。肩宽的
+    左右间距在侧视里是跨步，在正视里是**劈叉** —— 模型为了同时满足"正对镜头"
+    和"两脚拉开一肩宽"，只能把躯干画成正面、把腿画成侧视，出来是个拼接怪物。
+    用户看到的就是"走路朝向怎么是侧着的"。
+
+    正视里跨步是**朝镜头方向**的，画面上表现为抬脚、脚在画布上更低更靠前、
+    以及整个身体的上下起伏 —— 横向间距始终不超过胯宽。
+    """
+    if direction in FRONTAL_DIRECTIONS:
+        return (
+            "- this is a FRONT/BACK view: a step travels TOWARDS or AWAY from the camera, "
+            "not sideways across the cell. Show it by lifting one foot clear of the ground "
+            "and drawing it lower on the canvas (nearer the viewer) than the planted foot, "
+            "plus the up-and-down bob of the whole body\n"
+            "- the two feet NEVER separate sideways by more than the character's hips. "
+            "A wide sideways stance is a side view; drawing one here gives a front-facing "
+            "torso on side-facing legs, which is the worst artefact this sheet can have\n"
+            "- both feet keep their toes pointing at the camera in every cell. No cell may "
+            "show a leg, knee or foot in profile\n"
+        )
+    return (
+        "- this is a SIDE view: in the cells where the legs are described as striding, "
+        "the gap between the two feet must be at least as wide as the character's "
+        "shoulders\n"
+    )
 
 
 def _custom_cycle(request: AssetRequest, action: str) -> PoseCycle | None:
@@ -143,6 +200,54 @@ def _background_block(key_color: str) -> str:
         f"that is not the subject, including the space between cells. "
         f"The background must be a single uniform colour with no gradient and no texture."
     )
+
+
+def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledPrompt:
+    """单张静态资产的 prompt；不复用任何角色或动作模板。"""
+    from ..planning.grid_layout import seed_layout
+
+    layout = seed_layout()
+    colors = request.style.palette_colors
+    palette = (
+        "Explicit palette — use only these colours for the item: " + ", ".join(colors) + "."
+        if colors is not None
+        else f"Use at most {request.style.max_colors} colours for the item."
+    )
+    blocks = [
+        _STATIC_SUBJECT.get(
+            request.asset_type,
+            "Crisp pixel art of one single isolated item.",
+        ),
+        f"Subject: {request.description.strip()}",
+        f"Camera: {_STATIC_PERSPECTIVE[request.style.perspective]}.",
+        _style_block(request),
+        palette,
+        (
+            "Composition: place the item at the exact center of the square canvas, "
+            f"with at least {PROMPT_MARGIN_PERCENT}% empty background margin on all "
+            "four sides. Keep the entire item visible and separated from every edge."
+        ),
+    ]
+    if request.asset_type == "weapon":
+        blocks.append(_WEAPON_ORIENTATION)
+    if request.asset_type == "ui_icon":
+        blocks.append(_UI_ICON_CONVENTION)
+    blocks.extend(
+        [
+            (
+                f"Background: one completely flat solid {key_color} colour filling every "
+                "pixel outside the item, including all margin around it. The background "
+                "must be uniform, with no gradient, texture or vignette."
+            ),
+            (
+                "Exclude people, humanoids, creatures, faces, limbs, text, labels, numbers, "
+                "watermarks, scenery, ground planes, horizons, shadows, glow, bloom, blur, "
+                "photorealism, soft edges, anti-aliasing, and every second object."
+            ),
+        ]
+    )
+    text = "\n\n".join(blocks)
+    return CompiledPrompt(text=text, key_color=key_color, size=layout.size)
 
 
 def compile_seed_prompt(request: AssetRequest, *, key_color: str) -> CompiledPrompt:
@@ -257,13 +362,25 @@ def compile_animation_prompt(
         "on the same side, and every asymmetric detail stays exactly where it was\n"
         "- the head stays at the same horizontal position in every cell; the character "
         "must not drift sideways from cell to cell\n"
+        # 小恶魔的走路：腿几乎不动，翅膀却每格换一个展幅，播起来就是"鬼畜"。
+        # 模型需要被告知**哪个部件负责表现运动**。
+        "- the LEGS are what carry the motion. Wings, cloak, cape, tail, hair and scarf "
+        "may trail or sway very slightly, but they keep the same span, the same shape "
+        "and the same silhouette in every cell — never spread a wing wide in one cell "
+        "and fold it in the next\n"
+        # 史莱姆的走路：模型照"左脚向前迈"的描述给一团没有腿的身体现编了两条腿。
+        # 同一个角色四个动作是圆团、第五个长出了腿，就是"形象不统一"。
+        "- use ONLY the body parts the character in the template actually has. If it has "
+        "no legs, no arms, no head or no hands, do NOT invent them — express the pose "
+        "with the parts it does have (a legless body squashes, stretches and hops; a "
+        "floating body bobs and tilts). Adding a limb the template does not have is the "
+        "worst failure possible: it turns the sequence into a different character\n"
         "\n"
         "What is LOCKED is the orientation, NOT the motion. The limbs must move a lot:\n"
         "- the pose difference between neighbouring cells must be obvious at a glance "
         "when the cells are seen side by side\n"
-        "- in the cells where the legs are described as striding, the gap between the "
-        "two feet must be at least as wide as the character's shoulders\n"
-        "- do not draw a row of near-identical standing poses with only tiny "
+        + _stride_rule(direction)
+        + "- do not draw a row of near-identical standing poses with only tiny "
         "differences — that is the single most common way this comes out wrong\n"
         "\n"
         "Sidedness — a pose that involves ONE arm, ONE leg or ONE shoulder must use "
@@ -277,7 +394,9 @@ def compile_animation_prompt(
         f"The {frames} cells must show these DIFFERENT poses. "
         "This is an animation, not a set of standing portraits — "
         "the body must visibly change between cells:\n"
-        + numbered_poses(action, frames, layout.cols, direction, cycle)
+        + numbered_poses(
+            action, frames, layout.cols, direction, cycle, request.resolved_locomotion
+        )
     )
 
     text = "\n\n".join(

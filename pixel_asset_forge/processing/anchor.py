@@ -30,6 +30,7 @@ class Anchor:
 
 
 BOTTOM_CENTER = Anchor()
+CENTER = Anchor(type="center", x=0.5, y=0.5)
 
 
 def content_anchor(rgba: np.ndarray) -> tuple[float, float] | None:
@@ -67,7 +68,18 @@ def place_on_canvas(
     width, height = canvas
     out = np.zeros((height, width, 4), dtype=np.uint8)
 
-    src = content_anchor(rgba)
+    if anchor.type == "center":
+        ys, xs = np.nonzero(rgba[:, :, 3])
+        src = (
+            None
+            if xs.size == 0
+            else (
+                (float(xs.min()) + float(xs.max()) + 1.0) / 2.0,
+                (float(ys.min()) + float(ys.max()) + 1.0) / 2.0,
+            )
+        )
+    else:
+        src = content_anchor(rgba)
     if src is None:
         return out  # 空帧就是空画布，交给 blank_frame 检查去报
 

@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 from ..errors import ExportError
 from ..exporters import get_exporter
-from ..exporters.base import animation_views, load_frames
+from ..exporters.base import animation_views, load_frames, load_static_image
 from ..logging_utils import get_logger
 from ..models.job import JobEvent, JobStatus
 from ..models.manifest import AssetManifest
@@ -47,7 +47,21 @@ def build_contact_sheet(manifest: AssetManifest, root: Path, out: Path) -> Path:
     """
     views = animation_views(manifest, root)
     if not views:
-        raise ExportError("没有任何动作，无法生成 contact sheet")
+        if manifest.static_image is None:
+            raise ExportError("没有任何静态图或动作，无法生成 contact sheet")
+        frame = load_static_image(manifest, root)
+        cell_h, cell_w = frame.shape[:2]
+        scaled_w, scaled_h = cell_w * CONTACT_SCALE, cell_h * CONTACT_SCALE
+        canvas = Image.new("RGB", (LABEL_WIDTH + scaled_w, scaled_h), BACKGROUND)
+        draw = ImageDraw.Draw(canvas)
+        draw.text((6, scaled_h // 2 - 6), "static", fill=(220, 220, 230))
+        tile = Image.fromarray(frame, "RGBA").resize(
+            (scaled_w, scaled_h), Image.Resampling.NEAREST
+        )
+        canvas.paste(tile, (LABEL_WIDTH, 0), tile)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(out)
+        return out
 
     frames_by_key = {v.key: load_frames(root, v) for v in views}
     cell_h, cell_w = frames_by_key[views[0].key][0].shape[:2]
@@ -92,6 +106,24 @@ def run_export(
         raise ExportError(f"{root} 下没有 asset-manifest.json —— 先跑 create-character / process")
 
     manifest = AssetManifest.load(store.manifest_path)
+    if manifest.static_image is not None:
+        if manifest.status not in ("validated", "exported"):
+            raise ExportError(
+                f"Manifest 状态为 {manifest.status}，只有 validated/exported 可导出"
+            )
+
+        table = store.load_job_table()
+        if table is not None:
+            pending = [
+                job
+                for job in table
+                if job.kind.value != "seed"
+                and job.status not in (JobStatus.VALIDATED, JobStatus.EXPORTED)
+            ]
+            if pending:
+                states = ", ".join(f"{job.id}={job.status.value}" for job in pending)
+                raise ExportError(f"导出前成品任务必须 validated；当前 {states}")
+
     summary = ExportSummary(asset_id=manifest.asset_id)
 
     for target in targets:
@@ -131,5 +163,7 @@ def _mark_exported(store: ArtifactStore, manifest: AssetManifest) -> None:
     if moved:
         store.save_job_table(table)
 
-    manifest.status = "exported" if moved else manifest.status
+    deliverable_jobs = [job for job in table if job.kind.value != "seed"]
+    if deliverable_jobs and all(job.status is JobStatus.EXPORTED for job in deliverable_jobs):
+        manifest.status = "exported"
     manifest.save(store.manifest_path)

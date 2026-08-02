@@ -105,10 +105,14 @@
         "id": {
           "description": "检查项标识，对应 PLAN §11.2 的验证项清单。",
           "enum": [
+            "artifact_exists",
+            "artifact_hash",
             "frame_count",
             "frame_size",
             "blank_frame",
             "cell_overflow",
+            "content_bounds",
+            "palette_membership",
             "transparent_rgb_residue",
             "frame_order_continuity",
             "beat_signature",

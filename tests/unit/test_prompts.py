@@ -10,14 +10,18 @@ prompt 里明写着 no two cells may be identical，再递重复描述就是自�
 from __future__ import annotations
 
 import pytest
+import yaml
 
+from pixel_asset_forge.constants import ALLOWED_FRAME_COUNTS
 from pixel_asset_forge.errors import PlanError
-from pixel_asset_forge.models import load_request, parse_request
+from pixel_asset_forge.models import load_pack, load_request, parse_request
+from pixel_asset_forge.models.request import infer_locomotion
 from pixel_asset_forge.planning import grid_for_frames, layout_for_frames
 from pixel_asset_forge.prompts import (
     PROMPT_MARGIN_PERCENT,
     compile_animation_prompt,
     compile_seed_prompt,
+    compile_static_prompt,
     numbered_poses,
     pose_sequence,
 )
@@ -93,6 +97,85 @@ def test_numbered_poses_state_the_row_and_column() -> None:
 
 
 # -- Prompt 编译 -----------------------------------------------------------
+
+
+def test_static_prompt_is_item_only_and_uses_explicit_palette(examples_dir) -> None:
+    request = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    prompt = compile_static_prompt(request, key_color="#FF00FF").text
+    lowered = prompt.lower()
+
+    assert prompt.startswith("Crisp pixel art of one single isolated pickup item.")
+    assert "Weapon orientation:" not in prompt
+    assert "exact center" in lowered
+    assert "12% empty background margin" in lowered
+    for color in request.style.palette_colors or ():
+        assert color in prompt
+    for banned in ("character", "full body", "feet", "animation"):
+        assert banned not in lowered
+
+
+def test_static_weapon_prompt_uses_weapon_subject_and_icon_orientation(examples_dir) -> None:
+    pickup = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    weapon = pickup.model_copy(update={"asset_type": "weapon"})
+
+    prompt = compile_static_prompt(weapon, key_color="#FF00FF").text
+
+    assert prompt.startswith("Crisp pixel art of one single isolated weapon.")
+    assert "Crisp pixel art of one single isolated pickup item." not in prompt
+    assert (
+        "Weapon orientation: place the weapon diagonally, with its blade tip or muzzle "
+        "pointing toward the upper right, following the standard game icon convention."
+        in prompt
+    )
+
+
+@pytest.mark.parametrize(
+    ("asset_type", "subject"),
+    [
+        ("pickup", "Crisp pixel art of one single isolated pickup item."),
+        ("weapon", "Crisp pixel art of one single isolated weapon."),
+        ("prop", "Crisp pixel art of one single isolated prop object."),
+        ("ui_icon", "Crisp pixel art of one single isolated UI icon."),
+        (
+            "environment_object",
+            "Crisp pixel art of one single isolated environment object.",
+        ),
+    ],
+)
+def test_static_prompt_uses_a_distinct_subject_for_each_supported_type(
+    examples_dir, asset_type: str, subject: str
+) -> None:
+    pickup = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    request = pickup.model_copy(update={"asset_type": asset_type})
+
+    prompt = compile_static_prompt(request, key_color="#FF00FF").text
+
+    assert prompt.startswith(subject)
+    subjects = (
+        "Crisp pixel art of one single isolated pickup item.",
+        "Crisp pixel art of one single isolated weapon.",
+        "Crisp pixel art of one single isolated prop object.",
+        "Crisp pixel art of one single isolated UI icon.",
+        "Crisp pixel art of one single isolated environment object.",
+    )
+    assert [candidate in prompt for candidate in subjects].count(True) == 1
+
+
+def test_static_ui_icon_prompt_adds_only_the_ui_icon_convention(examples_dir) -> None:
+    pickup = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    ui_icon = pickup.model_copy(update={"asset_type": "ui_icon"})
+
+    prompt = compile_static_prompt(ui_icon, key_color="#FF00FF").text
+
+    assert (
+        "UI icon convention: show the icon straight-on in a front-facing view, with no "
+        "ground contact or cast shadow, and keep its silhouette clearly readable."
+        in prompt
+    )
+    assert "Weapon orientation:" not in prompt
+
+
+
 
 
 @pytest.fixture
@@ -315,13 +398,18 @@ def test_the_prompt_demands_visible_motion_not_just_consistency(knight) -> None:
     """朝向锁死是为了不摇摆，但锁过头模型会交出一排几乎一样的站姿 ——
     Sprint 0 踩过一次，加了连续性约束后又踩了一次。必须有反向配重。
     """
-    prompt = compile_animation_prompt(
-        knight, action="walk", direction="down", frames=6,
-        layout=layout_for_frames(6), key_color="#FF00FF",
-    ).text
-    assert "What is LOCKED is the orientation, NOT the motion" in prompt
-    assert "at least as wide as the character's shoulders" in prompt
-    assert "row of near-identical standing poses" in prompt
+    for direction, counterweight in [
+        # 反向配重的**写法分视角**：侧视是拉开跨步，正视是抬脚加起伏
+        ("left", "at least as wide as the character's shoulders"),
+        ("down", "lifting one foot clear of the ground"),
+    ]:
+        prompt = compile_animation_prompt(
+            knight, action="walk", direction=direction, frames=6,
+            layout=layout_for_frames(6), key_color="#FF00FF",
+        ).text
+        assert "What is LOCKED is the orientation, NOT the motion" in prompt
+        assert counterweight in prompt, direction
+        assert "row of near-identical standing poses" in prompt
 
 
 def test_a_leg_swap_is_not_a_mirror(knight) -> None:
@@ -413,3 +501,143 @@ def test_the_neutral_beat_survives_the_left_right_swap() -> None:
     front = pose_sequence("walk", 6, "down")
     assert len(set(front)) == 6
     assert front[0] != front[3]
+
+
+# -- 移动形态 ---------------------------------------------------------------
+#
+# 用户报的"形象不统一"：史莱姆的 idle / attack / hurt / death 都是无腿圆团，
+# 唯独 walk 被模型长出了两条腿和脚 —— 因为 walk 的节拍句句写"左脚 / 右脚"。
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("a small blue slime with a glossy highlight", "legless"),
+        ("一只蓝色史莱姆，圆润有光泽", "legless"),
+        ("a translucent ghost in tattered robes", "floating"),
+        ("a grey wolf with bristling fur", "quadruped"),
+        ("a hooded elf archer with a longbow", "biped"),
+    ],
+)
+def test_locomotion_is_inferred_from_the_description(description, expected) -> None:
+    assert infer_locomotion(description) == expected
+
+
+def test_a_legless_walk_never_asks_for_feet() -> None:
+    """没有腿的角色，走路的描述里就不能出现腿和脚。
+
+    出现了模型就会把腿画出来 —— 这是"同一个角色四个动作一个样、
+    第五个换了物种"的直接成因。
+    """
+    text = " ".join(pose_sequence("walk", 6, "down", None, "legless")).lower()
+    for banned in ("foot", "feet", "leg", "heel", "toe", "knee"):
+        assert banned not in text, f"无腿角色的走路描述里出现了 {banned!r}"
+
+
+def test_a_legless_walk_still_shows_locomotion() -> None:
+    """不能因为去掉了腿就退化成"原地待机"。"""
+    text = " ".join(pose_sequence("walk", 6, "down", None, "legless")).lower()
+    assert "ground" in text
+    assert "squash" in text or "compress" in text
+    assert "stretch" in text
+
+
+def test_explicit_locomotion_beats_the_inferred_one(examples_dir) -> None:
+    raw = yaml.safe_load((examples_dir / "knight.yaml").read_text(encoding="utf-8"))
+    raw["locomotion"] = "legless"
+    request = parse_request(raw)
+    assert request.resolved_locomotion == "legless"
+
+    prompt = compile_animation_prompt(
+        request, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    )
+    assert "squashes" in prompt.text or "SQUASH" in prompt.text
+
+
+def test_the_prompt_forbids_inventing_limbs(knight) -> None:
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    )
+    lowered = prompt.text.lower()
+    assert "only the body parts the character in the template actually has" in lowered
+    assert "do not invent them" in lowered
+
+
+def test_the_prompt_pins_wings_and_cloaks_so_they_do_not_flap(knight) -> None:
+    """小恶魔走路时腿几乎不动、翅膀每格换展幅 —— 播起来就是"鬼畜"。"""
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    )
+    lowered = prompt.text.lower()
+    assert "the legs are what carry the motion" in lowered
+    assert "same span" in lowered
+
+
+def test_the_frontal_walk_states_the_body_height_every_beat() -> None:
+    """正面走路的主线索是上下起伏。不写高度，模型会拿左右偏移凑帧间差异。"""
+    beats = pose_sequence("walk", 4, "down")
+    cues = ("lowest", "highest", "mid height", "lower")
+    stated = [b for b in beats if any(cue in b.lower() for cue in cues)]
+    assert len(stated) == len(beats), beats
+
+
+# -- 正视步态不能用侧视措辞 --------------------------------------------------
+#
+# 用户报「走路朝向怎么是侧着的」：躯干、头、翅膀正对镜头，腿却是侧视的，
+# 一条腿甩到身侧老远、脚尖朝外。成因是两条指令都在要求水平位移。
+
+
+@pytest.mark.parametrize("direction", ["down", "up"])
+def test_a_frontal_walk_never_asks_for_horizontal_travel(direction) -> None:
+    """"向前迈""在后""跨到最开"都是**侧视**才成立的说法。
+
+    正面看，往前迈是朝镜头走，画面上没有水平位移。要求它，模型只能把躯干
+    画成正面、把腿画成侧视劈开。
+    """
+    text = " ".join(pose_sequence("walk", 6, direction)).lower()
+    for banned in ("far forward", "far back", "steps forward", "well behind", "widest"):
+        assert banned not in text, f"正视步态里出现了侧视措辞 {banned!r}"
+
+
+def test_a_frontal_walk_pins_the_feet_inside_the_body(knight) -> None:
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    ).text.lower()
+    assert "never separate sideways by more than the character's hips" in prompt
+    assert "toes pointing at the camera" in prompt
+    # 那条"两脚拉开一肩宽"的规则只该出现在侧视里
+    assert "at least as wide as the character's shoulders" not in prompt
+
+
+def test_a_side_walk_still_demands_a_wide_stride(knight) -> None:
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="left", frames=6,
+        layout=layout_for_frames(6), key_color="#FF00FF",
+    ).text.lower()
+    assert "at least as wide as the character's shoulders" in prompt
+    assert "never separate sideways" not in prompt
+
+
+def test_the_frontal_walk_still_reads_as_walking() -> None:
+    """去掉水平位移之后，抬脚与起伏这两条线索必须还在 —— 否则就成了原地站着。"""
+    text = " ".join(pose_sequence("walk", 6, "down")).lower()
+    assert "lifts clear of the ground" in text
+    assert "lowest" in text and "highest" in text
+
+
+@pytest.mark.parametrize("locomotion", ["biped", "legless", "floating", "quadruped"])
+@pytest.mark.parametrize("direction", ["down", "up", "left", "right"])
+@pytest.mark.parametrize("frames", ALLOWED_FRAME_COUNTS)
+def test_every_locomotion_produces_unique_poses(locomotion, direction, frames) -> None:
+    """每个移动形态 × 每个方向 × 每个帧数档位都不能出现重复描述。
+
+    ``half_cycle`` 的后半周期靠左右互换生成 —— 描述里一个 left/right 都没有的
+    节拍，互换后与原文一字不差。实测四足的 NEUTRAL 与 SUSPEND 两拍都踩过，
+    ``create-animation`` 直接报错。这条参数化就是为了别再靠人去逐拍检查。
+    """
+    poses = pose_sequence("walk", frames, direction, None, locomotion)
+    assert len(set(poses)) == len(poses) == frames

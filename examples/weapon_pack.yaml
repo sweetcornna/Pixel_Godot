@@ -1,0 +1,39 @@
+schema_version: "1.0"
+pack_type: weapon_pack
+pack_id: starter_weapons
+
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [32, 32]
+    max_colors: 12
+    outline: single_pixel_dark
+    shading: two_tone
+    antialiasing: false
+    lighting: fixed_top_left
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+    fallback_colors: ["#00FF00", "#00FFFF"]
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: starter_weapons
+    colors:
+      - "#211A2C"
+      - "#EEE8D5"
+      - "#B7C9D3"
+      - "#798892"
+      - "#45515A"
+      - "#D09A31"
+      - "#7C5A20"
+      - "#8C4F32"
+      - "#4E2B22"
+
+assets:
+  - asset_id: iron_sword
+    description: A sturdy iron longsword with a straight silver blade, dark crossguard, and leather-wrapped grip.
+  - asset_id: steel_spear
+    description: A balanced steel spear with a leaf-shaped silver point, reinforced socket, and dark wooden shaft.
+  - asset_id: flintlock_pistol
+    description: A compact flintlock pistol with a steel barrel, brass fittings, and polished dark wooden stock.

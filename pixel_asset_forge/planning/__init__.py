@@ -8,15 +8,18 @@ from .grid_layout import (
     check_size,
     grid_for_frames,
     layout_for_frames,
+    layout_matching_cell,
     seed_layout,
     strip_for_frames,
     supported_batch_sizes,
 )
+from .pack import PackPlanResult, plan_pack
 from .planner import PlanResult, plan_request
 
 __all__ = [
     "FrameBudget",
     "GridLayout",
+    "PackPlanResult",
     "PlanResult",
     "SizeViolation",
     "aspect_mismatch",
@@ -24,7 +27,9 @@ __all__ = [
     "frame_order",
     "grid_for_frames",
     "layout_for_frames",
+    "layout_matching_cell",
     "plan_inbetweens",
+    "plan_pack",
     "plan_request",
     "seed_layout",
     "strip_for_frames",

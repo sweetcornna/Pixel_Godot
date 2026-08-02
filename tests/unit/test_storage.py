@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,21 @@ def test_cache_roundtrip(tmp_path: Path) -> None:
     assert entry.image_path.read_bytes() == b"image-bytes"
     assert entry.content_hash == hash_bytes(b"image-bytes")
     assert entry.meta["request_id"] == "req_1"
+
+
+def test_cache_key_lock_serializes_the_same_key(tmp_path: Path) -> None:
+    cache = GenerationCache(tmp_path / "cache")
+    observed: list[int] = []
+
+    def enter(value: int) -> None:
+        with cache.key_lock("same"):
+            observed.append(value)
+            observed.append(-value)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(enter, (1, 2)))
+
+    assert observed in ([1, -1, 2, -2], [2, -2, 1, -1])
 
 
 def test_disabled_cache_never_hits(tmp_path: Path) -> None:

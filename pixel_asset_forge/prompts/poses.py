@@ -151,19 +151,34 @@ POSE_CYCLES: dict[str, PoseCycle] = {
             # 这一拍必须带方位线索。half_cycle 靠左右互换生成后半周期，
             # 描述里一个 left/right 都没有的话，互换后与原文一字不差 ——
             # 与 "no two cells may be identical" 直接冲突。
-            ("NEUTRAL", "both feet together directly under the body, the right foot "
-                        "having just come level with the left, standing squarely, "
-                        "arms hanging relaxed at the sides"),
-            ("STEP", "the left foot steps forward and is planted flat on the ground, "
-                     "the right foot stays back, the left arm swings back and the right "
-                     "arm swings forward"),
-            ("STRIDE", "the left foot is far forward taking the weight and the right heel "
-                       "is lifted well behind, the stride at its widest, "
-                       "the shoulders staying level and square to the camera"),
+            # 两条铁律，缺一条就出怪物：
+            #
+            # 1. **每一拍点名身体的高度。** 正面走路的主线索是上下起伏。不写高度，
+            #    模型就拿"身体略偏左 / 略偏右"制造帧间差异 —— 播起来就是"鬼畜"。
+            # 2. **一个"前"字都不能写。** "迈向前方""后脚在后"是**侧视**的概念；
+            #    正面看，往前迈是朝镜头走，画面上根本没有水平位移。写了"far forward"，
+            #    模型只能把躯干画成正面、把腿画成侧视劈开 —— 用户报的
+            #    "走路朝向怎么是侧着的"就是这么来的。正视里抬脚靠三样东西表达：
+            #    脚离地、脚在画布上更低（更靠近镜头）、以及整个身体的起伏。
+            ("NEUTRAL", "both feet flat on the ground side by side, no further apart than "
+                        "the hips, both toes pointing straight at the camera, the right "
+                        "foot having just come level with the left, the body at mid "
+                        "height, arms hanging relaxed at the sides"),
+            ("STEP", "the left foot lifts clear of the ground and swings towards the "
+                     "camera — draw it slightly LOWER on the canvas than the planted right "
+                     "foot, still directly under the left hip and never outside the body's "
+                     "width; the whole body one or two pixels LOWER than in the neutral "
+                     "cell; the left arm swings back and the right arm swings forward"),
+            ("STRIDE", "the left foot is at the near end of its swing, at its lowest on the "
+                       "canvas and overlapping the right shin, the right leg straight and "
+                       "carrying the full weight, the body at its LOWEST point, both toes "
+                       "still pointing at the camera and the feet no wider apart than the "
+                       "hips, the shoulders level and square to the camera"),
             # 第四拍让 8 帧（每半 4 帧）也走"只挑不插"，不必再生成
             # "NEUTRAL→STEP 约 33%" 那种模型画不出来的插值描述。
-            ("RECOVER", "the right foot swings forward off the ground on its way to meet "
-                        "the left, the left foot still planted, the arms swinging back "
+            ("RECOVER", "the left foot plants flat again and the right foot lifts clear of "
+                        "the ground to start its own swing, the whole body at its HIGHEST "
+                        "point riding over the planted left leg, the arms swinging back "
                         "towards neutral"),
         ),
         beats=_beats(
@@ -289,6 +304,91 @@ POSE_CYCLES: dict[str, PoseCycle] = {
 FRONTAL_DIRECTIONS = frozenset({"down", "up"})
 
 
+#: 按移动形态改写的节拍。只写**需要改**的动作，其余回落 ``POSE_CYCLES``。
+#:
+#: 这一层的存在理由很具体：``walk`` 的节拍句句写"左脚 / 右脚"，
+#: 对一团没有腿的史莱姆是灾难 —— 实测它的 idle / attack / hurt / death 都是
+#: 无腿圆团，唯独 walk 被模型**长出了两条腿和脚**。同一个角色四个动作一个样、
+#: 第五个换了物种，这就是用户报的"形象不统一"。
+#:
+#: 修不了措辞就得换节拍：没有腿的角色走路靠压缩—弹跳，漂浮的角色靠上下浮沉，
+#: 四足的角色靠对角腿交替。写的是它**真有**的部件，模型就不必现编。
+LOCOMOTION_CYCLES: dict[str, dict[str, PoseCycle]] = {
+    "legless": {
+        # 弹跳是完整周期，不是左右两个半周期 —— 没有腿就没有"另一边"可换。
+        "walk": PoseCycle(
+            beats=_beats(
+                ("SQUASH", "the body compresses down and spreads wide, its base flattened "
+                           "against the ground, the top squashed low, gathering to push off"),
+                ("LAUNCH", "the body stretches tall and narrow as it pushes off, the base "
+                           "lifting clear of the ground, the whole shape leaning forward"),
+                ("FLOAT", "the whole body is off the ground at the top of the hop, rounded "
+                          "and slightly stretched, no part of it touching the ground"),
+                ("LAND", "the body meets the ground again and its base spreads wide on "
+                         "impact, the top still rounded, a shallow rebound"),
+            ),
+        ),
+    },
+    "floating": {
+        "walk": PoseCycle(
+            beats=_beats(
+                ("LOW", "the body hangs at the lowest point of its drift, whatever trails "
+                        "beneath it gathered close underneath"),
+                ("RISE", "the body drifts upward, what trails beneath stretching down and "
+                         "lagging behind the body"),
+                ("HIGH", "the body is at the top of its float, what trails beneath at its "
+                         "most stretched and thinnest"),
+                ("SETTLE", "the body sinks back down, what trails beneath curling back up "
+                           "towards it"),
+            ),
+        ),
+    },
+    "quadruped": {
+        "walk": PoseCycle(
+            half_cycle=True,
+            frontal_beats=_beats(
+                # 同样一个"前"字都不能写，理由见双足那套的注释。
+                # 和双足那一拍同理：描述里必须带左右，否则左右互换之后与原文
+                # 一字不差，与 "no two cells may be identical" 直接冲突。
+                ("NEUTRAL", "all four legs directly under the body, the front-right paw "
+                            "having just come level with the front-left, the paws no wider "
+                            "apart than the chest, the body at mid height, head square to "
+                            "the camera"),
+                ("STEP", "the front-left paw lifts clear of the ground and swings towards "
+                         "the camera — drawn slightly LOWER on the canvas than the planted "
+                         "front-right paw, still under its own shoulder; the body one or "
+                         "two pixels LOWER; the head staying level"),
+                ("STRIDE", "the front-left paw is at the near end of its swing, at its "
+                           "lowest on the canvas and overlapping the front-right leg, the "
+                           "body at its LOWEST point, the paws no wider apart than the "
+                           "chest, the shoulders level and square to the camera"),
+                ("RECOVER", "the front-left paw plants again and the front-right paw lifts "
+                            "clear of the ground to start its own swing, the body at its "
+                            "HIGHEST point, returning towards neutral"),
+            ),
+            beats=_beats(
+                ("REACH", "the front-left and rear-right legs reach forward together while "
+                          "the front-right and rear-left legs push back, the spine level"),
+                ("PLANT", "the front-left paw plants and takes the weight, the body at its "
+                          "lowest, the head dipping slightly"),
+                # 同样必须带左右：这一拍原本一个方位词都没有，镜像后与自己重复。
+                ("SUSPEND", "the diagonal pairs swap through underneath the body, all four "
+                            "legs gathered under the chest with the front-left leg passing "
+                            "inside the front-right, the body at mid height"),
+                ("LIFT", "the body is at its highest, pushing off the rear-left leg, the "
+                         "front-right leg reaching forward"),
+            ),
+        ),
+    },
+}
+
+
+def cycle_for(action: str, locomotion: str = "biped") -> PoseCycle | None:
+    """按移动形态取内置节拍。没有专用版本就回落通用版本。"""
+    override = LOCOMOTION_CYCLES.get(locomotion, {}).get(action)
+    return override if override is not None else POSE_CYCLES.get(action)
+
+
 def cycle_from_beats(
     beats: Sequence[tuple[str, str]], kind: str | None = None
 ) -> PoseCycle:
@@ -317,6 +417,7 @@ def pose_sequence(
     frames: int,
     direction: str | None = None,
     cycle: PoseCycle | None = None,
+    locomotion: str = "biped",
 ) -> list[str]:
     """返回 ``frames`` 条**互不相同**的逐帧姿势描述。
 
@@ -327,7 +428,7 @@ def pose_sequence(
     两者都没有就报错而不是退回泛泛描述。
     """
     if cycle is None:
-        cycle = POSE_CYCLES.get(action)
+        cycle = cycle_for(action, locomotion)
     if cycle is None:
         raise PlanError(
             f"动作 {action!r} 没有姿势模板，也没有给节拍。"
@@ -361,6 +462,7 @@ def numbered_poses(
     cols: int,
     direction: str | None = None,
     cycle: PoseCycle | None = None,
+    locomotion: str = "biped",
 ) -> str:
     """把姿势序列排成带行列号的清单，直接嵌进 prompt。
 
@@ -370,7 +472,9 @@ def numbered_poses(
     ``direction`` 透传给 :func:`pose_sequence` —— 正面与侧面用的是两套步态。
     """
     lines = []
-    for index, beat in enumerate(pose_sequence(action, frames, direction, cycle)):
+    for index, beat in enumerate(
+        pose_sequence(action, frames, direction, cycle, locomotion)
+    ):
         col, row = index % cols + 1, index // cols + 1
         lines.append(f"Cell {index + 1} (row {row}, column {col}): {beat}")
     return "\n".join(lines)

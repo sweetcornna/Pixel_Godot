@@ -22,7 +22,8 @@ from ..constants import (
     Direction,
 )
 from ..models.job import Job, JobKind, JobStatus, JobTable, make_job_id
-from ..models.request import AnimationSpec, AssetRequest
+from ..models.pack import input_fingerprint
+from ..models.request import STATIC_ASSET_TYPES, AnimationSpec, AssetRequest
 from ..processing.background import BackgroundDecision, resolve_key_color
 from .grid_layout import GridLayout, grid_for_frames, seed_layout
 
@@ -222,11 +223,18 @@ def _plan_animation(
     )
 
 
-def plan_request(request: AssetRequest, existing: JobTable | None = None) -> PlanResult:
+def plan_request(
+    request: AssetRequest,
+    existing: JobTable | None = None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> PlanResult:
     """把请求编译为任务 DAG。
 
     传入 ``existing`` 时按 ID 合并 —— 已完成的任务保留其状态，不会被打回 planned。
-    这是断点续跑的基础。
+    这是断点续跑的基础。静态任务的 provider/model 会参与输入指纹；当前未传时使用
+    稳定占位值，后续 CLI/pipeline 应传入实际后端。
     """
     table = existing if existing is not None else JobTable(asset_id=request.asset_id)
     if table.asset_id != request.asset_id:
@@ -241,26 +249,48 @@ def plan_request(request: AssetRequest, existing: JobTable | None = None) -> Pla
         requested=request.background.color,
         fallbacks=request.background.fallback_colors,
         conflict_hint=request.background.conflict_hint,
+        palette=request.style.palette_colors or (),
     )
     if background.downgraded:
         warnings.append(background.explain())
 
-    # 种子图：所有动画的身份基准，也是唯一的人工闸门。
-    seed_id = make_job_id(request.asset_id, JobKind.SEED)
-    seed_grid = seed_layout()
-    table.add(
-        Job(
-            id=seed_id,
-            asset_id=request.asset_id,
-            kind=JobKind.SEED,
-            physical_size=seed_grid.size,
-        )
-    )
+    animation_specs = request.animation_list()
+    animations: tuple[PlannedAnimation, ...] = ()
 
-    animations = tuple(
-        _plan_animation(request, spec, seed_id, table, warnings)
-        for spec in request.animation_list()
-    )
+    if request.asset_type in STATIC_ASSET_TYPES and not animation_specs:
+        static_id = make_job_id(request.asset_id, JobKind.STATIC)
+        static_layout = seed_layout()
+        fingerprint = input_fingerprint(
+            request,
+            provider or "<default-provider>",
+            model or "<default-model>",
+        )
+        table.add(
+            Job(
+                id=static_id,
+                asset_id=request.asset_id,
+                kind=JobKind.STATIC,
+                physical_size=static_layout.size,
+                input_fingerprint=fingerprint,
+            )
+        )
+    else:
+        # 种子图：所有动画的身份基准，也是唯一的人工闸门。
+        seed_id = make_job_id(request.asset_id, JobKind.SEED)
+        seed_grid = seed_layout()
+        table.add(
+            Job(
+                id=seed_id,
+                asset_id=request.asset_id,
+                kind=JobKind.SEED,
+                physical_size=seed_grid.size,
+            )
+        )
+
+        animations = tuple(
+            _plan_animation(request, spec, seed_id, table, warnings)
+            for spec in animation_specs
+        )
 
     _collect_advisories(request, animations, warnings)
 
