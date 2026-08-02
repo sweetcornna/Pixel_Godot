@@ -21,7 +21,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 4 | 种子图与动画网格流水线 · Prompt Compiler · 人工闸门 | ✅ 完成 |
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
-| 7 | 道具、特效与批量任务 | 🚧 静态家族已收官（`potion_pack` / `weapon_pack` / `environment_pack` + `create-asset`）；动画类 pack 未开工，Sprint 7 未完成 |
+| 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
 
 ### 未达标项
 
@@ -78,31 +78,55 @@ uv run pixel-asset export  outputs/knight_01               # Godot + Generic JSO
 **人工闸门不要跳过。** seed 是所有动画的身份基准，它不对则后续动画全部作废重来 ——
 所以 `create-animation` 在 seed 未获批准时会直接拒绝执行。
 
-### 静态资产 Pack
+### 资产 Pack
 
-一批共享约束的静态资产使用 pack YAML：每个条目都是独立的无动画静态资产，共享
-`style` / `background` / `export` 和显式 `palette.colors`。三种 pack **共用同一份**
+一批共享约束的资产使用 pack YAML：条目之间共享 `style` / `background` / `export`
+和显式 `palette.colors`。五种 pack **共用同一份**
 [`schemas/asset-pack.schema.json`](schemas/asset-pack.schema.json)，
 展开成哪种资产类型由 `pack_type` 映射表决定：
 
-| `pack_type` | 展开的资产类型 | 示例 |
-|---|---|---|
-| `potion_pack` | `pickup` | [`examples/potion_pack.yaml`](examples/potion_pack.yaml) |
-| `weapon_pack` | `weapon` | [`examples/weapon_pack.yaml`](examples/weapon_pack.yaml) |
-| `environment_pack` | `environment_object` | [`examples/environment_pack.yaml`](examples/environment_pack.yaml) |
+| `pack_type` | 展开的资产类型 | 动画 | 示例 |
+|---|---|:---:|---|
+| `potion_pack` | `pickup` | — | [`examples/potion_pack.yaml`](examples/potion_pack.yaml) |
+| `weapon_pack` | `weapon` | — | [`examples/weapon_pack.yaml`](examples/weapon_pack.yaml) |
+| `environment_pack` | `environment_object` | — | [`examples/environment_pack.yaml`](examples/environment_pack.yaml) |
+| `spell_bundle` | `spell` | ✅ | [`examples/spell_bundle.yaml`](examples/spell_bundle.yaml) |
+| `combat_bundle` | `character` | ✅ | [`examples/combat_bundle.yaml`](examples/combat_bundle.yaml) |
 
-加一种静态 pack 只需在映射表里加一行。pack 中不要写 `model`；pack 不选择模型；
-运行时使用 Config 解析后的有效 `model`（当前默认 `gpt-image-2`），
-仍可按既有配置优先级覆盖。单资产失败不会取消其余资产，同一 pack 可恢复续跑；
-完成后按 `asset_id` 逐项审核和导出。
+加一种 pack 只需在映射表里加一行。`shared.animations` 是两类 pack 的分界：
+动画 bundle **必须**声明它（整包共用同一组动作），静态 pack **必须**省略。
+`combat_bundle` 的动作可以只写 `name`，帧数 / fps / loop 走内置动作缺省值。
+
+pack 中不要写 `model`；pack 不选择模型；运行时使用 Config 解析后的有效 `model`
+（当前默认 `gpt-image-2`），仍可按既有配置优先级覆盖。单资产失败不会取消其余资产，
+同一 pack 可恢复续跑；完成后按 `asset_id` 逐项审核和导出。
 
 ```bash
 uv run pixel-asset plan examples/potion_pack.yaml --save        # 自动识别 pack，核对批次计划并落盘
-uv run pixel-asset create-asset-pack examples/potion_pack.yaml  # 执行整包，无 seed/动画批准闸门
+uv run pixel-asset create-asset-pack examples/potion_pack.yaml  # 静态 pack：一条命令跑完
 uv run pixel-asset create-asset-pack examples/potion_pack.yaml --retry-failed   # 只重试失败的资产
 uv run pixel-asset export outputs/health_potion -t godot        # 按资产目录导出
 uv run pixel-asset export mana_potion -t godot                  # 或按 asset_id 导出
 ```
+
+**动画 bundle 要跑两遍 —— 这不是缺陷，是 seed 人工闸门。** 第一遍只生成各资产的
+canonical seed 并停在 `awaiting_approval`（同时写好 contact sheet 供你看图），
+逐个批准后**重跑同一条命令**即续跑进动画：
+
+```bash
+uv run pixel-asset plan examples/combat_bundle.yaml --save
+uv run pixel-asset create-asset-pack examples/combat_bundle.yaml     # 第一遍：停在 seed 闸门
+uv run pixel-asset create-animation --asset knight_01 \
+    --action attack --direction down --approve-seed                  # 看完图再批准
+uv run pixel-asset create-asset-pack examples/combat_bundle.yaml     # 第二遍：跑完全部动作
+```
+
+等待批准**不算失败**，也不消耗动画调用；`plan` 会把 seed 与动画的调用数分列，
+因为动画 bundle 不再是"资产数 = 调用数"（一个角色 × 3 个动作 × 4 个方向 = 13 次）。
+
+跨动作缩放基准由协调器负责收敛：增量生成看不到未来的动作，基准只能边走边顶替，
+批量跑完若发生过顶替，协调器会自动重跑一次本地 `process` 把全部动作统一到新基准
+（**零 API 调用**），并在 `pack-summary` 里记一笔"因基准顶替重跑了处理"。
 
 **批量执行前必须先 `plan --save`。** `create-asset-pack` 会逐个核对规划指纹，
 缺少已保存任务表、或指纹与当前请求不一致时直接拒绝执行 ——
@@ -120,10 +144,7 @@ uv run pixel-asset create-asset requests/rusty_key.yaml   # 生成 → 处理 �
 （与 `create-character` 同口径）。动画请求会被拒收并指向 `create-character`。
 
 > `requests/rusty_key.yaml` 是你自己写的单资产 request（`init` 会建好 `requests/` 目录）；
-> `examples/` 下目前只有角色示例与三份 pack 示例。
-
-> `potion_pack` 与 `weapon_pack` 已完成，`environment_pack` 已实现、正在收口验收。
-> 动画类 pack（`spell_bundle` / `combat_bundle`）尚未开工，整个 Sprint 7 未完成。
+> `examples/` 下目前只有角色示例与五份 pack 示例。
 
 `plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
 键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**
@@ -144,7 +165,7 @@ uv run pixel-asset create-asset requests/rusty_key.yaml   # 生成 → 处理 �
 | `create-character <request.yaml>` | 生成 canonical seed | ✅ | ✅ |
 | `create-animation --asset A --action X --direction D` | 生成完整动作网格 | ✅ | ✅ |
 | `create-asset <request.yaml>` | 单个静态资产完整链：生成 → 处理 → 验证 → 导出 | ✅ | ✅ |
-| `create-asset-pack <pack.yaml>` | 批量生成共享约束的静态资产（`pickup` / `weapon` / `environment_object`） | ✅ | ✅ |
+| `create-asset-pack <pack.yaml>` | 批量生成共享约束的一组资产（静态三种 + 动画 `spell_bundle` / `combat_bundle`） | ✅ | ✅ |
 | `import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ | ✅ |
 | `interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ | ✅ |
 | `validate <outputs/A>` | 运行验证引擎 | ❌ | ✅ |

@@ -75,7 +75,9 @@ export PIXEL_ASSET_API_KEY="…"      # 也接受 OPENAI_API_KEY
 | "给他加个走路动画" | `create-animation --asset X --action walk --direction down` |
 | "四个方向都要" | 对每个 direction 各跑一次 `create-animation` |
 | "五种动作都要" | idle / walk / attack / hurt / death 逐一执行 |
-| "做一批药水 / 一套药水 pickup" | 写 `potion_pack` YAML（不写 `model`）→ `plan pack.yaml` → 用户确认 → `create-asset-pack pack.yaml` → 逐 `asset_id` 审核 / 导出 |
+| "做一批药水 / 武器 / 场景物件" | 写对应静态 pack YAML（不写 `model`）→ `plan pack.yaml` → 用户确认 → `create-asset-pack pack.yaml` → 逐 `asset_id` 审核 / 导出 |
+| "做一组法术特效" | 写 `spell_bundle` YAML → 同上，但要跑**两遍**：第一遍停 seed 闸门，逐个批准后重跑同一条命令 |
+| "给这个角色做整套战斗动作" | 写 `combat_bundle` YAML（`attack` / `hurt` / `death`）→ 同 `spell_bundle` 的两遍流程 |
 | "续跑刚才失败的药水" | 用同一份 pack YAML 再跑 `create-asset-pack pack.yaml`；已完成资产去重，只续跑未完成/可重试资产 |
 | "帮我看看有没有问题" | `validate outputs/X` |
 | "颜色不对 / 背景没抠干净 / 位置歪了" | 先 `process`（离线重跑），再 `validate` |
@@ -107,24 +109,49 @@ seed 不对则后续生成的全部动画都要作废重来。把 seed 图展示
 **批量生成多个角色时，先完整跑通一个。** 确认质量达标后再批量执行 ——
 风格与调色板的问题在第一个角色上就会暴露，不要等到二十个角色都生成完才发现。
 
-### 一批药水：`potion_pack` 首纵切
+### 批量资产：五种 pack
 
-用户要「一批药水」时，不要逐个写单资产 request，也不要用 shell 循环
-拼装批次。写一份 `potion_pack` YAML：
+用户要「一批 X」时，不要逐个写单资产 request，也不要用 shell 循环拼装批次。
+写一份 pack YAML，`pack_type` 决定展开成哪种资产：
+
+| `pack_type` | 展开成 | 动画 |
+|---|---|:---:|
+| `potion_pack` | `pickup` | — |
+| `weapon_pack` | `weapon` | — |
+| `environment_pack` | `environment_object` | — |
+| `spell_bundle` | `spell` | ✅ |
+| `combat_bundle` | `character`（同一角色的多个战斗动作） | ✅ |
+
+无论哪种：
 
 - `shared` 中统一写 `style`、`background`、`export` 与显式 `palette.colors`
 - `assets` 中每项只写唯一 `asset_id` 与具体描述
 - **不要写 `model`**；模型统一从 Config 读取
-- 每项都是独立静态 `pickup`，不是 canonical seed，也不是动画，因此没有 seed 人工批准闸门
+- 动画 bundle 还要写 `shared.animations`（整包共用的动作集）；静态 pack **必须省略**它
 
-执行顺序固定为：
+静态 pack 一条命令跑完：
 
 ```bash
-pixel-asset plan potions.yaml
+pixel-asset plan potions.yaml --save
 pixel-asset create-asset-pack potions.yaml
 pixel-asset export outputs/health_potion --target godot
 pixel-asset export mana_potion --target godot
 ```
+
+**动画 bundle 要跑两遍 —— 不要以为第一遍没跑完是出错了。** 第一遍只生成各资产的
+canonical seed 并停在 `awaiting_approval`，这正是第 3 步的人工闸门：把 seed 图
+（或 contact sheet）展示给用户，逐个 `--approve-seed` 批准后**重跑同一条命令**续跑：
+
+```bash
+pixel-asset plan combat.yaml --save
+pixel-asset create-asset-pack combat.yaml                      # 停在 seed 闸门
+pixel-asset create-animation --asset knight_01 \
+    --action attack --direction down --approve-seed            # 用户看过图再批准
+pixel-asset create-asset-pack combat.yaml                      # 跑完全部动作
+```
+
+等待批准**不是失败**，不要当成错误去重试或改 `asset_id`。`plan` 会分列 seed 与
+动画的调用数 —— 动画 bundle 不是「资产数 = 调用数」，报成本时按分列的数字说。
 
 `plan` 之后先把资产列表、预计调用次数和共享色板告诉用户，得到批量执行确认再运行。
 生成结束后解读 `pack-summary`，列出成功、失败、跳过/去重的 `asset_id`；再按每个
@@ -135,8 +162,9 @@ pixel-asset export mana_potion --target godot
 重跑 `create-asset-pack`：输入去重会保留已完成资产，只续跑未完成或可重试资产；
 不要拆掉 pack 逐个重建，也不要为了续跑修改 `asset_id`。
 
-当前范围仅是 `potion_pack` 首纵切；不要把 `weapon_pack`、`spell_bundle` 或整个
-Sprint 7 说成已经可用。
+动画 bundle 跑完后，若日志或 `pack-summary` 里出现「因基准顶替重跑了处理」，
+那是协调器自动做的**本地**统一处理（零 API 调用），不是错误，也不需要重跑生成 ——
+如实告诉用户图被重新处理过即可。
 
 ---
 
@@ -304,6 +332,7 @@ Key 相关问题一律用 `doctor` 排查。
 - ❌ 不要跳过 `plan` 直接执行 pack
 - ❌ 不要在 pack 中写 `model`
 - ❌ 不要因单资产失败就重做整个 pack —— 用同一输入续跑
+- ❌ 不要把动画 bundle 的 `awaiting_approval` 当成失败 —— 那是 seed 闸门，批准后重跑同一条命令
 - ❌ 不要在参数错误时反复重试 —— 先修正请求
 - ❌ 不要猜 `mirroring.enabled`
 - ❌ 不要把生成失败当成 API 故障 —— 多数情况是模型画错了，走修复流程

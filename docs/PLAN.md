@@ -636,7 +636,7 @@ MCP 仍保持少量高层语义工具。详见 [ADR-005 修订](adr/ADR-005-cli-
 | `pixel-asset create-character <request.yaml>` | 生成 canonical seed | ✅ |
 | `pixel-asset create-animation --asset A --action X --direction D` | 生成动作网格 | ✅ |
 | `pixel-asset create-asset <request.yaml>` | 生成单个静态资产（生成 → 处理 → 验证 → 导出） | ✅ |
-| `pixel-asset create-asset-pack <pack.yaml>` | 生成一组共享约束的静态资产 | ✅ |
+| `pixel-asset create-asset-pack <pack.yaml>` | 生成一组共享约束的资产（静态 pack 一遍跑完；动画 bundle 停 seed 闸门，批准后重跑同一条命令续跑） | ✅ |
 | `pixel-asset import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ |
 | `pixel-asset interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ |
 | `pixel-asset process <outputs/A>` | **仅重跑本地处理** | ❌ |
