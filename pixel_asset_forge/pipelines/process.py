@@ -125,7 +125,7 @@ def _base_options(request: AssetRequest | None, manifest: AssetManifest | None) 
         options.max_colors = request.style.max_colors
 
     if manifest is not None:
-        options.key_color = manifest.background.color_used
+        options.key_color = manifest.background.key_color
         options.target_size = (manifest.canvas.width, manifest.canvas.height)
         options.max_colors = manifest.palette.max_colors
 
@@ -184,7 +184,7 @@ def _process_static(
         else None
     )
     options = ProcessOptions(
-        key_color=manifest.background.color_used,
+        key_color=manifest.background.key_color,
         key_threshold=existing.key_threshold if existing is not None else None,
         target_size=inner_size,
         max_colors=manifest.palette.max_colors,

@@ -23,7 +23,13 @@ from ..constants import (
     split_animation_key,
 )
 from ..errors import PlanError
-from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation, StaticImageInfo
+from ..models.manifest import (
+    AssetManifest,
+    DerivedAnimation,
+    GeneratedAnimation,
+    StaticImageInfo,
+    TilesetInfo,
+)
 from ..models.request import STATIC_ASSET_TYPES
 from ..models.validation import (
     ALL_CHECK_IDS,
@@ -59,6 +65,7 @@ from .metrics import (
     transparent_rgb_residue,
 )
 from .mirror_flip import detect_mirror_flips
+from .seamless import measure_seamless
 
 #: 相邻帧差异低于此值即认为"几乎没动"。整组都低于它 → static_animation。
 STATIC_THRESHOLD = 0.01
@@ -433,6 +440,31 @@ def validate_derived(key: str, entry: DerivedAnimation) -> list[Check]:
     ]
 
 
+#: tileset 上真正会跑的检查。其余的在报告里显式记为不适用，
+#: 理由同静态家族：不能把"没运行"悄悄呈现成"零跳过"。
+_TILESET_APPLICABLE_CHECKS: frozenset[CheckId] = frozenset(
+    {"artifact_exists", "frame_size", "palette_membership", "tile_seam", "tile_border"}
+)
+
+
+def _complete_tileset_checks(checks: list[Check]) -> list[Check]:
+    """tileset 报告同样必须列全防线。"""
+    present = {check.id for check in checks}
+    for check_id in ALL_CHECK_IDS:
+        if check_id in present or check_id in _TILESET_APPLICABLE_CHECKS:
+            continue
+        checks.append(
+            Check.make(
+                check_id,
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="not_applicable",
+                message="tileset 没有动画帧序列，也不做去背景，此检查不适用",
+            )
+        )
+    return checks
+
+
 def _complete_static_checks(checks: list[Check]) -> list[Check]:
     """静态报告必须显式列出全部防线，不能把未运行误报成零跳过。"""
     present = {check.id for check in checks}
@@ -478,6 +510,108 @@ def _static_source_quality(
     layout = GridLayout(frames=1, cols=1, rows=1, cell=(width, height))
     overflow = detect_overflow(cleaned[:, :, 3] > 0, layout)
     return key_residue, overflow
+
+
+#: 无缝判据的工程默认值。**未用真实 tile 校准**（同 §9.1 的口径）。
+#: 四张合成 tile 实测分离度：可平铺 0.96/0.19，渐变 31.67，带边框 11.69，暗角 11.84 ——
+#: 两侧余量都在一个量级以上，先用着。
+TILE_SEAM_RATIO_MAX = 3.0
+TILE_BORDER_DEVIATION_MAX = 2.0
+
+
+def validate_tileset(
+    root: Path,
+    entry: TilesetInfo,
+    *,
+    palette: list[str],
+) -> list[Check]:
+    """验证整套 tile：尺寸、产物、以及两条无缝判据。
+
+    两条判据各抓一种失败，缺一不可（PLAN §8.1）：``tile_seam`` 抓"对边接不上"，
+    ``tile_border`` 抓"带边框 / 暗角" —— 后者接缝处是连续的，接缝判据对它恒判通过。
+    """
+    checks: list[Check] = []
+    expected = entry.tile_size
+    for tile_id, tile in sorted(entry.tiles.items()):
+        image_path = root / tile.image
+        if not image_path.is_file():
+            checks.append(
+                Check.make(
+                    "artifact_exists",
+                    tile_id,
+                    CheckResult.FAIL,
+                    measured=False,
+                    threshold=True,
+                    message=f"tile 成品缺失：{image_path}",
+                )
+            )
+            continue
+
+        image = np.array(Image.open(image_path).convert("RGBA"))
+        actual = (image.shape[1], image.shape[0])
+        checks.append(
+            Check.make(
+                "frame_size",
+                tile_id,
+                CheckResult.PASS if actual == expected else CheckResult.FAIL,
+                message=(
+                    None
+                    if actual == expected
+                    else f"tile 尺寸 {actual} ≠ {expected}，整张地图的网格会错位"
+                ),
+            )
+        )
+
+        measured = measure_seamless(image)
+        seam = measured.worst_seam_ratio
+        checks.append(
+            Check.make(
+                "tile_seam",
+                tile_id,
+                CheckResult.PASS if seam <= TILE_SEAM_RATIO_MAX else CheckResult.FAIL,
+                measured=round(seam, 3),
+                threshold=TILE_SEAM_RATIO_MAX,
+                message=(
+                    None
+                    if seam <= TILE_SEAM_RATIO_MAX
+                    else "对边接不上：平铺后每隔一格会有一道可见的突变"
+                ),
+            )
+        )
+        border = measured.border_deviation
+        checks.append(
+            Check.make(
+                "tile_border",
+                tile_id,
+                CheckResult.PASS
+                if border <= TILE_BORDER_DEVIATION_MAX
+                else CheckResult.FAIL,
+                measured=round(border, 3),
+                threshold=TILE_BORDER_DEVIATION_MAX,
+                message=(
+                    None
+                    if border <= TILE_BORDER_DEVIATION_MAX
+                    else "整圈边缘明显不同于中心（边框或暗角）：平铺后是一片规则网格线"
+                ),
+            )
+        )
+        if palette:
+            outside = palette_of([image]) - {hex_to_rgb(color) for color in palette}
+            checks.append(
+                Check.make(
+                    "palette_membership",
+                    tile_id,
+                    CheckResult.PASS if not outside else CheckResult.FAIL,
+                    measured=len(outside),
+                    threshold=0,
+                    message=(
+                        None
+                        if not outside
+                        else f"{len(outside)} 个颜色不属于整套共享 palette"
+                    ),
+                )
+            )
+    return checks
 
 
 def validate_static_image(
@@ -764,7 +898,15 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
         for spec in request.animation_list():
             request_frames[spec.name] = spec.frames
 
-    if manifest.static_image is not None:
+    if manifest.tileset is not None:
+        report.checks.extend(
+            _complete_tileset_checks(
+                validate_tileset(
+                    root, manifest.tileset, palette=manifest.palette.colors
+                )
+            )
+        )
+    elif manifest.static_image is not None:
         report.checks.extend(
             validate_static_image(
                 root,
@@ -772,7 +914,7 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
                 expected_size=expected_size,
                 palette=manifest.palette.colors,
                 max_colors=manifest.palette.max_colors,
-                key_color=manifest.background.color_used,
+                key_color=manifest.background.key_color,
                 antialiasing=antialiasing,
             )
         )
@@ -810,7 +952,7 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
                 expected_frames=expected,
                 expected_size=expected_size,
                 max_colors=manifest.palette.max_colors,
-                key_color=manifest.background.color_used,
+                key_color=manifest.background.key_color,
                 locomotion=locomotion,
             )
         )

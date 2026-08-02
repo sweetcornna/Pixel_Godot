@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..constants import Direction
-from ..models.request import AssetRequest
+from ..models.request import AssetRequest, TileSpec
 from ..planning.grid_layout import GridLayout
 from .negative_rules import negative_block
 from .poses import FRONTAL_DIRECTIONS, PoseCycle, cycle_from_beats, numbered_poses
@@ -248,6 +248,56 @@ def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledP
     )
     text = "\n\n".join(blocks)
     return CompiledPrompt(text=text, key_color=key_color, size=layout.size)
+
+
+def compile_tile_prompt(request: AssetRequest, tile: TileSpec) -> CompiledPrompt:
+    """一块 tile 的 prompt。
+
+    没有 ``key_color`` —— tile 满幅不透明，没有背景要抠（PLAN §8.1）。
+
+    这里的每条否定约束都对应验证侧的一条判据，两边说的是同一件事：
+    "无边框 / 无暗角 / 不要居中构图"对着 ``border_deviation``，
+    "左缘接右缘、上缘接下缘"对着 ``seam_ratio``。光照也必须压平 ——
+    请求里的 ``lighting`` 对 tile 会画出一道系统性的明暗梯度，那正是暗角。
+    """
+    from ..planning.grid_layout import seed_layout
+
+    layout = seed_layout()
+    colors = request.style.palette_colors
+    palette = (
+        "Explicit palette — use only these colours: " + ", ".join(colors) + "."
+        if colors is not None
+        else f"Use at most {request.style.max_colors} colours."
+    )
+    blocks = [
+        "Crisp pixel art of one seamless repeating ground texture that fills the "
+        "entire square canvas edge to edge.",
+        f"Material: {tile.description.strip()}",
+        f"Set dressing: {request.description.strip()}",
+        (
+            "Tiling: the texture must repeat seamlessly. The content at the left edge "
+            "must continue into the right edge, and the content at the top edge must "
+            "continue into the bottom edge, with no visible join."
+        ),
+        (
+            "Lighting: completely even ambient light across the whole square. "
+            "No light direction, no gradient, no vignette, no darkened corners or edges, "
+            "no drop shadow."
+        ),
+        (
+            f"Style: crisp pixel art, {_SHADING[request.style.shading]}, "
+            f"hard pixel edges with no anti-aliasing."
+        ),
+        palette,
+        (
+            "Exclude any border, frame, outline or margin around the square; "
+            "any single large centred object; people, creatures, text, labels, "
+            "watermarks, photorealism, soft edges, blur and anti-aliasing."
+        ),
+    ]
+    return CompiledPrompt(
+        text="\n\n".join(blocks), key_color="", size=layout.size
+    )
 
 
 def compile_seed_prompt(request: AssetRequest, *, key_color: str) -> CompiledPrompt:

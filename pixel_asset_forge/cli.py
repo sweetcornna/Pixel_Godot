@@ -57,6 +57,7 @@ from .pipelines import next_pending, run_export, run_interpolate, run_process
 from .pipelines.asset_pack import PackRunControl, run_asset_pack
 from .pipelines.static_asset import create_static_asset as run_create_static_asset
 from .pipelines.static_asset import validate_and_export_static_asset
+from .pipelines.tileset import create_tileset as run_create_tileset
 from .pipelines.validation import run_validation
 from .planning import layout_for_frames, plan_pack, plan_request, seed_layout
 from .repair import execute_plan as execute_repairs
@@ -491,6 +492,52 @@ def create_asset(
     console.print(table)
     for warning in result.warnings:
         console.print(f"[yellow]![/yellow] {warning}")
+
+
+@app.command("create-tileset")
+def create_tileset_command(
+    request_file: Annotated[Path, typer.Argument(help="tileset Asset Request YAML")],
+    config_path: Annotated[
+        Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
+    regenerate: Annotated[
+        bool, typer.Option("--regenerate", help="重新生成全部 tile（旧图归档）")
+    ] = False,
+) -> None:
+    """生成一整套 tile：逐块生成 → 整套统一处理，停在 processed 等验证。
+
+    每块 tile 一次 API 调用。整套共用一份调色板，所以处理必须等全部原图齐了
+    再一起做 —— 中途失败重跑同一条命令即可，已取回的 tile 不会重复计费。
+    """
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
+    try:
+        request = load_request(request_file)
+        if request.tileset is None:
+            raise RequestValidationError(
+                f"{request_file}：create-tileset 只接受 asset_type: tileset 的请求。"
+                f"单张静态资产请用 `pixel-asset create-asset <request.yaml>`。"
+            )
+        result = run_create_tileset(request_file, config, regenerate=regenerate)
+    except PixelAssetError as exc:
+        _fail(exc)
+        raise  # pragma: no cover
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("资产", result.asset_id)
+    table.add_row("tile", f"{len(result.tile_ids)} 块 · {'×'.join(map(str, result.tile_size))}")
+    table.add_row("共享色板", f"{len(result.palette)} 色")
+    table.add_row("本次调用", f"{result.generated} 次")
+    table.add_row("目录", str(config.asset_dir(result.asset_id) / "frames" / "tiles"))
+    console.print(table)
+    console.print(
+        "\n[dim]下一步：validate 查无缝平铺。API 返回成功 ≠ tile 拼得起来。[/dim]"
+    )
 
 
 @app.command("create-asset-pack")
@@ -1148,7 +1195,12 @@ def _render_validation(report: Any, plan: Any, asset_dir: Path) -> None:
             "中低严重度告警可能是误报 —— 以人眼判断为准（PLAN §9.1）"
         )
 
-    skipped_order = [c for c in report.checks if c.id == "frame_order_continuity"]
+    # 只对真有帧序列的资产提这条 —— 让 tileset 用户去看不存在的 GIF 是纯噪音。
+    skipped_order = [
+        c
+        for c in report.checks
+        if c.id == "frame_order_continuity" and c.skip_reason != "not_applicable"
+    ]
     if skipped_order:
         console.print(
             "[yellow]![/yellow] 帧序是否被打乱**无法自动检测**（实测判据不可区分）。"

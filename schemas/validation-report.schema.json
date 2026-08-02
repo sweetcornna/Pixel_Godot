@@ -126,7 +126,9 @@
             "palette_overflow",
             "duplicate_frame_exact",
             "duplicate_frame_approx",
-            "static_animation"
+            "static_animation",
+            "tile_seam",
+            "tile_border"
           ]
         },
         "target": {

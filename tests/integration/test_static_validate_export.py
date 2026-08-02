@@ -295,6 +295,10 @@ def test_static_report_explicitly_skips_every_animation_only_check(
         "duplicate_frame_exact",
         "duplicate_frame_approx",
         "static_animation",
+        # tileset 专属的两条无缝判据对静态资产同样不适用 —— 按本文件的既定口径
+        # 也要显式记一笔，而不是从报告里消失。
+        "tile_seam",
+        "tile_border",
     }
     assert all(check.skip_reason == "static_asset" for check in skipped)
     assert report.summary()["skipped"] == len(skipped)

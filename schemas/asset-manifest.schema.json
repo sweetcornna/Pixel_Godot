@@ -122,17 +122,39 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "mode",
-        "color_requested",
-        "color_used",
-        "fallback_stage"
+        "mode"
+      ],
+      "allOf": [
+        {
+          "description": "opaque 表示满幅不透明、从未做过去背景（tileset 走这条），键控三件套对它无意义；其余模式必须记全，否则 process 无法离线复现。",
+          "if": {
+            "properties": {
+              "mode": {
+                "not": {
+                  "const": "opaque"
+                }
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "color_requested",
+              "color_used",
+              "fallback_stage"
+            ]
+          }
+        }
       ],
       "properties": {
         "mode": {
           "enum": [
             "chroma_key",
             "transparent_model",
-            "rembg"
+            "rembg",
+            "opaque"
           ]
         },
         "color_requested": {
@@ -274,6 +296,9 @@
           "default": false
         }
       }
+    },
+    "tileset": {
+      "$ref": "#/$defs/tileset"
     }
   },
   "$defs": {
@@ -465,6 +490,51 @@
             "flip_horizontal",
             "flip_vertical"
           ]
+        }
+      }
+    },
+    "tileset": {
+      "description": "整套 tile 的产物记录。tile_size 单独记，不复用 canvas —— 两者相等只是巧合。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tile_size",
+        "tiles"
+      ],
+      "properties": {
+        "tile_size": {
+          "$ref": "#/$defs/image_size"
+        },
+        "tiles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/tile_entry"
+          }
+        }
+      }
+    },
+    "tile_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_image",
+        "image",
+        "source_hash",
+        "processed_hash"
+      ],
+      "properties": {
+        "source_image": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "image": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "source_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "processed_hash": {
+          "$ref": "#/$defs/sha256"
         }
       }
     }

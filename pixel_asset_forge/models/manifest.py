@@ -13,7 +13,14 @@ import json
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 from .. import MANIFEST_SCHEMA_VERSION, PIPELINE_VERSION
 from ..constants import ESCALATED_STAGES, FallbackStage
@@ -60,10 +67,16 @@ class AnchorInfo(_Base):
 
 
 class BackgroundInfo(_Base):
-    mode: Literal["chroma_key", "transparent_model", "rembg"]
-    color_requested: HexColor
-    color_used: HexColor
-    fallback_stage: FallbackStage
+    mode: Literal["chroma_key", "transparent_model", "rembg", "opaque"]
+    """``opaque`` 表示这张图满幅不透明，**从未做过去背景**（tileset 走这条）。
+
+    不是"抠了但没抠出东西"，而是这一步压根没执行 —— 所以下面三个字段对它无意义，
+    留空而不是填占位值。
+    """
+
+    color_requested: HexColor | None = None
+    color_used: HexColor | None = None
+    fallback_stage: FallbackStage | None = None
 
     key_threshold: float | None = Field(default=None, ge=0)
     """**种子图**的自适应色键阈值。
@@ -72,9 +85,41 @@ class BackgroundInfo(_Base):
     阈值逐图求解，不能共用一个。
     """
 
+    @model_validator(mode="after")
+    def _check_keying_fields(self) -> BackgroundInfo:
+        if self.mode == "opaque":
+            return self
+        missing = [
+            name
+            for name in ("color_requested", "color_used", "fallback_stage")
+            if getattr(self, name) is None
+        ]
+        if missing:
+            raise ValueError(f"{self.mode} 背景必须记录 {'、'.join(missing)}")
+        return self
+
+    @property
+    def key_color(self) -> HexColor:
+        """实际生效的键控色。
+
+        做成属性而不是让调用方各自处理 ``None``：会读这个值的全是动画与静态资产
+        的处理链，它们结构上必然做过去背景。真读到 opaque 说明调用路径本身错了，
+        该当场炸掉，而不是让一个 ``None`` 悄悄流到下游。
+        """
+        if self.color_used is None:
+            raise ProcessingError(
+                f"{self.mode} 背景没有键控色 —— 这条链不该走到需要键控色的地方"
+            )
+        return self.color_used
+
     @property
     def downgraded(self) -> bool:
-        """与请求色不同即说明触发了冲突降级（PLAN §2.4.1）。"""
+        """与请求色不同即说明触发了冲突降级（PLAN §2.4.1）。
+
+        没做过去背景就谈不上降级 —— opaque 恒为 False。
+        """
+        if self.color_used is None or self.color_requested is None:
+            return False
         return self.color_used.upper() != self.color_requested.upper()
 
     @property
@@ -146,6 +191,26 @@ class StaticImageInfo(_Base):
     grid_block_size: float | None = Field(default=None, gt=0)
     source_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
     processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+
+
+class TileEntry(_Base):
+    """tileset 里一块 tile 的原图与成品。"""
+
+    source_image: AssetRelativePath
+    image: AssetRelativePath
+    source_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+    processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+
+
+class TilesetInfo(_Base):
+    """整套 tile 的产物记录。
+
+    ``tile_size`` 记在这里而不是复用 ``canvas``：canvas 说的是"这个资产的画布"，
+    对 tileset 而言每块 tile 各占一格，两者恰好相等只是巧合，不该靠巧合读数。
+    """
+
+    tile_size: tuple[int, int]
+    tiles: dict[str, TileEntry] = Field(min_length=1)
 
 
 class GeneratedAnimation(_Base):
@@ -241,6 +306,7 @@ class AssetManifest(_Base):
     mirroring: MirroringInfo | None = None
     scale_profile: ScaleProfileInfo | None = None
     static_image: StaticImageInfo | None = None
+    tileset: TilesetInfo | None = None
     animations: dict[str, AnimationEntry] = Field(default_factory=dict)
     sheets: dict[str, AssetRelativePath] = Field(default_factory=dict)
     status: ManifestStatus = "planned"

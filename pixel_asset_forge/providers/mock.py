@@ -177,8 +177,47 @@ def _draw_pose(
     )
 
 
+_TILE_RE = re.compile(r"seamless repeating ground texture", re.IGNORECASE)
+
+
+def _render_tile(prompt: str, size: tuple[int, int], salt: str) -> bytes:
+    """合成一张**真的可平铺**的地面纹理。
+
+    Mock 是一等公民而不是桩（ADR-002）：合成图必须能驱动下游逻辑。tile 这条链的
+    闸门是无缝检查，所以这里不能沿用网格图那套"键控色底 + 居中主体 + 四周留白"
+    —— 那对 tile 恰恰是"带边框"，实测 border_deviation 130（阈值 2），
+    整套必然判失败，离线就走不完这条链了。
+
+    均匀噪声天然可平铺：接缝处的相邻差异与内部同分布，四周也不存在系统性的
+    明暗落差。这与"好模型该交出什么"是一致的，不是为了绕过检查。
+    """
+    width, height = size
+    rng = random.Random(hash_bytes((prompt + salt).encode("utf-8"))[:16])
+    base = _palette(rng)["body"]
+    canvas = Image.new("RGB", (width, height))
+    pixels = canvas.load()
+    assert pixels is not None
+    # 按块铺色而不是逐像素：逐像素在 1024² 上又慢又会被下采样抹平，
+    # 块状颗粒才经得起 32× 的缩小。
+    block = max(1, width // 64)
+    for by in range(0, height, block):
+        for bx in range(0, width, block):
+            shade = rng.randint(-28, 28)
+            color = tuple(max(0, min(255, channel + shade)) for channel in base)
+            for y in range(by, min(by + block, height)):
+                for x in range(bx, min(bx + block, width)):
+                    pixels[x, y] = color
+
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def render_mock_image(prompt: str, size: tuple[int, int], *, salt: str = "") -> bytes:
     """确定性地合成一张网格图。同样的 ``(prompt, size, salt)`` 必然产出同样的字节。"""
+    if _TILE_RE.search(prompt):
+        return _render_tile(prompt, size, salt)
+
     width, height = size
     cols, rows, frames = _parse_layout(prompt, size)
     key_color = _parse_key_color(prompt)

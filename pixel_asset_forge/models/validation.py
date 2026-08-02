@@ -47,6 +47,8 @@ CheckId = Literal[
     "duplicate_frame_exact",
     "duplicate_frame_approx",
     "static_animation",
+    "tile_seam",
+    "tile_border",
 ]
 
 ALL_CHECK_IDS: tuple[CheckId, ...] = (
@@ -72,6 +74,8 @@ ALL_CHECK_IDS: tuple[CheckId, ...] = (
     "duplicate_frame_exact",
     "duplicate_frame_approx",
     "static_animation",
+    "tile_seam",
+    "tile_border",
 )
 
 SkipReason = Literal[
@@ -139,6 +143,10 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     "duplicate_frame_exact": Severity.MEDIUM,
     "static_animation": Severity.MEDIUM,
     "duplicate_frame_approx": Severity.LOW,
+    # tile 拼不起来就等于整套不可用 —— 平铺后每隔一格一道缝或一条网格线，
+    # 是满屏可见的缺陷，不是"看看再说"。两条都定 FATAL。
+    "tile_seam": Severity.FATAL,
+    "tile_border": Severity.FATAL,
 }
 
 #: 本地即可修复的检查项 —— 不需要重新调用 API（PLAN §9.3）。

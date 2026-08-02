@@ -1,0 +1,46 @@
+# ============================================================
+# grass_field — 一套基础地面 tile
+#
+# tile 与其它资产的两处不同，写在这里免得照抄时踩空：
+#   1. 没有 background —— tile 满幅不透明，去背景那一步不会执行，
+#      写了这个字段会被直接拒收。
+#   2. tile_size 独立于 style.target_size —— 前者是"每块 tile 精确多大"，
+#      后者是静态资产那套"内容占画布多少"，两者不是一回事。
+#
+# 每条 description 都显式写了 "no border"：模型最常见的失败是把 tile 画成
+# 一张带边框的方形贴图，平铺后是一片规则网格线（PLAN §8.1 的 border_deviation
+# 就是为抓它写的）。
+# ============================================================
+
+schema_version: "1.0"
+asset_id: grass_field
+asset_type: tileset
+description: >-
+  A cohesive top-down ground tile family for a temperate forest map, all tiles
+  sharing one muted natural palette so they can sit side by side on one map.
+
+style:
+  perspective: top_down
+  target_size: [32, 32]
+  max_colors: 16
+  shading: two_tone
+  antialiasing: false
+
+tileset:
+  tile_size: [32, 32]
+  tiles:
+    - tile_id: grass_base
+      description: >-
+        Dense short green grass covering the whole square evenly, with a few
+        scattered small grey stones and darker grass clumps. No border.
+    - tile_id: dirt_path
+      description: >-
+        Packed brown dirt covering the whole square evenly, with fine gravel
+        speckles and faint dry cracks. No border.
+    - tile_id: shallow_water
+      description: >-
+        Calm shallow water covering the whole square evenly, with small
+        repeating ripples and a few submerged pebbles. No border.
+
+export:
+  targets: [generic-json, godot]
