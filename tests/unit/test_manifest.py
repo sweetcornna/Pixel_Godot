@@ -9,8 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
-from pixel_asset_forge.errors import ProcessingError, SchemaVersionError
+from pixel_asset_forge.errors import (
+    ProcessingError,
+    RequestValidationError,
+    SchemaVersionError,
+)
 from pixel_asset_forge.models.manifest import (
     AssetManifest,
     BackgroundInfo,
@@ -314,4 +319,82 @@ def test_corrupt_json_fails_clearly(tmp_path: Path) -> None:
     path = tmp_path / "m.json"
     path.write_text("{ not json", encoding="utf-8")
     with pytest.raises(ProcessingError):
+        AssetManifest.load(path)
+
+
+# -- 路径逃逸（审查发现的阻断项） ------------------------------------------
+#
+# 消费方全部用 `资产根 / 路径` 拼接后直接读写（process 重跑甚至先写盘、
+# 后做 relative_to 检查）。绝对路径或含 `..` 的 Manifest 等于任意文件读写，
+# 必须在模型构造与加载两个入口都被拒绝。
+
+ESCAPING_PATHS = [
+    "../escape.png",
+    "a/../../escape.png",
+    "/tmp/escape.png",
+    "..\\escape.png",
+    "C:\\escape.png",
+    "C:/escape.png",
+]
+
+
+@pytest.mark.parametrize("bad", ESCAPING_PATHS)
+def test_static_image_rejects_escaping_paths(bad: str) -> None:
+    with pytest.raises(PydanticValidationError, match="相对路径"):
+        StaticImageInfo(
+            source_image=bad,
+            image="frames/static.png",
+            requested_size=(1024, 1024),
+            actual_size=(1024, 1024),
+            key_threshold=145.0,
+            source_hash="a" * 64,
+            processed_hash="b" * 64,
+        )
+    with pytest.raises(PydanticValidationError, match="相对路径"):
+        StaticImageInfo(
+            source_image="source/static-original.png",
+            image=bad,
+            requested_size=(1024, 1024),
+            actual_size=(1024, 1024),
+            key_threshold=145.0,
+            source_hash="a" * 64,
+            processed_hash="b" * 64,
+        )
+
+
+@pytest.mark.parametrize("bad", ESCAPING_PATHS)
+def test_animation_frames_reject_escaping_paths(bad: str) -> None:
+    with pytest.raises(PydanticValidationError, match="相对路径"):
+        GeneratedAnimation(fps=10, loop=True, frames=[bad])
+
+
+def test_sheets_reject_escaping_paths() -> None:
+    with pytest.raises(PydanticValidationError, match="相对路径"):
+        make_manifest(sheets={"character": "../../sheet.png"})
+
+
+def test_loading_a_manifest_with_escaping_static_path_is_refused(tmp_path: Path) -> None:
+    """已落盘的恶意 Manifest 必须在加载即被拒 —— 而不是等消费方拼接出越界路径。"""
+    import json as _json
+
+    digest = "a" * 64
+    manifest = make_manifest(
+        asset_id="health_potion",
+        asset_type="pickup",
+        static_image=StaticImageInfo(
+            source_image="source/static-original.png",
+            image="frames/static.png",
+            requested_size=(1024, 1024),
+            actual_size=(1024, 1024),
+            key_threshold=145.0,
+            source_hash=digest,
+            processed_hash=digest,
+        ),
+    )
+    data = manifest.to_dict()
+    data["static_image"]["image"] = "../../pwned.png"
+    path = tmp_path / "asset-manifest.json"
+    path.write_text(_json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(RequestValidationError):
         AssetManifest.load(path)

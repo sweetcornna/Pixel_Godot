@@ -223,7 +223,7 @@
       "description": "Spritesheet 产物路径，相对 asset 根目录。",
       "type": "object",
       "additionalProperties": {
-        "type": "string"
+        "$ref": "#/$defs/relative_path"
       }
     },
     "status": {
@@ -276,6 +276,11 @@
       "type": "string",
       "pattern": "^#[0-9A-Fa-f]{6}$"
     },
+    "relative_path": {
+      "description": "资产目录内的相对路径。禁止绝对路径、盘符与 `..` 段 —— 消费方用 `资产根 / 路径` 直接读写，越界值等于任意文件读写。",
+      "type": "string",
+      "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
+    },
     "static_image": {
       "description": "静态资产的单张原图、处理产物与离线复现参数。",
       "type": "object",
@@ -291,10 +296,10 @@
       ],
       "properties": {
         "source_image": {
-          "type": "string"
+          "$ref": "#/$defs/relative_path"
         },
         "image": {
-          "type": "string"
+          "$ref": "#/$defs/relative_path"
         },
         "requested_size": {
           "$ref": "#/$defs/image_size"
@@ -404,7 +409,7 @@
         },
         "source_image": {
           "description": "source/ 下的原始生成图路径。永不覆盖。",
-          "type": "string"
+          "$ref": "#/$defs/relative_path"
         },
         "key_threshold": {
           "description": "本动作原图的自适应色键阈值。**阈值是逐图求解的**，因此必须逐动作记录——只在 background 上存一个资产级阈值，会让除第一张之外的所有图在 process 重跑时改变结果（ADR-004）。",
@@ -415,7 +420,7 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/relative_path"
           }
         },
         "keyframe_count": {

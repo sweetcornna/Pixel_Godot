@@ -10,10 +10,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from .. import MANIFEST_SCHEMA_VERSION, PIPELINE_VERSION
 from ..constants import ESCALATED_STAGES, FallbackStage
@@ -22,6 +22,20 @@ from ..schema_registry import check_schema_version, validate_against
 from ..storage.atomic import atomic_write_json
 
 HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
+
+
+def _asset_relative_path(value: str) -> str:
+    # 消费方全部用 `store.root / value` 拼接后直接读写;绝对路径或含 `..` 的值
+    # 会把读写点带出资产目录(process 重跑时先写盘后检查,后置检查拦不住)。
+    for pure in (PurePosixPath(value), PureWindowsPath(value)):
+        if not value or pure.is_absolute() or pure.drive or ".." in pure.parts:
+            raise ValueError(
+                f"必须是资产目录内的相对路径(不得为绝对路径或包含 `..`):{value!r}"
+            )
+    return value
+
+
+AssetRelativePath = Annotated[str, AfterValidator(_asset_relative_path)]
 
 
 class _Base(BaseModel):
@@ -122,8 +136,8 @@ class GridInfo(_Base):
 class StaticImageInfo(_Base):
     """静态资产的原图、处理产物与确定性处理参数。"""
 
-    source_image: str
-    image: str
+    source_image: AssetRelativePath
+    image: AssetRelativePath
     requested_size: tuple[int, int]
     actual_size: tuple[int, int]
     key_threshold: float = Field(ge=0)
@@ -137,7 +151,7 @@ class GeneratedAnimation(_Base):
     loop: bool
     grid: GridInfo | None = None
 
-    source_image: str | None = None
+    source_image: AssetRelativePath | None = None
     """``source/`` 下的原始生成图路径。永不覆盖。"""
 
     key_threshold: float | None = Field(default=None, ge=0)
@@ -149,7 +163,7 @@ class GeneratedAnimation(_Base):
     ``process`` 就不幂等了，离线复现的承诺随之失效（ADR-004）。
     """
 
-    frames: list[str] = Field(min_length=1)
+    frames: list[AssetRelativePath] = Field(min_length=1)
 
     keyframe_count: int | None = Field(default=None, ge=2)
     """这段动作里有多少张是**用户给的关键帧**（其余是补出来的）。"""
@@ -226,7 +240,7 @@ class AssetManifest(_Base):
     scale_profile: ScaleProfileInfo | None = None
     static_image: StaticImageInfo | None = None
     animations: dict[str, AnimationEntry] = Field(default_factory=dict)
-    sheets: dict[str, str] = Field(default_factory=dict)
+    sheets: dict[str, AssetRelativePath] = Field(default_factory=dict)
     status: ManifestStatus = "planned"
 
     # -- 序列化 -----------------------------------------------------------
