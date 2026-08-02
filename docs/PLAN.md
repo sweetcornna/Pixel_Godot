@@ -1163,7 +1163,7 @@ attack      690
 
 ---
 
-### Sprint 7：道具、特效与批量任务 · **第 9 周** · 🚧 进行中
+### Sprint 7：道具、特效与批量任务 · **第 9 周** · ✅ 已完成
 
 **新资产类型**：`prop` · `weapon` · `projectile` · `impact` · `spell` · `pickup` · `ui_icon` · `environment_object`
 
@@ -1239,17 +1239,49 @@ pixel-asset export health_potion --target godot
   JobTable 与 artifacts；`pack-summary` 只是批次索引，不取代任何单资产溯源记录。
 - 静态 pickup 可对自己的原始生成物重跑确定性处理而不重新生成。
 
-**Sprint 7 总退出门槛（尚未全部完成）**
+**Sprint 7 总退出门槛（五种 pack 全部落地后逐条复核 · ✅ 已完成）**
 
-- ⬜ 单个失败不导致整包失败
-- ⬜ 可断点续跑
-- ⬜ 可重新处理而不重新生成
-- ⬜ 可按 `asset_id` 单独导出
-- ⬜ 同批资产共享风格与调色板定义
+- ✅ 单个失败不导致整包失败
+- ✅ 可断点续跑
+- ✅ 可重新处理而不重新生成
+- ✅ 可按 `asset_id` 单独导出
+- ✅ 同批资产共享风格与调色板定义
 
 > 7.1 完成时只标记 `potion_pack` 首纵切；其余 pack 与 Sprint 7 总状态继续保持未完成。
 > 上述五条门槛 `potion_pack` 已逐条有测试与 CLI 实测背书，但按本节口径，
-> 其余 pack 类型落地前总门槛不打勾。
+> 其余 pack 类型落地前总门槛不打勾。**7.5 落地后按下述复核逐条打勾。**
+
+**总门槛复核记录（7.5 之后）**：复核口径是**不靠「共用代码路径」推断**。
+静态三种确实共用 `_run_one_static`、动画两种共用 `_run_one_animated`，但门槛说的是
+「对全部 pack 类型成立」，而映射表、schema 条件约束、动作缺省值恰恰是逐类型分叉的
+—— 按路径推断会把分叉处的洞盖住。
+
+摊开既有证据后，五条里有四条**并非对每种 pack 都有断言**：
+
+- 门槛 1 在动画路径上完全没有隔离用例（`spell_bundle` / `combat_bundle` 的失败
+  用例都是单资产的，单资产谈不上"不拖累兄弟"）
+- 门槛 3 从没有对**pack 产出的资产**验过，只验过 `create-asset` 的单件静态资产
+- 门槛 5 只有 `potion_pack`（三个资产互等）与 `spell_bundle`（等于声明值）有断言，
+  `weapon_pack` / `environment_pack` / `combat_bundle` 没有
+- 门槛 2 只有 `potion_pack`、`spell_bundle`、`combat_bundle` 有断言
+
+新增 `tests/integration/test_sprint7_pack_gates.py`：五条门槛 × 五种 pack 类型
+逐格参数化（25 个用例），pack 都裁到最小规模（静态留 2 个资产、动画留 1 个资产
+1 个动作 1 个方向）—— 门槛验的是机制，不是资产条数。判据取硬的：门槛 3 与门槛 2
+用 `generation-log` 与原图的**字节**比对（不是"看起来没变"），门槛 5 断言的是
+**声明值**落到每个资产的 Manifest（不是"几个资产恰好一样"，后者在单资产 pack 上
+会退化成永真），门槛 1 毒的是**第二个**资产（第一个已跑完时才失败，能同时验到
+"先完成的不被回滚"与"失败之后的兄弟仍被派发"）。
+
+门槛 2 的「**中途**断点续跑」仍由各纵切自己的用例守（`potion_pack` 的 stop/resume、
+`spell_bundle` 与 `combat_bundle` 的 seed 闸门续跑）；新文件补的是「每种 pack 类型
+都成立」的那一半。五种 pack 的全链 CLI 实测分别在 §7.1–§7.5 各自完成。
+
+写这批用例时踩到一个本身值得记的坑：重跑 `process` 会把 Manifest 打回
+`processed`，最初直接在共享夹具上跑，把续跑那条门槛的状态改花了。改成在
+**副本**上重跑 —— 门槛用例之间不该有执行顺序依赖。
+
+全套件 899 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
 **7.1 完成记录**：实现落地时挖出并修掉了三类问题 ——
 ① pack 需要的「验证后才可导出」硬闸被错误地全局应用，连带 Manifest 版本全局升
@@ -1557,8 +1589,8 @@ CLI 全链路实测（mock provider，7/7 通过）：未规划直接执行被�
 
 全套件 874 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
-> `combat_bundle` 完成后，Sprint 7 的五种 pack 全部落地，**总退出门槛届时才逐条
-> 复核打勾**（那五条要对全部 pack 类型成立，不是对某一切成立）。
+> `combat_bundle` 完成后，Sprint 7 的五种 pack 全部落地，总退出门槛**已按既定口径
+> 逐条复核并打勾**（复核过程与补的证据见本 Sprint「总门槛复核记录」）。
 
 ---
 
