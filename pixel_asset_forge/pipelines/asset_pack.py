@@ -1,4 +1,4 @@
-"""静态资产 pack 固定 worker 协调器。"""
+"""资产 pack 固定 worker 协调器。"""
 
 from __future__ import annotations
 
@@ -17,22 +17,28 @@ from ..config import Config
 from ..errors import PauseRequested, PlanError, ProviderError, redact
 from ..logging_utils import get_logger
 from ..models.job import JobKind, JobStatus
+from ..models.manifest import AssetManifest
 from ..models.pack import StaticAssetPack, input_fingerprint, load_pack
-from ..models.request import load_request
+from ..models.request import AssetRequest, load_request
 from ..processing.background import resolve_key_color
 from ..prompts import compile_static_prompt
 from ..providers import ImageProvider, Throttle, get_provider
 from ..storage.artifacts import ArtifactStore
 from ..storage.atomic import atomic_write_json, atomic_write_text
 from ..storage.cache import GenerationCache
+from .animation import create_animation
+from .character import create_character
+from .export import CONTACT_SHEET_NAME, build_contact_sheet, run_export
 from .static_asset import (
     StaticAssetResult,
     create_static_asset,
     validate_and_export_static_asset,
 )
-from .validation import static_validation_binding
+from .validation import run_validation, static_validation_binding
 
 logger = get_logger("pipeline.asset_pack")
+
+AWAITING_APPROVAL_MESSAGE = "等你看图，看完重跑同一条命令"
 
 PackOutcome = Literal[
     "exported",
@@ -40,6 +46,7 @@ PackOutcome = Literal[
     "provider_failed",
     "processing_failed",
     "paused",
+    "awaiting_approval",
     "skipped",
     "outcome_missing",
 ]
@@ -85,7 +92,7 @@ class PackSummary(BaseModel):
         counts = {name: 0 for name in (
             "total", "exported", "validation_failed", "provider_failed",
             "processing_failed", "paused", "skipped", "cached", "resumed",
-            "outcome_unknown", "outcome_missing",
+            "awaiting_approval", "outcome_unknown", "outcome_missing",
         )}
         counts["total"] = len(self.assets)
         for asset in self.assets:
@@ -112,6 +119,8 @@ class PackRunControl:
 class _WorkItem:
     request_path: Path
     asset_id: str
+    job_id: str
+    primary_kind: JobKind
     fingerprint: str
     resumed: bool
 
@@ -129,19 +138,27 @@ def _write_expanded_request(request: object, path: Path) -> Path:
     return atomic_write_text(path, yaml.safe_dump(payload, allow_unicode=True, sort_keys=False))
 
 
+def _primary_kind(request: AssetRequest) -> JobKind:
+    return JobKind.SEED if request.animation_list() else JobKind.STATIC
+
+
+def _primary_job_id(request: AssetRequest) -> str:
+    return f"{request.asset_id}:{'seed' if request.animation_list() else 'static'}"
+
+
 def _job_state(
-    config: Config, asset_id: str
+    config: Config, asset_id: str, kind: JobKind
 ) -> tuple[JobStatus | None, bool, str | None]:
     store = ArtifactStore.for_asset(config.output_dir, asset_id)
     table = store.load_job_table()
     if table is None:
         return (None, False, None)
-    jobs = table.of_kind(JobKind.STATIC)
+    jobs = table.of_kind(kind)
     if not jobs:
         return (None, False, None)
     return (
         jobs[0].status,
-        jobs[0].status is not JobStatus.PLANNED,
+        any(job.status is not JobStatus.PLANNED for job in table),
         jobs[0].input_fingerprint,
     )
 
@@ -154,7 +171,7 @@ def _require_saved_plans(
     mismatched: list[str] = []
     for request in pack.expand_requests():
         table = ArtifactStore.for_asset(config.output_dir, request.asset_id).load_job_table()
-        jobs = table.of_kind(JobKind.STATIC) if table is not None else ()
+        jobs = table.of_kind(_primary_kind(request)) if table is not None else ()
         if not jobs:
             missing.append(request.asset_id)
             continue
@@ -177,17 +194,20 @@ def _require_saved_plans(
     )
 
 
-def _reset_failed_static_job(config: Config, asset_id: str) -> bool:
+def _reset_failed_jobs(config: Config, request: AssetRequest) -> bool:
     """把显式请求重试的失败任务恢复到最近一个可确认检查点。"""
-    store = ArtifactStore.for_asset(config.output_dir, asset_id)
+    store = ArtifactStore.for_asset(config.output_dir, request.asset_id)
     table = store.load_job_table()
     if table is None:
         return False
     changed = False
-    for job in table.of_kind(JobKind.STATIC):
+    for job in table:
         if job.status is not JobStatus.FAILED:
             continue
-        has_source = store.source_path("static").exists()
+        source_key = "static" if job.kind is JobKind.STATIC else job.key
+        has_source = (
+            job.kind is not JobKind.DERIVED and store.source_path(source_key).exists()
+        )
         job.status = JobStatus.GENERATED if has_source else JobStatus.PLANNED
         job.attempts = 0
         job.repair_rounds = 0
@@ -214,7 +234,7 @@ def _persist_summary(
         if outcome is None:
             outcome = AssetOutcome(
                 asset_id=request.asset_id,
-                job_id=f"{request.asset_id}:static",
+                job_id=_primary_job_id(request),
                 input_fingerprint=input_fingerprint(
                     request, config.provider, config.model
                 ),
@@ -283,12 +303,14 @@ def _error_outcome(
     table = store.load_job_table()
     status = "unknown"
     if table is not None:
-        jobs = [job for job in table if job.id == f"{item.asset_id}:static"]
-        if jobs:
-            status = jobs[0].status.value
+        failed = [job for job in table if job.status is JobStatus.FAILED]
+        primary = [job for job in table if job.id == item.job_id]
+        current = failed or primary
+        if current:
+            status = current[0].status.value
     return AssetOutcome(
         asset_id=item.asset_id,
-        job_id=f"{item.asset_id}:static",
+        job_id=item.job_id,
         input_fingerprint=item.fingerprint,
         provider=config.provider,
         model=config.model,
@@ -303,7 +325,7 @@ def _error_outcome(
     )
 
 
-def _run_one(
+def _run_one_static(
     item: _WorkItem,
     config: Config,
     provider: ImageProvider,
@@ -312,7 +334,9 @@ def _run_one(
     targets: list[str],
 ) -> AssetOutcome:
     store = ArtifactStore.for_asset(config.output_dir, item.asset_id)
-    status, resumed, persisted_fingerprint = _job_state(config, item.asset_id)
+    status, resumed, persisted_fingerprint = _job_state(
+        config, item.asset_id, JobKind.STATIC
+    )
     resumed = resumed or item.resumed
 
     if (
@@ -477,7 +501,7 @@ def _run_one(
             artifact_root=str(store.root),
         )
     except PauseRequested as exc:
-        status, _, _ = _job_state(config, item.asset_id)
+        status, _, _ = _job_state(config, item.asset_id, JobKind.STATIC)
         return AssetOutcome(
             asset_id=item.asset_id,
             job_id=f"{item.asset_id}:static",
@@ -498,6 +522,341 @@ def _run_one(
         return _error_outcome(item, config, exc, provider_failed=False)
 
 
+def _write_seed_contact_sheet(store: ArtifactStore) -> Path:
+    manifest = AssetManifest.load(store.manifest_path)
+    return build_contact_sheet(
+        manifest,
+        store.root,
+        store.previews / CONTACT_SHEET_NAME,
+    )
+
+
+def _awaiting_approval_outcome(
+    item: _WorkItem,
+    config: Config,
+    *,
+    cached: bool = False,
+    resumed: bool,
+    request_id: str | None = None,
+) -> AssetOutcome:
+    return AssetOutcome(
+        asset_id=item.asset_id,
+        job_id=item.job_id,
+        input_fingerprint=item.fingerprint,
+        provider=config.provider,
+        model=config.model,
+        outcome="awaiting_approval",
+        job_status="awaiting_approval",
+        stage="awaiting_approval",
+        cached=cached,
+        resumed=resumed,
+        error_code="awaiting_approval",
+        error=AWAITING_APPROVAL_MESSAGE,
+        request_id=request_id,
+        artifact_root=str(config.asset_dir(item.asset_id)),
+    )
+
+
+def _run_one_animated(
+    item: _WorkItem,
+    config: Config,
+    provider: ImageProvider,
+    control: PackRunControl,
+    targets: list[str],
+) -> AssetOutcome:
+    store = ArtifactStore.for_asset(config.output_dir, item.asset_id)
+    table = store.load_job_table()
+    if table is None or table.seed_job is None:
+        return AssetOutcome(
+            asset_id=item.asset_id,
+            job_id=item.job_id,
+            input_fingerprint=item.fingerprint,
+            provider=config.provider,
+            model=config.model,
+            outcome="processing_failed",
+            job_status="unknown",
+            stage="planning",
+            resumed=item.resumed,
+            error_code="missing_saved_plan",
+            error="动画资产缺少已保存的 seed 任务表",
+            artifact_root=str(store.root),
+        )
+
+    seed = table.seed_job
+    resumed = item.resumed or any(
+        job.status is not JobStatus.PLANNED for job in table
+    )
+    if (
+        seed.input_fingerprint is not None
+        and seed.input_fingerprint != item.fingerprint
+    ):
+        return AssetOutcome(
+            asset_id=item.asset_id,
+            job_id=item.job_id,
+            input_fingerprint=item.fingerprint,
+            provider=config.provider,
+            model=config.model,
+            outcome="processing_failed",
+            job_status=seed.status.value,
+            stage="planning",
+            resumed=resumed,
+            error_code="input_fingerprint_conflict",
+            error=(
+                "既有资产的输入指纹与本次 pack/provider/model 不一致；"
+                "不会静默复用或覆盖原图"
+            ),
+            artifact_root=str(store.root),
+        )
+
+    failed = [job for job in table if job.status is JobStatus.FAILED]
+    if failed:
+        job = failed[0]
+        return AssetOutcome(
+            asset_id=item.asset_id,
+            job_id=job.id,
+            input_fingerprint=item.fingerprint,
+            provider=config.provider,
+            model=config.model,
+            outcome="processing_failed",
+            job_status="failed",
+            stage="failed",
+            resumed=True,
+            error_code="persisted_failure",
+            error="任务已处于 failed；本次未自动重试",
+            artifact_root=str(store.root),
+        )
+
+    unknown = next(
+        (
+            job
+            for job in table
+            if job.status is JobStatus.GENERATING
+            and job.kind is not JobKind.DERIVED
+            and not store.source_path(job.key).exists()
+        ),
+        None,
+    )
+    if unknown is not None:
+        return AssetOutcome(
+            asset_id=item.asset_id,
+            job_id=unknown.id,
+            input_fingerprint=item.fingerprint,
+            provider=config.provider,
+            model=config.model,
+            outcome="paused",
+            job_status="generating",
+            stage="generating",
+            resumed=True,
+            outcome_unknown=True,
+            error_code="outcome_unknown",
+            error="上次生成可能已计费，但 source/cache 未形成可确认检查点；未自动重试",
+            artifact_root=str(store.root),
+        )
+
+    try:
+        if seed.status in (
+            JobStatus.PLANNED,
+            JobStatus.GENERATING,
+            JobStatus.GENERATED,
+            JobStatus.PROCESSING,
+            JobStatus.PROCESSED,
+            JobStatus.VALIDATING,
+            JobStatus.VALIDATED,
+        ):
+            seed_result = create_character(
+                item.request_path,
+                config,
+                provider=provider,
+                stop_requested=control.stop,
+            )
+            _write_seed_contact_sheet(store)
+            return _awaiting_approval_outcome(
+                item,
+                config,
+                cached=seed_result.cached,
+                resumed=resumed,
+                request_id=seed_result.request_id,
+            )
+
+        if seed.status is JobStatus.AWAITING_APPROVAL:
+            _write_seed_contact_sheet(store)
+            return _awaiting_approval_outcome(
+                item,
+                config,
+                resumed=True,
+                request_id=seed.request_id,
+            )
+
+        if seed.status is not JobStatus.APPROVED:
+            raise RuntimeError(
+                f"{seed.id} 当前状态为 {seed.status.value}，不能进入动画阶段"
+            )
+
+        animation_jobs = [
+            job
+            for job in table.topological_order()
+            if job.kind in (JobKind.ANIMATION, JobKind.DERIVED)
+        ]
+        if animation_jobs and all(
+            job.status is JobStatus.EXPORTED for job in animation_jobs
+        ):
+            return AssetOutcome(
+                asset_id=item.asset_id,
+                job_id=item.job_id,
+                input_fingerprint=item.fingerprint,
+                provider=config.provider,
+                model=config.model,
+                outcome="skipped",
+                job_status="exported",
+                stage="exported",
+                resumed=True,
+                skipped=True,
+                artifact_root=str(store.root),
+            )
+
+        cached = False
+        request_id: str | None = None
+        for job in animation_jobs:
+            if job.status is JobStatus.VALIDATION_FAILED:
+                return AssetOutcome(
+                    asset_id=item.asset_id,
+                    job_id=job.id,
+                    input_fingerprint=item.fingerprint,
+                    provider=config.provider,
+                    model=config.model,
+                    outcome="validation_failed",
+                    job_status="validation_failed",
+                    stage="validation_failed",
+                    resumed=True,
+                    artifact_root=str(store.root),
+                )
+            if job.status in (
+                JobStatus.PROCESSED,
+                JobStatus.VALIDATING,
+                JobStatus.VALIDATED,
+                JobStatus.EXPORTED,
+            ):
+                continue
+            if control.stop.is_set():
+                raise PauseRequested(f"{item.asset_id} 已停在阶段边界")
+            animation_result = create_animation(
+                store.root,
+                action=job.action or "",
+                direction=job.direction,
+                config=config,
+                provider=provider,
+                stop_requested=control.stop,
+            )
+            cached = cached or animation_result.cached
+            request_id = animation_result.request_id or request_id
+
+        if control.stop.is_set():
+            raise PauseRequested(f"{item.asset_id} 已停在阶段边界")
+
+        table = store.load_job_table()
+        if table is None:
+            raise RuntimeError(f"{item.asset_id} 动画完成后任务表丢失")
+        current_animation_jobs = [
+            job
+            for job in table
+            if job.kind in (JobKind.ANIMATION, JobKind.DERIVED)
+        ]
+        if any(job.status is JobStatus.VALIDATION_FAILED for job in current_animation_jobs):
+            return AssetOutcome(
+                asset_id=item.asset_id,
+                job_id=item.job_id,
+                input_fingerprint=item.fingerprint,
+                provider=config.provider,
+                model=config.model,
+                outcome="validation_failed",
+                job_status="validation_failed",
+                stage="validation_failed",
+                cached=cached,
+                resumed=resumed,
+                request_id=request_id,
+                artifact_root=str(store.root),
+            )
+
+        if any(
+            job.status in (JobStatus.PROCESSED, JobStatus.VALIDATING)
+            for job in current_animation_jobs
+        ):
+            report = run_validation(store.root)
+            if not report.passed:
+                return AssetOutcome(
+                    asset_id=item.asset_id,
+                    job_id=item.job_id,
+                    input_fingerprint=item.fingerprint,
+                    provider=config.provider,
+                    model=config.model,
+                    outcome="validation_failed",
+                    job_status="validation_failed",
+                    stage="validation_failed",
+                    cached=cached,
+                    resumed=resumed,
+                    request_id=request_id,
+                    artifact_root=str(store.root),
+                )
+
+        run_export(store.root, targets=targets)
+        return AssetOutcome(
+            asset_id=item.asset_id,
+            job_id=item.job_id,
+            input_fingerprint=item.fingerprint,
+            provider=config.provider,
+            model=config.model,
+            outcome="exported",
+            job_status="exported",
+            stage="exported",
+            cached=cached,
+            resumed=resumed,
+            request_id=request_id,
+            artifact_root=str(store.root),
+        )
+    except PauseRequested as exc:
+        table = store.load_job_table()
+        current = "planned"
+        if table is not None:
+            active = [
+                job
+                for job in table.topological_order()
+                if job.status not in (JobStatus.PLANNED, JobStatus.EXPORTED)
+            ]
+            if active:
+                current = active[-1].status.value
+        return AssetOutcome(
+            asset_id=item.asset_id,
+            job_id=item.job_id,
+            input_fingerprint=item.fingerprint,
+            provider=config.provider,
+            model=config.model,
+            outcome="paused",
+            job_status=current,
+            stage=current,
+            resumed=resumed,
+            error_code=exc.code,
+            error=exc.message,
+            artifact_root=str(store.root),
+        )
+    except ProviderError as exc:
+        return _error_outcome(item, config, exc, provider_failed=True)
+    except Exception as exc:
+        return _error_outcome(item, config, exc, provider_failed=False)
+
+
+def _run_one(
+    item: _WorkItem,
+    config: Config,
+    provider: ImageProvider,
+    cache: GenerationCache,
+    control: PackRunControl,
+    targets: list[str],
+) -> AssetOutcome:
+    if item.primary_kind is JobKind.SEED:
+        return _run_one_animated(item, config, provider, control, targets)
+    return _run_one_static(item, config, provider, cache, control, targets)
+
+
 async def run_asset_pack(
     pack_path: str | Path,
     config: Config,
@@ -505,7 +864,7 @@ async def run_asset_pack(
     control: PackRunControl | None = None,
     retry_failed: bool = False,
 ) -> PackSummary:
-    """并发执行一个静态资产 pack；每个 worker 拥有独立 client。"""
+    """并发执行一个资产 pack；每个 worker 拥有独立 client。"""
     pack = load_pack(pack_path)
     _require_saved_plans(pack, config, pack_path)
     run_control = control or PackRunControl()
@@ -522,16 +881,17 @@ async def run_asset_pack(
     for request in pack.expand_requests():
         request_path = pack_dir / "requests" / f"{request.asset_id}.yaml"
         _write_expanded_request(request, request_path)
-        reset_failed = retry_failed and _reset_failed_static_job(
-            config, request.asset_id
-        )
+        primary_kind = _primary_kind(request)
+        reset_failed = retry_failed and _reset_failed_jobs(config, request)
         _status, resumed, _persisted_fingerprint = _job_state(
-            config, request.asset_id
+            config, request.asset_id, primary_kind
         )
         await queue.put(
             _WorkItem(
                 request_path=request_path,
                 asset_id=request.asset_id,
+                job_id=_primary_job_id(request),
+                primary_kind=primary_kind,
                 fingerprint=input_fingerprint(request, config.provider, config.model),
                 resumed=resumed or reset_failed,
             )
@@ -554,7 +914,7 @@ async def run_asset_pack(
                 if run_control.stop.is_set():
                     outcome = AssetOutcome(
                         asset_id=item.asset_id,
-                        job_id=f"{item.asset_id}:static",
+                        job_id=item.job_id,
                         input_fingerprint=item.fingerprint,
                         provider=config.provider,
                         model=config.model,

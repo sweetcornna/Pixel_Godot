@@ -1351,7 +1351,7 @@ plan 前置闸门拒绝未规划执行 → `plan --save` → 三件环境物件�
 状态机等六项）记入交接文档 §7.2 待拍板/backlog，不在本次范围。
 全套件 819 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
-#### 7.4 `spell_bundle` —— 动画资产进 pack · 🚧 待实现
+#### 7.4 `spell_bundle` —— 动画资产进 pack · ✅ 已完成
 
 **本次范围只有 `spell_bundle`。** `combat_bundle` 不在本次范围。
 
@@ -1420,11 +1420,29 @@ assets:
 
 ##### 退出门槛（仅对 `spell_bundle` 主张）
 
-- ⬜ `examples/spell_bundle.yaml` 走完 plan → 第一遍（全停 seed）→ 逐个批准
+- ✅ `examples/spell_bundle.yaml` 走完 plan → 第一遍（全停 seed）→ 逐个批准
   → 第二遍（动画完成）→ 逐资产 export 全链路（mock 集成测试 + CLI 实测）
-- ⬜ `plan` 分别报出 seed 与动画调用数，有测试
-- ⬜ 未批准资产在第二遍不计为失败、且不消耗动画调用，有测试
-- ⬜ 静态路径对 `spell` 仍拒绝；7.1–7.3 全部既有测试不回归、不削弱断言
+- ✅ `plan` 分别报出 seed 与动画调用数，有测试
+- ✅ 未批准资产在第二遍不计为失败、且不消耗动画调用，有测试
+- ✅ 静态路径对 `spell` 仍拒绝；7.1–7.3 全部既有测试不回归、不削弱断言
+
+**7.4 完成记录**：`spell_bundle → spell` 入映射表，`shared.animations` 对整包
+生效（静态 pack 明确拒绝该字段，`spell_bundle` 强制要求它）。seed 闸门按契约
+原样保留：第一遍只跑 seed 并各自写 contact sheet，`pack-summary` 报
+`awaiting_approval` 计数、逐资产提示「等你看图，看完重跑同一条命令」；
+`PackRunControl` 的 Ctrl-C 暂停语义一行未动。
+
+编排方独立验收（不复用实现方的测试，按四条门槛逐条跑 mock 全链 CLI）：
+第一遍 `awaiting_approval=3` 且 `provider_failed/processing_failed` 全 0
+（等人审没有被算成失败）→ 逐个 `--approve-seed` → **重跑同一条命令**
+`exported=3 / resumed=3` → 按 `asset_id` 导出走默认 contact sheet 产出
+`.tres` + png + `GODOT-README.md`。`plan` 分列生效：
+「总任务 15 · 预计 seed API 调用 3 · 预计动画 API 调用 12」——
+静态 pack 的「资产数 = 调用数」直觉在这里会差一个量级，分列正是为此。
+`STATIC_ASSET_TYPES` 仍为 5 类静态型，`spell` 不在其中。
+全套件 866 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
+
+> 至此 Sprint 7 只剩 `combat_bundle`。总退出门槛按既定口径**仍不打勾**。
 
 ---
 

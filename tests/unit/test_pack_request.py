@@ -1,4 +1,4 @@
-"""静态资产 pack 输入契约与展开。"""
+"""资产 pack 输入契约与展开。"""
 
 from __future__ import annotations
 
@@ -73,11 +73,22 @@ def test_example_expands_to_static_pickup_requests(examples_dir: Path) -> None:
         ("potion_pack", "pickup"),
         ("weapon_pack", "weapon"),
         ("environment_pack", "environment_object"),
+        ("spell_bundle", "spell"),
     ],
 )
-def test_pack_type_maps_to_static_asset_type(pack_type: str, asset_type: str) -> None:
+def test_pack_type_maps_to_asset_type(pack_type: str, asset_type: str) -> None:
     data = pack_data()
     data["pack_type"] = pack_type
+    if pack_type == "spell_bundle":
+        data["shared"]["animations"] = [
+            {
+                "name": "cast",
+                "directions": ["down", "left", "right", "up"],
+                "frames": 6,
+                "fps": 12,
+                "loop": False,
+            }
+        ]
 
     requests = parse_pack(data).expand_requests()
 
@@ -85,14 +96,64 @@ def test_pack_type_maps_to_static_asset_type(pack_type: str, asset_type: str) ->
     assert all(request.asset_type == asset_type for request in requests)
 
 
-def test_pack_schema_exposes_only_supported_static_pack_types() -> None:
+def test_pack_schema_exposes_all_supported_pack_types() -> None:
     schema = load_schema("asset-pack")
     assert schema["properties"]["pack_type"] == {
-        "enum": ["potion_pack", "weapon_pack", "environment_pack"]
+        "enum": [
+            "potion_pack",
+            "weapon_pack",
+            "environment_pack",
+            "spell_bundle",
+        ]
     }
 
+
+def test_spell_bundle_requires_and_injects_shared_animations() -> None:
     data = pack_data()
     data["pack_type"] = "spell_bundle"
+    with pytest.raises(RequestValidationError) as exc:
+        parse_pack(data)
+    assert any(error["path"] == "shared" for error in exc.value.errors)
+
+    data["shared"]["animations"] = [
+        {
+            "name": "cast",
+            "directions": ["down", "left", "right", "up"],
+            "frames": 6,
+            "fps": 12,
+            "loop": False,
+        }
+    ]
+    pack = parse_pack(data)
+    requests = pack.expand_requests()
+
+    assert all(request.asset_type == "spell" for request in requests)
+    assert all(request.animations == pack.shared.animations for request in requests)
+
+
+def test_spell_bundle_example_expands_three_spells_with_shared_animation(
+    examples_dir: Path,
+) -> None:
+    pack = load_pack(examples_dir / "spell_bundle.yaml")
+    requests = pack.expand_requests()
+
+    assert pack.pack_type == "spell_bundle"
+    assert [request.asset_id for request in requests] == [
+        "ember_burst",
+        "frost_lance",
+        "arcane_pulse",
+    ]
+    assert all(request.asset_type == "spell" for request in requests)
+    assert all(request.style.target_size == (64, 64) for request in requests)
+    assert all(request.animations == pack.shared.animations for request in requests)
+    assert all(request.style.palette_colors == pack.shared.palette.colors for request in requests)
+
+
+def test_static_pack_rejects_shared_animations() -> None:
+    data = pack_data()
+    data["shared"]["animations"] = [
+        {"name": "loop", "frames": 4, "fps": 8, "loop": True}
+    ]
     with pytest.raises(RequestValidationError):
         parse_pack(data)
 

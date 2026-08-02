@@ -13,11 +13,13 @@
 from __future__ import annotations
 
 import io
+import threading
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Config
+from ..errors import PauseRequested, ProviderError, RetryLimitExceededError
 from ..logging_utils import get_logger
 from ..models.job import JobEvent, JobKind, JobStatus
 from ..models.manifest import AssetManifest
@@ -28,7 +30,7 @@ from ..processing.chroma_key import hex_to_rgb
 from ..processing.pipeline import ProcessOptions, process_grid
 from ..processing.spritesheet import save_png
 from ..prompts import compile_seed_prompt
-from ..providers import bypass_cache, get_provider
+from ..providers import ImageProvider, bypass_cache, get_provider
 from ..storage.artifacts import ArtifactStore
 from .common import (
     ensure_manifest,
@@ -65,7 +67,9 @@ def create_character(
     request_path: str | Path,
     config: Config,
     *,
+    provider: ImageProvider | None = None,
     regenerate: bool = False,
+    stop_requested: threading.Event | None = None,
 ) -> SeedResult:
     """生成 canonical seed 并停在人工闸门前。"""
     request = load_request(request_path)
@@ -77,6 +81,7 @@ def create_character(
         requested=request.background.color,
         fallbacks=request.background.fallback_colors,
         conflict_hint=request.background.conflict_hint,
+        palette=request.style.palette_colors or (),
     )
     warnings: list[str] = []
     if background.downgraded:
@@ -87,56 +92,147 @@ def create_character(
     if job is None:  # pragma: no cover - planner 一定会建 seed 任务
         raise RuntimeError(f"{request.asset_id} 的任务表里没有 seed 任务")
 
-    if job.status is JobStatus.APPROVED and not regenerate:
-        warnings.append("seed 已获批准。要重新生成请加 --regenerate（会级联作废下游动画）。")
-
     prompt = compile_seed_prompt(request, key_color=background.color_used)
-    require_source_slot(store, "seed", regenerate=regenerate)
+    active_provider = provider
+    if active_provider is not None and (
+        active_provider.name != config.provider or active_provider.model != config.model
+    ):
+        from ..errors import ProcessingError
 
-    if job.status is not JobStatus.PLANNED:
+        raise ProcessingError(
+            "Provider 与有效配置不一致："
+            f"{active_provider.name}/{active_provider.model} != "
+            f"{config.provider}/{config.model}"
+        )
+
+    if not regenerate and job.status in (
+        JobStatus.AWAITING_APPROVAL,
+        JobStatus.APPROVED,
+    ):
+        require_source_slot(store, "seed", regenerate=False)
+
+    if regenerate:
+        require_source_slot(store, "seed", regenerate=True)
         job.status = JobStatus.PLANNED
         table.cascade_invalidate(job.id, reason="seed 重新生成")
+        job.attempts = 0
+        job.error = None
+        store.save_job_table(table)
 
-    provider = get_provider(config)
-    job.fire(JobEvent.START_EXECUTION)
-    # 重生成必须绕开缓存，理由同 animation.py。
-    with bypass_cache(provider) if regenerate else nullcontext():
-        result = provider.generate(prompt.text, size=prompt.size)
-    job.fire(JobEvent.PROVIDER_SUCCESS)
+    result = None
+    source_path = store.source_path("seed")
+    if job.status is JobStatus.PLANNED:
+        require_source_slot(store, "seed", regenerate=False)
+        active_provider = active_provider or get_provider(config)
+        job.fire(JobEvent.START_EXECUTION)
+        store.save_job_table(table)
+        try:
+            # 重生成必须绕开缓存，理由同 animation.py。
+            with bypass_cache(active_provider) if regenerate else nullcontext():
+                result = active_provider.generate(prompt.text, size=prompt.size)
+        except ProviderError as exc:
+            event = (
+                JobEvent.RETRY_LIMIT_EXCEEDED
+                if isinstance(exc, RetryLimitExceededError)
+                else JobEvent.PERMANENT_ERROR
+            )
+            if job.can(event):
+                job.fire(event, detail=exc.message)
+                store.save_job_table(table)
+            raise
 
-    store.write_source("seed", result.image)
-    record_generation(store, job, result, prompt_chars=len(prompt.text))
-    if result.size_snapped:
-        warnings.append(
-            f"端点把请求的 {result.requested_size[0]}×{result.requested_size[1]} 改成了 "
-            f"{result.actual_size[0]}×{result.actual_size[1]}（已知行为，见 Sprint 0 A-1）"
+        store.write_source("seed", result.image)
+        record_generation(store, job, result, prompt_chars=len(prompt.text))
+        job.fire(JobEvent.PROVIDER_SUCCESS)
+        store.save_job_table(table)
+        if result.size_snapped:
+            warnings.append(
+                f"端点把请求的 {result.requested_size[0]}×{result.requested_size[1]} 改成了 "
+                f"{result.actual_size[0]}×{result.actual_size[1]}（已知行为，见 Sprint 0 A-1）"
+            )
+    elif job.status is JobStatus.GENERATING:
+        if not source_path.exists():
+            from ..errors import ProcessingError
+
+            raise ProcessingError(
+                f"{job.id} 停在 generating 且没有原图；上次调用结果未知，需恢复协调器对账"
+            )
+        job.fire(JobEvent.PROVIDER_SUCCESS, detail="从已落盘原图恢复")
+        store.save_job_table(table)
+    elif job.status is JobStatus.PROCESSING:
+        job.fire(JobEvent.RECOVER_GENERATED, detail="从不可变原图幂等重跑处理")
+        store.save_job_table(table)
+
+    if stop_requested is not None and stop_requested.is_set():
+        raise PauseRequested(f"{job.id} 已保存原图，停在 generated 阶段")
+
+    if job.status not in (
+        JobStatus.GENERATED,
+        JobStatus.PROCESSED,
+        JobStatus.VALIDATING,
+        JobStatus.VALIDATED,
+    ):
+        from ..errors import ProcessingError
+
+        raise ProcessingError(
+            f"{job.id} 当前状态为 {job.status.value}，不能进入 seed 处理与审批"
         )
 
     # -- 本地处理链 --------------------------------------------------------
-    job.fire(JobEvent.START_PROCESSING)
-    image = load_rgb(store.source_path("seed"))
-    layout = GridLayout(frames=1, cols=1, rows=1, cell=(image.shape[1], image.shape[0]))
-    processed = process_grid(
-        image,
-        layout,
-        ProcessOptions(
-            key_color=background.color_used,
-            target_size=request.style.target_size,
-            max_colors=request.style.max_colors,
-        ),
-    )
-    warnings.extend(processed.warnings)
+    try:
+        started_processing = job.status is JobStatus.GENERATED
+        if started_processing:
+            job.fire(JobEvent.START_PROCESSING)
+            store.save_job_table(table)
+        image = load_rgb(source_path)
+        layout = GridLayout(frames=1, cols=1, rows=1, cell=(image.shape[1], image.shape[0]))
+        processed = process_grid(
+            image,
+            layout,
+            ProcessOptions(
+                key_color=background.color_used,
+                target_size=request.style.target_size,
+                max_colors=request.style.max_colors,
+                palette=(
+                    list(request.style.palette_colors)
+                    if request.style.palette_colors is not None
+                    else None
+                ),
+            ),
+        )
+        warnings.extend(processed.warnings)
 
-    pixel_path = save_png(processed.frames[0], store.root / "seed-pixel.png")
-    job.fire(JobEvent.PROCESSING_DONE)
+        pixel_path = save_png(processed.frames[0], store.root / "seed-pixel.png")
+        if started_processing:
+            job.fire(JobEvent.PROCESSING_DONE)
+            store.save_job_table(table)
+    except Exception as exc:
+        if job.can(JobEvent.PROCESSING_ERROR):
+            job.fire(JobEvent.PROCESSING_ERROR, detail=str(exc))
+            store.save_job_table(table)
+        raise
+
+    if stop_requested is not None and stop_requested.is_set():
+        raise PauseRequested(f"{job.id} 已保存 seed 成品，停在 processed 阶段")
 
     # Sprint 5 的验证引擎还没有；这里只做处理层自己能保证的检查。
-    job.fire(JobEvent.START_VALIDATION)
-    job.fire(JobEvent.VALIDATION_PASSED)
-    job.fire(JobEvent.REQUIRE_APPROVAL)
+    if job.status is JobStatus.PROCESSED:
+        job.fire(JobEvent.START_VALIDATION)
+        store.save_job_table(table)
+    if job.status is JobStatus.VALIDATING:
+        job.fire(JobEvent.VALIDATION_PASSED)
+        store.save_job_table(table)
+    if job.status is JobStatus.VALIDATED:
+        job.fire(JobEvent.REQUIRE_APPROVAL)
+        store.save_job_table(table)
 
+    active_provider = active_provider or get_provider(config)
     manifest = ensure_manifest(
-        store, request, background, provider_name=provider.name, model=provider.model
+        store,
+        request,
+        background,
+        provider_name=active_provider.name,
+        model=active_provider.model,
     )
     # **seed 不确立跨动作缩放基准。**
     #
@@ -149,20 +245,19 @@ def create_character(
     manifest.palette.colors = processed.palette.colors
     manifest.status = "awaiting_approval"
     manifest.save(store.manifest_path)
-    store.save_job_table(table)
 
     return SeedResult(
         asset_id=request.asset_id,
         seed_path=store.source_path("seed"),
         pixel_path=pixel_path,
-        requested_size=result.requested_size,
-        actual_size=result.actual_size,
+        requested_size=result.requested_size if result else prompt.size,
+        actual_size=result.actual_size if result else (image.shape[1], image.shape[0]),
         key_color=background.color_used,
         key_threshold=processed.key_threshold,
         background_ratio=processed.background_ratio,
         palette=processed.palette.colors,
-        cached=result.cached,
-        request_id=result.request_id,
+        cached=result.cached if result else False,
+        request_id=result.request_id if result else job.request_id,
         warnings=warnings,
     )
 

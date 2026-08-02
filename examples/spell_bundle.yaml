@@ -1,0 +1,60 @@
+# ============================================================
+# starter_spells — 三个共享 cast 动作的四方向法术特效
+#
+# 64 而不是静态环境物件常用的 48：法术需要保留核心、外焰/光晕与
+# 方向性拖尾三层轮廓；但它没有 96px 人形角色的五官、装备和肢体细节，
+# 因此 64px 是介于静态图标与高细节角色之间的合理档位。
+# ============================================================
+
+schema_version: "1.0"
+pack_type: spell_bundle
+pack_id: starter_spells
+
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [64, 64]
+    max_colors: 16
+    outline: none
+    shading: three_tone
+    antialiasing: false
+    lighting: none
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+    fallback_colors: ["#00FF00", "#00FFFF"]
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: starter_spells
+    colors:
+      - "#211A2C"
+      - "#FFF4C2"
+      - "#FFD166"
+      - "#F28C28"
+      - "#D94B4B"
+      - "#D9F7FF"
+      - "#7ED6F7"
+      - "#3978C5"
+      - "#274690"
+      - "#E7D7FF"
+      - "#B28DFF"
+      - "#7A52C7"
+      - "#4B2E83"
+      - "#F4F4F6"
+      - "#A7A9B4"
+      - "#555866"
+  animations:
+    - name: cast
+      directions: [down, left, right, up]
+      frames: 6
+      fps: 12
+      loop: false
+
+assets:
+  - asset_id: ember_burst
+    description: A compact orange fire spell with a bright white core, layered flame petals, and a short directional ember trail.
+  - asset_id: frost_lance
+    description: A sharp blue ice spell with a pale crystalline tip, faceted frost shards, and a narrow directional cold mist trail.
+  - asset_id: arcane_pulse
+    description: A violet arcane spell with a luminous circular core, orbiting rune fragments, and a directional ribbon of magical energy.

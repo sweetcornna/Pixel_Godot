@@ -45,7 +45,7 @@ from .errors import (
     RequestValidationError,
 )
 from .logging_utils import configure_logging
-from .models.job import JobKind
+from .models.job import JobKind, JobStatus
 from .models.pack import load_pack
 from .models.request import STATIC_ASSET_TYPES, load_request
 from .pipelines import approve_seed as run_approve_seed
@@ -334,20 +334,53 @@ def plan(
                 )
                 pack_table.add_column("资产")
                 pack_table.add_column("任务", justify="right")
-                pack_table.add_column("API", justify="right")
+                animated_pack = pack_plan.estimated_seed_api_calls > 0
+                if animated_pack:
+                    pack_table.add_column("Seed API", justify="right")
+                    pack_table.add_column("动画 API", justify="right")
+                pack_table.add_column("API 合计", justify="right")
                 pack_table.add_column("恢复", justify="center")
                 for asset in pack_plan.assets:
-                    pack_table.add_row(
-                        asset.request.asset_id,
-                        str(len(asset.jobs)),
-                        str(asset.estimated_api_calls),
-                        "✓" if asset.request.asset_id in existing_by_asset else "—",
+                    row = [asset.request.asset_id, str(len(asset.jobs))]
+                    if animated_pack:
+                        row.extend(
+                            [
+                                str(
+                                    sum(
+                                        1
+                                        for job in asset.jobs.of_kind(JobKind.SEED)
+                                        if job.status
+                                        in (JobStatus.PLANNED, JobStatus.GENERATING)
+                                    )
+                                ),
+                                str(
+                                    sum(
+                                        1
+                                        for job in asset.jobs.of_kind(JobKind.ANIMATION)
+                                        if job.status
+                                        in (JobStatus.PLANNED, JobStatus.GENERATING)
+                                    )
+                                ),
+                            ]
+                        )
+                    row.extend(
+                        [
+                            str(asset.estimated_api_calls),
+                            "✓" if asset.request.asset_id in existing_by_asset else "—",
+                        ]
                     )
+                    pack_table.add_row(*row)
                 console.print(pack_table)
+                cost = (
+                    f"预计 seed API 调用 {pack_plan.estimated_seed_api_calls} · "
+                    f"预计动画 API 调用 {pack_plan.estimated_animation_api_calls} · "
+                    if animated_pack
+                    else ""
+                )
                 console.print(
                     f"[dim]总资产 {len(pack_plan.assets)} · "
                     f"总任务 {pack_plan.total_jobs} · "
-                    f"预计 API 调用 {pack_plan.estimated_api_calls} · "
+                    f"{cost}预计 API 调用 {pack_plan.estimated_api_calls} · "
                     f"有效模型 {config.provider}/{config.model}[/dim]"
                 )
             if save:
@@ -446,7 +479,7 @@ def create_asset(
 
 @app.command("create-asset-pack")
 def create_asset_pack(
-    pack_file: Annotated[Path, typer.Argument(help="静态资产 Pack YAML")],
+    pack_file: Annotated[Path, typer.Argument(help="资产 Pack YAML")],
     as_json: Annotated[bool, typer.Option("--json", help="输出 JSON 汇总")] = False,
     retry_failed: Annotated[
         bool, typer.Option("--retry-failed", help="重试任务表中处于 failed 的资产")
@@ -458,7 +491,7 @@ def create_asset_pack(
         str | None, typer.Option("--model", help="覆盖有效生成模型")
     ] = None,
 ) -> None:
-    """并发生成、验证并导出一个静态资产 pack。
+    """并发生成、验证并导出一个资产 pack。
 
     批量执行有 plan 前置：必须先运行 ``pixel-asset plan <pack.yaml> --save``，
     否则拒绝执行。
@@ -517,6 +550,13 @@ def create_asset_pack(
             f"[dim]有效模型 {summary.provider}/{summary.model} · "
             f"worker {summary.worker_count} · 汇总 {summary_path}[/dim]"
         )
+        awaiting = summary.counts.get("awaiting_approval", 0)
+        if awaiting:
+            console.print(
+                f"[bold yellow]有 {awaiting} 个资产等你看图；"
+                "看完逐个用 create-animation --approve-seed 批准，"
+                "再重跑同一条 create-asset-pack 命令。[/bold yellow]"
+            )
 
     if summary.interrupted:
         raise typer.Exit(128 + (control.signal_number or signal.SIGINT))

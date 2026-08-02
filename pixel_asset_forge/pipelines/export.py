@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from ..errors import ExportError
@@ -72,15 +73,21 @@ def build_contact_sheet(manifest: AssetManifest, root: Path, out: Path) -> Path:
     """
     views = animation_views(manifest, root)
     if not views:
-        if manifest.static_image is None:
-            raise ExportError("没有任何静态图或动作，无法生成 contact sheet")
-        frame = load_static_image(manifest, root)
+        if manifest.static_image is not None:
+            frame = load_static_image(manifest, root)
+            label = "static"
+        else:
+            seed_path = root / "seed-pixel.png"
+            if not seed_path.is_file():
+                raise ExportError("没有 seed、静态图或动作，无法生成 contact sheet")
+            frame = np.array(Image.open(seed_path).convert("RGBA"))
+            label = "seed"
         cell_h, cell_w = frame.shape[:2]
         scaled_w, scaled_h = cell_w * CONTACT_SCALE, cell_h * CONTACT_SCALE
         canvas = Image.new("RGB", (LABEL_WIDTH + scaled_w, scaled_h), BACKGROUND)
         canvas.paste(_checkerboard((scaled_w, scaled_h)), (LABEL_WIDTH, 0))
         draw = ImageDraw.Draw(canvas)
-        draw.text((6, scaled_h // 2 - 6), "static", fill=(220, 220, 230))
+        draw.text((6, scaled_h // 2 - 6), label, fill=(220, 220, 230))
         tile = Image.fromarray(frame, "RGBA").resize(
             (scaled_w, scaled_h), Image.Resampling.NEAREST
         )

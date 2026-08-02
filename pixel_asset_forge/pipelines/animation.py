@@ -14,6 +14,7 @@ seed.png → 创建空白键控画布 → seed 作为参考图 → 生成完整�
 
 from __future__ import annotations
 
+import threading
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,12 @@ import numpy as np
 
 from ..config import Config
 from ..constants import MIRROR_PAIR, Direction
-from ..errors import ProcessingError
+from ..errors import (
+    PauseRequested,
+    ProcessingError,
+    ProviderError,
+    RetryLimitExceededError,
+)
 from ..logging_utils import get_logger
 from ..models.job import Job, JobEvent, JobKind, JobStatus, JobTable, make_job_id
 from ..models.manifest import (
@@ -39,7 +45,7 @@ from ..processing.chroma_key import zero_transparent_rgb
 from ..processing.pipeline import ProcessOptions, process_grid
 from ..processing.spritesheet import compose_spritesheet, save_frames, save_gif, save_png
 from ..prompts import compile_animation_prompt
-from ..providers import ReferenceImage, bypass_cache, get_provider
+from ..providers import ImageProvider, ReferenceImage, bypass_cache, get_provider
 from ..storage.artifacts import ArtifactStore
 from .character import seed_is_approved
 from .common import (
@@ -85,7 +91,9 @@ def create_animation(
     action: str,
     direction: Direction | None,
     config: Config,
+    provider: ImageProvider | None = None,
     regenerate: bool = False,
+    stop_requested: threading.Event | None = None,
 ) -> AnimationResult:
     """生成一个 ``(action, direction)`` 的动作网格。"""
     store = ArtifactStore(root=Path(asset_dir)).ensure()
@@ -121,8 +129,18 @@ def create_animation(
         requested=request.background.color,
         fallbacks=request.background.fallback_colors,
         conflict_hint=request.background.conflict_hint,
+        palette=request.style.palette_colors or (),
     )
     warnings: list[str] = []
+    active_provider = provider
+    if active_provider is not None and (
+        active_provider.name != config.provider or active_provider.model != config.model
+    ):
+        raise ProcessingError(
+            "Provider 与有效配置不一致："
+            f"{active_provider.name}/{active_provider.model} != "
+            f"{config.provider}/{config.model}"
+        )
     manifest = ensure_manifest(
         store, request, background, provider_name=config.provider, model=config.model
     )
@@ -141,54 +159,105 @@ def create_animation(
         key_color=background.color_used,
     )
 
-    require_source_slot(store, key, regenerate=regenerate)
-    if job.status is not JobStatus.PLANNED:
+    source_path = store.source_path(key)
+    if regenerate:
+        require_source_slot(store, key, regenerate=True)
         job.status = JobStatus.PLANNED
+        job.attempts = 0
+        job.error = None
+        store.save_job_table(table)
+    elif job.status not in (
+        JobStatus.GENERATING,
+        JobStatus.GENERATED,
+        JobStatus.PROCESSING,
+    ):
+        require_source_slot(store, key, regenerate=False)
+        if job.status is not JobStatus.PLANNED:
+            job.status = JobStatus.PLANNED
 
     seed_bytes = store.source_path("seed").read_bytes()
-    provider = get_provider(config)
+    result = None
+    if job.status is JobStatus.PLANNED:
+        active_provider = active_provider or get_provider(config)
+        job.fire(JobEvent.START_EXECUTION)
+        store.save_job_table(table)
+        try:
+            # 重生成必须绕开缓存：命中会原样返回那张不合格的图，修复永远不可能成功。
+            with bypass_cache(active_provider) if regenerate else nullcontext():
+                # base image 是 anchor sheet 而不是空白画布：每格先摆好一个姿态正确、
+                # 大小正确、脚线正确的角色，模型只需改姿势。纯文字压不住的镜像翻转、
+                # 体型漂移、脚线漂移，靠这张图压得住（agent-sprite-forge 的手法）。
+                result = active_provider.edit(
+                    prompt.text,
+                    base_image=anchor_sheet(
+                        load_rgb(store.source_path("seed")),
+                        prompt.size,
+                        layout,
+                        background.color_used,
+                    ),
+                    size=prompt.size,
+                    references=[ReferenceImage("seed", seed_bytes)],
+                )
+        except ProviderError as exc:
+            event = (
+                JobEvent.RETRY_LIMIT_EXCEEDED
+                if isinstance(exc, RetryLimitExceededError)
+                else JobEvent.PERMANENT_ERROR
+            )
+            if job.can(event):
+                job.fire(event, detail=exc.message)
+                store.save_job_table(table)
+            raise
 
-    job.fire(JobEvent.START_EXECUTION)
-    # 重生成必须绕开缓存：命中会原样返回那张不合格的图，修复永远不可能成功。
-    with bypass_cache(provider) if regenerate else nullcontext():
-        # base image 是 anchor sheet 而不是空白画布：每格先摆好一个姿态正确、
-        # 大小正确、脚线正确的角色，模型只需改姿势。纯文字压不住的镜像翻转、
-        # 体型漂移、脚线漂移，靠这张图压得住（agent-sprite-forge 的手法）。
-        result = provider.edit(
-            prompt.text,
-            base_image=anchor_sheet(
-                load_rgb(store.source_path("seed")),
-                prompt.size,
-                layout,
-                background.color_used,
-            ),
-            size=prompt.size,
-            references=[ReferenceImage("seed", seed_bytes)],
-        )
-    job.fire(JobEvent.PROVIDER_SUCCESS)
+        store.write_source(key, result.image)
+        record_generation(store, job, result, prompt_chars=len(prompt.text))
+        job.fire(JobEvent.PROVIDER_SUCCESS)
+        store.save_job_table(table)
+        if result.size_snapped:
+            warnings.append(
+                f"端点把请求的 {result.requested_size[0]}×{result.requested_size[1]} 改成了 "
+                f"{result.actual_size[0]}×{result.actual_size[1]}；切帧按实际尺寸比例进行"
+            )
+    elif job.status is JobStatus.GENERATING:
+        if not source_path.exists():
+            raise ProcessingError(
+                f"{job.id} 停在 generating 且没有原图；上次调用结果未知，需恢复协调器对账"
+            )
+        job.fire(JobEvent.PROVIDER_SUCCESS, detail="从已落盘原图恢复")
+        store.save_job_table(table)
+    elif job.status is JobStatus.PROCESSING:
+        job.fire(JobEvent.RECOVER_GENERATED, detail="从不可变原图幂等重跑处理")
+        store.save_job_table(table)
 
-    store.write_source(key, result.image)
-    record_generation(store, job, result, prompt_chars=len(prompt.text))
-    if result.size_snapped:
-        warnings.append(
-            f"端点把请求的 {result.requested_size[0]}×{result.requested_size[1]} 改成了 "
-            f"{result.actual_size[0]}×{result.actual_size[1]}；切帧按实际尺寸比例进行"
+    if stop_requested is not None and stop_requested.is_set():
+        raise PauseRequested(f"{job.id} 已保存原图，停在 generated 阶段")
+
+    if job.status is not JobStatus.GENERATED:
+        raise ProcessingError(
+            f"{job.id} 当前状态为 {job.status.value}，不能进入动画处理"
         )
 
     # -- 处理链 -----------------------------------------------------------
-    job.fire(JobEvent.START_PROCESSING)
-    profile = profile_from_manifest(manifest)
-    processed = process_grid(
-        load_rgb(store.source_path(key)),
-        layout,
-        ProcessOptions(
-            key_color=background.color_used,
-            target_size=request.style.target_size,
-            max_colors=request.style.max_colors,
-            scale_profile=profile,
-        ),
-    )
-    warnings.extend(processed.warnings)
+    try:
+        job.fire(JobEvent.START_PROCESSING)
+        store.save_job_table(table)
+        profile = profile_from_manifest(manifest)
+        processed = process_grid(
+            load_rgb(source_path),
+            layout,
+            ProcessOptions(
+                key_color=background.color_used,
+                target_size=request.style.target_size,
+                max_colors=request.style.max_colors,
+                scale_profile=profile,
+                palette=(
+                    list(request.style.palette_colors)
+                    if request.style.palette_colors is not None
+                    else None
+                ),
+            ),
+        )
+        warnings.extend(processed.warnings)
 
     # 基准取幅度最大的动作。增量生成看不到未来，只能边走边顶替。
     #
@@ -196,73 +265,86 @@ def create_animation(
     # 上面这次是在前一任基准下缩过的，用它推出来的 canvas_fraction 是循环产物 ——
     # 实测 hurt 顶替成参考后记下 0.427，于是全部动作都按"参考只占画布 43%"缩，
     # 整个资产小了一圈。
-    reference_result = processed
-    if profile is not None:
-        reference_result = process_grid(
-            load_rgb(store.source_path(key)),
-            layout,
-            ProcessOptions(
-                key_color=background.color_used,
-                target_size=request.style.target_size,
-                max_colors=request.style.max_colors,
+        reference_result = processed
+        if profile is not None:
+            reference_result = process_grid(
+                load_rgb(source_path),
+                layout,
+                ProcessOptions(
+                    key_color=background.color_used,
+                    target_size=request.style.target_size,
+                    max_colors=request.style.max_colors,
+                    palette=(
+                        list(request.style.palette_colors)
+                        if request.style.palette_colors is not None
+                        else None
+                    ),
+                ),
+            )
+        _profile, superseded = store_profile(manifest, key, reference_result)
+        if profile is None:
+            warnings.append(f"{key} 已确立跨动作缩放基准，后续动作将复用其比例")
+        elif superseded:
+            warnings.append(
+                f"{key} 比原参考动作 {profile.reference} 幅度更大，已顶替为新基准 —— "
+                f"此前生成的动作还是按旧基准出的图，跑一次 `pixel-asset process` "
+                f"让全部动作按新基准重出（不花 API 调用）"
+            )
+
+        frame_paths = save_frames(processed.frames, store.frames_of(key), stem=key)
+        sheet, _ = compose_spritesheet(processed.frames)
+        sheet_path = save_png(sheet, store.sheets / f"{key}.png")
+        _save_preview(processed.frames, store, key, spec.fps, spec.loop)
+        job.fire(JobEvent.PROCESSING_DONE)
+
+        manifest.animations[key] = GeneratedAnimation(
+            fps=spec.fps,
+            loop=spec.loop,
+            grid=GridInfo(
+                cols=layout.cols,
+                rows=layout.rows,
+                cell=layout.actual_cell(processed.source_size),
+                requested_size=layout.size,
+                actual_size=processed.source_size,
             ),
+            source_image=str(source_path.relative_to(store.root)),
+            key_threshold=processed.key_threshold,
+            frames=[str(p.relative_to(store.root)) for p in frame_paths],
         )
-    _profile, superseded = store_profile(manifest, key, reference_result)
-    if profile is None:
-        warnings.append(f"{key} 已确立跨动作缩放基准，后续动作将复用其比例")
-    elif superseded:
-        warnings.append(
-            f"{key} 比原参考动作 {profile.reference} 幅度更大，已顶替为新基准 —— "
-            f"此前生成的动作还是按旧基准出的图，跑一次 `pixel-asset process` "
-            f"让全部动作按新基准重出（不花 API 调用）"
+        manifest.sheets[key] = str(sheet_path.relative_to(store.root))
+        manifest.palette.colors = processed.palette.colors
+        manifest.mirroring = MirroringInfo(
+            enabled=request.mirroring_enabled,
+            source_direction=request.mirroring.source_direction if request.mirroring else None,
+            strict_lighting=request.style.strict_lighting,
         )
+        manifest.status = "processed"
+        manifest.save(store.manifest_path)
+        store.save_job_table(table)
+    except Exception as exc:
+        if job.can(JobEvent.PROCESSING_ERROR):
+            job.fire(JobEvent.PROCESSING_ERROR, detail=str(exc))
+            store.save_job_table(table)
+        raise
 
-    frame_paths = save_frames(processed.frames, store.frames_of(key), stem=key)
-    sheet, _ = compose_spritesheet(processed.frames)
-    sheet_path = save_png(sheet, store.sheets / f"{key}.png")
-    _save_preview(processed.frames, store, key, spec.fps, spec.loop)
-    job.fire(JobEvent.PROCESSING_DONE)
-
-    manifest.animations[key] = GeneratedAnimation(
-        fps=spec.fps,
-        loop=spec.loop,
-        grid=GridInfo(
-            cols=layout.cols,
-            rows=layout.rows,
-            cell=layout.actual_cell(processed.source_size),
-            requested_size=layout.size,
-            actual_size=processed.source_size,
-        ),
-        source_image=str(store.source_path(key).relative_to(store.root)),
-        key_threshold=processed.key_threshold,
-        frames=[str(p.relative_to(store.root)) for p in frame_paths],
-    )
-    manifest.sheets[key] = str(sheet_path.relative_to(store.root))
-    manifest.palette.colors = processed.palette.colors
-    manifest.mirroring = MirroringInfo(
-        enabled=request.mirroring_enabled,
-        source_direction=request.mirroring.source_direction if request.mirroring else None,
-        strict_lighting=request.style.strict_lighting,
-    )
-    manifest.status = "processed"
-    manifest.save(store.manifest_path)
-    store.save_job_table(table)
+    if stop_requested is not None and stop_requested.is_set():
+        raise PauseRequested(f"{job.id} 已保存动作成品，停在 processed 阶段")
 
     return AnimationResult(
         asset_id=request.asset_id,
         key=key,
         frames=len(processed.frames),
         frame_size=processed.frame_size,
-        requested_size=result.requested_size,
-        actual_size=result.actual_size,
+        requested_size=result.requested_size if result else prompt.size,
+        actual_size=result.actual_size if result else processed.source_size,
         key_threshold=processed.key_threshold,
         anchor_drift=processed.anchor_drift_px,
         overflow_clean=processed.overflow.clean,
         overflow_summary=processed.overflow.summary(),
         palette=processed.palette.colors,
         derived_from=None,
-        cached=result.cached,
-        request_id=result.request_id,
+        cached=result.cached if result else False,
+        request_id=result.request_id if result else job.request_id,
         warnings=warnings,
     )
 

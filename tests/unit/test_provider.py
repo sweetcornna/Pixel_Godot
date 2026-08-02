@@ -21,7 +21,7 @@ from pixel_asset_forge.errors import (
     ModerationBlockedError,
     RetryLimitExceededError,
 )
-from pixel_asset_forge.planning import grid_for_frames, seed_layout
+from pixel_asset_forge.planning import grid_for_frames, layout_for_frames, seed_layout
 from pixel_asset_forge.providers import MockImageProvider, ReferenceImage, RetryPolicy
 
 GRID_PROMPT = (
@@ -112,6 +112,21 @@ def test_seed_size_renders_a_single_figure_not_a_2x2_grid() -> None:
     bg = background_mask(image, (255, 0, 255))
     assert not bg[:, 511:513].all(), "竖中线干净，说明被当成了 2×2 网格"
     assert not bg[511:513, :].all(), "横中线干净，说明被当成了 2×2 网格"
+
+
+def test_mock_understands_single_row_strip_prompt() -> None:
+    """真实 prompt 用自然语言声明单行，Mock 也必须画满全部格子。"""
+    layout = layout_for_frames(6)
+    prompt = (
+        "Layout: exactly 6 equally sized cells in ONE horizontal row. "
+        "Draw exactly 6 poses, one per cell. Background: solid #FF00FF."
+    )
+    image = open_image(MockImageProvider().generate(prompt, size=layout.size).image)
+    bg = background_mask(image, (255, 0, 255))
+
+    for index in range(layout.frames):
+        left, top, right, bottom = layout.cell_box(index)
+        assert not bg[top:bottom, left:right].all(), f"第 {index} 格是空的"
 
 
 def test_edit_uses_references_in_the_hash() -> None:

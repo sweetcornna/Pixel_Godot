@@ -230,3 +230,21 @@ def test_pack_plan_sums_assets_and_accepts_existing_mapping(examples_dir: Path) 
     assert first.estimated_api_calls == 3
     assert first.total_jobs == 3
     assert second.to_dict()["assets"][0]["asset_id"] == "health_potion"
+
+
+def test_spell_bundle_plan_separates_seed_and_animation_calls(examples_dir: Path) -> None:
+    result = plan_pack(
+        load_pack(examples_dir / "spell_bundle.yaml"),
+        provider="mock",
+        model="mock-image",
+    )
+    payload = result.to_dict()
+
+    assert result.estimated_seed_api_calls == 3
+    assert result.estimated_animation_api_calls == 12
+    assert result.estimated_api_calls == 15
+    assert result.total_jobs == 15
+    assert payload["estimated_seed_api_calls"] == 3
+    assert payload["estimated_animation_api_calls"] == 12
+    assert all(len(asset.jobs.of_kind(JobKind.SEED)) == 1 for asset in result.assets)
+    assert all(len(asset.jobs.of_kind(JobKind.ANIMATION)) == 4 for asset in result.assets)

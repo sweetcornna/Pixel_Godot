@@ -63,15 +63,19 @@ def _parse_layout(prompt: str, size: tuple[int, int]) -> tuple[int, int, int]:
     if size == SEED_SIZE:
         return (1, 1, 1)
 
+    poses = _POSES_RE.search(prompt)
+    frames = int(poses.group(1)) if poses else 0
+
     match = _GRID_RE.search(prompt)
     if match:
         cols, rows = int(match.group(1)), int(match.group(2))
+    elif frames and "one horizontal row" in prompt.lower():
+        cols, rows = frames, 1
     else:
         cols = max(1, width // CELL_SIZE)
         rows = max(1, height // CELL_SIZE)
 
-    poses = _POSES_RE.search(prompt)
-    frames = int(poses.group(1)) if poses else cols * rows
+    frames = frames or cols * rows
     return (cols, rows, min(frames, cols * rows))
 
 

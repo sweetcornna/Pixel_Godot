@@ -1,4 +1,4 @@
-"""Asset Pack —— 一组共享生成设置的静态资产请求。"""
+"""Asset Pack —— 一组共享生成设置的资产请求。"""
 
 from __future__ import annotations
 
@@ -14,13 +14,27 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .. import PACK_SCHEMA_VERSION, PIPELINE_VERSION, REQUEST_SCHEMA_VERSION
 from ..errors import RequestValidationError
 from ..schema_registry import check_schema_version, validate_against
-from .request import AssetRequest, AssetType, BackgroundSpec, ExportSpec, HexColor, StyleSpec
+from .request import (
+    AnimationSpec,
+    AssetRequest,
+    AssetType,
+    BackgroundSpec,
+    ExportSpec,
+    HexColor,
+    StyleSpec,
+)
 
-PackType = Literal["potion_pack", "weapon_pack", "environment_pack"]
+PackType = Literal[
+    "potion_pack",
+    "weapon_pack",
+    "environment_pack",
+    "spell_bundle",
+]
 PACK_ASSET_TYPES: Final[Mapping[PackType, AssetType]] = {
     "potion_pack": "pickup",
     "weapon_pack": "weapon",
     "environment_pack": "environment_object",
+    "spell_bundle": "spell",
 }
 
 
@@ -38,6 +52,7 @@ class PackShared(_Base):
     background: BackgroundSpec
     export: ExportSpec
     palette: PackPalette
+    animations: tuple[AnimationSpec, ...] | None = Field(default=None, min_length=1)
 
 
 class PackAsset(_Base):
@@ -77,10 +92,16 @@ class StaticAssetPack(_Base):
                     f"全部候选键控色都出现在显式共享色板中：{colors}。"
                     "请换一个 background.color/fallback_colors，或改用 transparent_model。"
                 )
+
+        if self.pack_type == "spell_bundle":
+            if not self.shared.animations:
+                raise ValueError("spell_bundle 必须在 shared.animations 声明至少一个动作")
+        elif self.shared.animations is not None:
+            raise ValueError(f"{self.pack_type} 是静态 pack，shared.animations 必须省略")
         return self
 
     def expand_requests(self) -> tuple[AssetRequest, ...]:
-        """按 pack 顺序展开为对应资产类型的无动画静态请求。"""
+        """按 pack 顺序展开为对应资产类型，并注入全部共享设置。"""
         style = self.shared.style.model_copy(
             update={
                 "palette_preset": self.shared.palette.name,
@@ -95,7 +116,7 @@ class StaticAssetPack(_Base):
                 description=asset.description,
                 style=style,
                 background=self.shared.background,
-                animations=None,
+                animations=self.shared.animations,
                 export=self.shared.export,
             )
             for asset in self.assets
@@ -133,7 +154,7 @@ def parse_pack(data: dict[str, Any], *, source: str = "<内存>") -> StaticAsset
 
 
 def load_pack(path: str | Path) -> StaticAssetPack:
-    """从 YAML 文件读取静态资产 pack。"""
+    """从 YAML 文件读取资产 pack。"""
     pack_path = Path(path)
     if not pack_path.exists():
         raise RequestValidationError(f"找不到 pack 文件：{pack_path}")
