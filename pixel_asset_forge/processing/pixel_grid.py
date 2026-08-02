@@ -202,8 +202,6 @@ def _rgba_blocks(rgba: np.ndarray, cols: int, rows: int) -> np.ndarray:
     跨角色边缘的块会把透明区的键控色也算进中位色，误差被边缘完全主导 ——
     本该吸附的产出会被判成"1:1 像素画"，整条还原被静默关掉。
     """
-    import warnings as _warnings
-
     fitted, bw, bh = _fit_to_blocks(rgba, cols, rows)
     blocks = fitted.reshape(rows, bh, cols, bw, 4)
 
@@ -212,10 +210,16 @@ def _rgba_blocks(rgba: np.ndarray, cols: int, rows: int) -> np.ndarray:
 
     values = blocks[:, :, :, :, :3].astype(np.float32)
     values[~opaque] = np.nan
-    with _warnings.catch_warnings():
-        _warnings.filterwarnings("ignore", message="All-NaN slice encountered")
-        median = np.nanmedian(values, axis=(1, 3))
-    median = np.nan_to_num(median, nan=0.0)
+
+    # 只对留下的块求中位数。全透明的块整块是 NaN，``nanmedian`` 会为它们发
+    # RuntimeWarning —— 而它们随后就被 ``keep`` 滤掉，结果压根用不上。
+    # 原先用 ``warnings.catch_warnings()`` 压制，但那是**进程级**状态：
+    # pack 在线程池里跑时压制会失效，警告漏进 stderr，且漏不漏取决于调度。
+    # 与其压制，不如不产生。``keep`` 的块 >50% 不透明，不可能整块 NaN。
+    per_block = values.transpose(0, 2, 1, 3, 4)  # (rows, cols, bh, bw, 3)
+    median = np.zeros((rows, cols, 3), dtype=np.float32)
+    if keep.any():
+        median[keep] = np.nanmedian(per_block[keep], axis=(1, 2))
 
     out = np.zeros((rows, cols, 4), dtype=np.uint8)
     out[keep, :3] = median[keep].astype(np.uint8)

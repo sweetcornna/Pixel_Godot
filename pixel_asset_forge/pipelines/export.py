@@ -16,9 +16,11 @@ from ..errors import ExportError
 from ..exporters import get_exporter
 from ..exporters.base import animation_views, load_frames, load_static_image
 from ..logging_utils import get_logger
-from ..models.job import JobEvent, JobStatus
+from ..models.job import JobEvent, JobKind, JobStatus
 from ..models.manifest import AssetManifest
+from ..models.request import STATIC_ASSET_TYPES
 from ..storage.artifacts import ArtifactStore
+from .validation import run_validation, static_validation_binding
 
 logger = get_logger("pipeline.export")
 
@@ -133,13 +135,24 @@ def run_export(
         raise ExportError(f"{root} 下没有 asset-manifest.json —— 先跑 create-character / process")
 
     manifest = AssetManifest.load(store.manifest_path)
-    if manifest.static_image is not None:
+    table = store.load_job_table()
+    static_jobs = table.of_kind(JobKind.STATIC) if table is not None else ()
+    is_static = (
+        manifest.asset_type in STATIC_ASSET_TYPES
+        or bool(static_jobs)
+        or manifest.static_image is not None
+    )
+    revalidated_reason: str | None = None
+    if is_static:
+        if manifest.static_image is None:
+            raise ExportError(
+                f"{manifest.asset_id} 是静态资产，但 Manifest 缺少 static_image"
+            )
         if manifest.status not in ("validated", "exported"):
             raise ExportError(
                 f"Manifest 状态为 {manifest.status}，只有 validated/exported 可导出"
             )
 
-        table = store.load_job_table()
         if table is not None:
             pending = [
                 job
@@ -150,6 +163,20 @@ def run_export(
             if pending:
                 states = ", ".join(f"{job.id}={job.status.value}" for job in pending)
                 raise ExportError(f"导出前成品任务必须 validated；当前 {states}")
+
+            for job in static_jobs:
+                current, reason = static_validation_binding(store, job, manifest)
+                if current:
+                    continue
+                report = run_validation(root)
+                if not report.passed:
+                    raise ExportError(
+                        f"静态成品的验证绑定已失效（{reason}）；重新验证未通过，"
+                        f"详见 {store.validation_report_path}"
+                    )
+                manifest = AssetManifest.load(store.manifest_path)
+                revalidated_reason = reason
+                break
 
     summary = ExportSummary(asset_id=manifest.asset_id)
 
@@ -168,6 +195,11 @@ def run_export(
             "帧序被打乱无法自动检测 —— 请看 contact sheet 与 previews/*.gif 确认播放顺序。"
             if manifest.animations
             else "静态资产的 contact sheet 供构图与配色的人工审核。"
+        )
+
+    if revalidated_reason is not None:
+        summary.notes.append(
+            f"静态成品的验证绑定曾失效（{revalidated_reason}），已重新验证通过后导出。"
         )
 
     _mark_exported(store, manifest)

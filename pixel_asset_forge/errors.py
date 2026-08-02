@@ -179,6 +179,16 @@ class ProviderAuthError(ProviderError):
     code = "provider_auth_error"
 
 
+class InvalidImageResponseError(ProviderError):
+    """Provider 报告成功，但响应体不是可解析的图像。
+
+    这不是网络抖动或 5xx：远端调用已经给出了成功响应，盲目自动重试可能重复
+    计费。把它持久化为明确失败，交给显式的 ``--retry-failed`` 恢复。
+    """
+
+    code = "provider_invalid_image"
+
+
 # ---------------------------------------------------------------------------
 # 处理、验证、修复
 # ---------------------------------------------------------------------------

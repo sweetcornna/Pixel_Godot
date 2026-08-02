@@ -11,7 +11,7 @@ import yaml
 from PIL import Image
 
 from pixel_asset_forge.config import Config
-from pixel_asset_forge.errors import PauseRequested, ProcessingError
+from pixel_asset_forge.errors import ExportError, PauseRequested, ProcessingError
 from pixel_asset_forge.models import AssetManifest, load_pack
 from pixel_asset_forge.models.job import JobEvent, JobStatus
 from pixel_asset_forge.models.validation import (
@@ -21,6 +21,7 @@ from pixel_asset_forge.models.validation import (
     CheckResult,
     ValidationReport,
 )
+from pixel_asset_forge.pipelines.export import run_export
 from pixel_asset_forge.pipelines.static_asset import (
     create_static_asset,
     validate_and_export_static_asset,
@@ -354,6 +355,84 @@ def test_validated_job_skips_validation_and_exports(static_store: ArtifactStore)
     assert table is not None
     assert next(iter(table)).status is JobStatus.EXPORTED
     assert any(static_store.exports.rglob("*"))
+
+
+def test_exported_changed_product_with_refreshed_manifest_hash_is_revalidated(
+    static_store: ArtifactStore,
+) -> None:
+    first = validate_and_export_static_asset(
+        static_store.root,
+        targets=["generic-json"],
+    )
+    assert first.export is not None
+
+    table = static_store.load_job_table()
+    assert table is not None
+    job = next(iter(table))
+    old_validated_hash = job.validated_processed_hash
+    assert old_validated_hash is not None
+
+    frame = np.fliplr(_load_static_frame(static_store)).copy()
+    _save_static_frame(static_store, frame)
+    manifest = AssetManifest.load(static_store.manifest_path)
+    assert manifest.static_image is not None
+    assert manifest.static_image.processed_hash != old_validated_hash
+
+    completion = validate_and_export_static_asset(
+        static_store.root,
+        targets=["generic-json"],
+    )
+
+    assert completion.validation is not None
+    assert completion.validation.passed is True
+    assert completion.export is not None
+    persisted = static_store.load_job_table()
+    assert persisted is not None
+    persisted_job = next(iter(persisted))
+    assert persisted_job.status is JobStatus.EXPORTED
+    assert persisted_job.validated_processed_hash == manifest.static_image.processed_hash
+    assert [record.event for record in persisted_job.history].count(
+        JobEvent.START_VALIDATION
+    ) == 2
+
+
+def test_direct_export_revalidates_changed_static_product(
+    static_store: ArtifactStore,
+) -> None:
+    assert run_validation(static_store.root).passed is True
+    table = static_store.load_job_table()
+    assert table is not None
+    old_validated_hash = next(iter(table)).validated_processed_hash
+    assert old_validated_hash is not None
+
+    frame = np.fliplr(_load_static_frame(static_store)).copy()
+    _save_static_frame(static_store, frame)
+
+    summary = run_export(static_store.root, targets=["generic-json"])
+
+    assert any("已重新验证通过后导出" in note for note in summary.notes)
+    persisted = static_store.load_job_table()
+    assert persisted is not None
+    job = next(iter(persisted))
+    assert job.status is JobStatus.EXPORTED
+    assert job.validated_processed_hash != old_validated_hash
+
+
+def test_static_export_rejects_manifest_missing_static_image(
+    static_store: ArtifactStore,
+) -> None:
+    assert run_validation(static_store.root).passed is True
+    manifest = AssetManifest.load(static_store.manifest_path)
+    manifest.static_image = None
+    manifest.save(static_store.manifest_path)
+
+    with pytest.raises(ExportError, match=r"静态资产.*缺少 static_image"):
+        run_export(static_store.root, targets=["generic-json"])
+
+    table = static_store.load_job_table()
+    assert table is not None
+    assert next(iter(table)).status is JobStatus.VALIDATED
+    _assert_no_export_artifacts(static_store)
 
 
 def test_exported_job_can_reenter_export_idempotently(

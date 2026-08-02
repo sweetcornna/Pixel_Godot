@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import numpy as np
 from PIL import Image
 
@@ -108,10 +106,14 @@ def block_median_resize(rgba: np.ndarray, size: tuple[int, int]) -> np.ndarray:
 
     values = blocks[:, :, :, :, :3].astype(np.float32)
     values[~opaque] = np.nan
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="All-NaN slice encountered")
-        median = np.nanmedian(values, axis=(1, 3))
-    median = np.nan_to_num(median, nan=0.0)
+
+    # 同 ``pixel_grid._rgba_blocks``：只对留下的块求中位数。全透明的块整块是
+    # NaN，结果会被 ``keep`` 滤掉、压根用不上，却会发 RuntimeWarning。
+    # 不用 ``catch_warnings`` 压制 —— 那是进程级状态，线程池下会失效。
+    per_block = values.transpose(0, 2, 1, 3, 4)  # (height, width, bh, bw, 3)
+    median = np.zeros((height, width, 3), dtype=np.float32)
+    if keep.any():
+        median[keep] = np.nanmedian(per_block[keep], axis=(1, 2))
 
     out = np.zeros((height, width, 4), dtype=np.uint8)
     out[keep, :3] = median[keep].astype(np.uint8)

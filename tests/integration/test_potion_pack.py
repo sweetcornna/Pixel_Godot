@@ -14,9 +14,11 @@ from pixel_asset_forge.config import Config
 from pixel_asset_forge.models import AssetManifest
 from pixel_asset_forge.models.job import JobStatus
 from pixel_asset_forge.models.pack import load_pack
+from pixel_asset_forge.models.validation import CheckResult
 from pixel_asset_forge.pipelines import asset_pack
 from pixel_asset_forge.pipelines.asset_pack import PackRunControl, run_asset_pack
 from pixel_asset_forge.planning import plan_pack
+from pixel_asset_forge.providers import MockImageProvider
 from pixel_asset_forge.storage import ArtifactStore
 
 
@@ -83,6 +85,88 @@ def test_three_potions_complete_and_resume_by_skipping(
         store = ArtifactStore.for_asset(cfg.output_dir, outcome.asset_id)
         log = json.loads(store.generation_log_path.read_text(encoding="utf-8"))
         assert len(log) == 1
+
+
+def test_exported_pack_asset_with_missing_product_is_revalidated_not_skipped(
+    tmp_path: Path,
+    examples_dir: Path,
+) -> None:
+    cfg = config(tmp_path)
+    path = single_asset_pack(tmp_path, examples_dir, "missing_exported_product")
+    save_plan(path, cfg)
+
+    first = asyncio.run(run_asset_pack(path, cfg))
+    assert first.counts["exported"] == 1
+    store = ArtifactStore.for_asset(cfg.output_dir, "health_potion")
+    (store.frames / "static.png").unlink()
+
+    second = asyncio.run(run_asset_pack(path, cfg))
+
+    assert second.counts["skipped"] == 0
+    assert second.counts["validation_failed"] == 1
+    assert second.assets[0].error_code == "artifact_revalidation_failed"
+    assert "重新验证未通过" in (second.assets[0].error or "")
+    table = store.load_job_table()
+    assert table is not None
+    assert next(iter(table)).status is JobStatus.VALIDATION_FAILED
+    report = json.loads(store.validation_report_path.read_text(encoding="utf-8"))
+    artifact_exists = next(
+        check for check in report["checks"] if check["id"] == "artifact_exists"
+    )
+    assert artifact_exists["result"] == CheckResult.FAIL.value
+
+
+class _BadBytesProvider(MockImageProvider):
+    def _generate(
+        self, prompt: str, size: tuple[int, int], model: str
+    ) -> tuple[bytes, str | None]:
+        return b"provider-success-but-not-an-image", "req-bad-image"
+
+
+def test_successful_provider_response_with_bad_bytes_is_failed_and_retryable(
+    tmp_path: Path,
+    examples_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = config(tmp_path).model_copy(update={"max_concurrency": 1})
+    path = single_asset_pack(tmp_path, examples_dir, "bad_provider_image")
+    save_plan(path, cfg)
+    monkeypatch.setattr(
+        asset_pack,
+        "get_provider",
+        lambda *_args, **_kwargs: _BadBytesProvider(cfg.model),
+    )
+
+    failed = asyncio.run(run_asset_pack(path, cfg))
+
+    assert failed.counts["provider_failed"] == 1
+    assert failed.counts["processing_failed"] == 0
+    assert failed.assets[0].error_code == "provider_invalid_image"
+    assert failed.assets[0].request_id == "req-bad-image"
+    assert "不是可解析图像" in (failed.assets[0].error or "")
+    store = ArtifactStore.for_asset(cfg.output_dir, "health_potion")
+    table = store.load_job_table()
+    assert table is not None
+    job = next(iter(table))
+    assert job.status is JobStatus.FAILED
+    assert "不是可解析图像" in (job.error or "")
+    assert not store.source_path("static").exists()
+
+    persisted = asyncio.run(run_asset_pack(path, cfg))
+    assert persisted.assets[0].error_code == "persisted_failure"
+
+    monkeypatch.setattr(
+        asset_pack,
+        "get_provider",
+        lambda *_args, **_kwargs: MockImageProvider(cfg.model),
+    )
+    retried = asyncio.run(run_asset_pack(path, cfg, retry_failed=True))
+
+    assert retried.counts["exported"] == 1
+    assert retried.assets[0].resumed is True
+    recovered = store.load_job_table()
+    assert recovered is not None
+    assert next(iter(recovered)).status is JobStatus.EXPORTED
 
 
 def test_one_provider_failure_does_not_cancel_siblings(

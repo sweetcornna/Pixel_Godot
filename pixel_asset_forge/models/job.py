@@ -136,6 +136,9 @@ _TRANSITIONS: dict[tuple[JobStatus, JobEvent], _Transition] = {
     (JobStatus.VALIDATED, JobEvent.START_VALIDATION): _Transition(
         target=JobStatus.VALIDATING, effect="重新验证既有成品"
     ),
+    (JobStatus.EXPORTED, JobEvent.START_VALIDATION): _Transition(
+        target=JobStatus.VALIDATING, effect="导出后产物发生变化，重新验证既有成品"
+    ),
     (JobStatus.VALIDATION_FAILED, JobEvent.START_VALIDATION): _Transition(
         target=JobStatus.VALIDATING, effect="修正后重新验证"
     ),
@@ -228,6 +231,10 @@ class Job(BaseModel):
 
     prompt_hash: str | None = None
     request_id: str | None = None
+    validated_processed_hash: str | None = Field(
+        default=None, pattern=r"^[0-9A-Fa-f]{64}$"
+    )
+    """静态任务最近一次通过验证时绑定的 ``processed_hash``。"""
     error: str | None = None
 
     history: list[JobRecord] = Field(default_factory=list)

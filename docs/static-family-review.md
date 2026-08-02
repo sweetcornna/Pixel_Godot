@@ -116,14 +116,27 @@ schema 版本不升级：schema 描述本来就写着「相对 asset 根目录�
   固定 0.1.0 也使代码变更不失效旧计划（models/pack.py:152 / config.py:62）。
 - **X3. `create_static_asset` 先 `save_request_copy` 后查指纹冲突**：冲突时
   request.yaml 已被新请求覆盖，溯源包自相矛盾（static_asset.py:158）。
-- **X4. `validated/exported` 状态不与产物哈希绑定**：验证后替换
-  `frames/static.png` 再恢复，新文件未经验证即被导出；产物被删后 pack 仍报
-  `skipped`（static_asset.py:93 / asset_pack.py:339）。
-- **X5. 静态导出硬闸以 `static_image is not None` 为条件**：Manifest 缺该字段
-  反而**绕过**硬闸，可产出无图元数据 JSON 并标记 exported（export.py:109）。
-- **X6. Provider 成功但图不可解析 → job 永卡 `generating`**：Pillow 异常不是
-  ProviderError,不写失败态、无检查点,`--retry-failed` 与续跑都救不回,
-  且可能已计费（static_asset.py:197 / providers/base.py:314）。
+- **X4. `validated/exported` 状态不与产物哈希绑定** ✅ 已修
+  <br>**问题**：验证后替换 `frames/static.png` 再恢复，新文件未经验证即被导出；
+  产物被删后 pack 仍报 `skipped`。
+  <br>**修法**：job 新增 `validated_processed_hash`，把成功状态绑定到**实际验证过的**
+  那份产物；跳过验证前同时核对文件存在、磁盘哈希、Manifest 哈希与验证哈希，
+  对不上就重验。pack summary 用 `revalidated_exported` /
+  `artifact_revalidation_failed` 显式反映。
+  <br>**独立复核**：注入半透明缺陷并刷新 Manifest 哈希后 `export`，退出码 1、
+  重验抓到 `partial_alpha`（修复前该命令因 job 是 exported 直接拒绝重验）。
+- **X5. 静态导出硬闸以 `static_image is not None` 为条件** ✅ 已修
+  <br>**问题**：Manifest 缺该字段反而**绕过**硬闸，可产出无图元数据 JSON 并标记 exported。
+  <br>**修法**：硬闸改由 `asset_type` / `JobKind.STATIC` / 静态结构共同判定，
+  静态资产缺 `static_image` 立即拒绝。
+  <br>**独立复核**：复位到 validated 并删掉该字段后 `export` —— 明确报错、
+  **不产出空元数据**、job 未被误标 exported（旧行为三条全反）。
+- **X6. Provider 成功但图不可解析 → job 永卡 `generating`** ✅ 已修
+  <br>**问题**：Pillow 异常不是 ProviderError，不写失败态、无检查点，
+  `--retry-failed` 与续跑都救不回，且可能已计费。
+  <br>**修法**：响应在 source/cache 落盘**前**先 `verify()`，坏字节转成带 request ID
+  的 `provider_invalid_image` 非瞬态失败，job 写 `failed`，可由 `--retry-failed` 恢复。
+  取舍：坏图不自动重试 —— 成功响应可能已计费，恢复权交给显式 `--retry-failed`。
 
 ## 3. 中 / 低（择要）
 
@@ -139,8 +152,11 @@ schema 版本不升级：schema 描述本来就写着「相对 asset 根目录�
   且 `max_colors` 不进交付格式,消费方无法校验色数。
 - **L1.** pack schema 与 Pydantic 模型多处口径分裂(schema_version 必填性、
   colors/targets 唯一性、hex 校验、style 禁字段)。
-- **L2.** `catch_warnings` 非线程安全,pack 线程池下 NumPy RuntimeWarning
-  泄漏不确定(pixel_grid.py:214)。
+- **L2.** ✅ 已修 —— `catch_warnings` 是**进程级**状态，pack 线程池下压制会失效，
+  NumPy RuntimeWarning 漏进 stderr 且漏不漏取决于调度。改为**不产生**警告：
+  只对 `keep` 留下的块求中位数（全透明块的结果本来就被滤掉、用不上）。
+  `resize.py` 有同源的第二处，审查未点到，一并修了。回归测试用
+  `simplefilter("error")` 钉「不产生」而非「被压住」，全套件警告数从每轮必现降到 0。
 - **L3.** 静态资产被打动画告示(「请看 previews/*.gif」而 gif 不存在);
   pack 无汇总 contact sheet;`frame_size` 的 measured 报面积不报尺寸;
   `atomic_write` 产物权限 0600 与直写文件 0644 混杂;CLI「色数」列报声明值;

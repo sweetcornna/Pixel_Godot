@@ -168,3 +168,33 @@ def test_validation_ignores_the_transparent_background() -> None:
     assert reconstruction_error(polluted, 6) == pytest.approx(
         reconstruction_error(art, 6), abs=1.0
     ), "透明区的颜色不该影响验证结果"
+
+
+# -- 全透明块不该发警告 -----------------------------------------------------
+
+
+def test_fully_transparent_blocks_emit_no_warning() -> None:
+    """带大片透明区的图不能刷 RuntimeWarning。
+
+    全透明的块整块是 NaN，``nanmedian`` 会为它们发 "All-NaN slice"，
+    而这些块随后就被 ``keep`` 滤掉、结果压根用不上。原先用
+    ``warnings.catch_warnings()`` 压制 —— 那是**进程级**状态，pack 在线程池里
+    跑时压制会失效、警告漏进 stderr，且漏不漏取决于线程调度。
+    所以判据是"不产生"，不是"被压住"。
+    """
+    import warnings
+
+    from pixel_asset_forge.processing.resize import block_median_resize
+
+    art = blocky_pixel_art(4, 16)          # 64×64，块 4px
+    art[:32, :, 3] = 0                     # 上半张全透明 → 整行块都是全 NaN
+    art[:32, :, :3] = 0
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")     # 任何警告都会变成异常
+        snap = snap_rgba_to_grid(art)
+        resized = block_median_resize(art, (16, 16))
+
+    assert snap is not None
+    # 透明区必须仍然是透明的，不能被中位数填成黑块
+    assert resized[:8, :, 3].max() == 0

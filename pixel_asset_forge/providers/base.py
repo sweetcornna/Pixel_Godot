@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..errors import (
+    InvalidImageResponseError,
     InvalidRequestError,
     ProviderError,
     RetryLimitExceededError,
@@ -43,20 +44,17 @@ def measure_png(data: bytes) -> tuple[int, int]:
     """从 PNG 头读出尺寸。
 
     不能相信"请求了多大就是多大"——端点实测会静默返回别的尺寸
-    （Sprint 0 / A-1）。只解析 IHDR，不解码像素。
+    （Sprint 0 / A-1）。Pillow 的 ``verify`` 会检查图像容器完整性，但不解码
+    像素；这样成功响应里的截断/伪造图片不会进入不可变 source 检查点。
     """
-    if len(data) >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
-        return (
-            int.from_bytes(data[16:20], "big"),
-            int.from_bytes(data[20:24], "big"),
-        )
-    # 非 PNG（或被代理转码了）——退回 Pillow，它认得更多格式。
     from io import BytesIO
 
     from PIL import Image
 
     with Image.open(BytesIO(data)) as img:
-        return img.size
+        actual = img.size
+        img.verify()
+    return actual
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,7 +320,14 @@ class ImageProvider(ABC):
         attempts: int,
         summary: dict[str, Any],
     ) -> GenerationResult:
-        actual = measure_png(data)
+        try:
+            actual = measure_png(data)
+        except (OSError, SyntaxError, ValueError) as exc:
+            raise InvalidImageResponseError(
+                f"{self.name} 返回成功，但响应内容不是可解析图像"
+                f"（{type(exc).__name__}，{len(data)} bytes）",
+                request_id=request_id,
+            ) from exc
         if actual != requested_size:
             # 不是错误，是这个端点的既定行为（Sprint 0 / A-1）。但必须留痕：
             # 下游按 actual 的比例切帧，排障时要能看出尺寸被改过。

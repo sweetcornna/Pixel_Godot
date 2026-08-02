@@ -26,7 +26,7 @@ from ..storage.artifacts import ArtifactStore
 from ..storage.hashes import hash_file
 from .common import ensure_manifest, load_rgb, record_generation, require_source_slot
 from .export import ExportSummary, run_export
-from .validation import run_validation
+from .validation import run_validation, static_validation_binding
 
 
 @dataclass
@@ -99,7 +99,13 @@ def validate_and_export_static_asset(
         validation = run_validation(store.root)
         if not validation.passed:
             return StaticAssetCompletion(validation=validation, export=None)
-    elif job.status not in (JobStatus.VALIDATED, JobStatus.EXPORTED):
+    elif job.status in (JobStatus.VALIDATED, JobStatus.EXPORTED):
+        current, _reason = static_validation_binding(store, job)
+        if not current:
+            validation = run_validation(store.root)
+            if not validation.passed:
+                return StaticAssetCompletion(validation=validation, export=None)
+    else:
         raise ProcessingError(
             f"{job.id} 当前状态为 {job.status.value}，不能进入静态验证与导出"
         )

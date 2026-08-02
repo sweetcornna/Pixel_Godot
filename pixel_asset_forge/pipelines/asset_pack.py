@@ -30,6 +30,7 @@ from .static_asset import (
     create_static_asset,
     validate_and_export_static_asset,
 )
+from .validation import static_validation_binding
 
 logger = get_logger("pipeline.asset_pack")
 
@@ -337,19 +338,23 @@ def _run_one(
         )
 
     if status is JobStatus.EXPORTED:
-        return AssetOutcome(
-            asset_id=item.asset_id,
-            job_id=f"{item.asset_id}:static",
-            input_fingerprint=item.fingerprint,
-            provider=config.provider,
-            model=config.model,
-            outcome="skipped",
-            job_status="exported",
-            stage="exported",
-            resumed=True,
-            skipped=True,
-            artifact_root=str(store.root),
-        )
+        table = store.load_job_table()
+        jobs = table.of_kind(JobKind.STATIC) if table is not None else ()
+        current = bool(jobs) and static_validation_binding(store, jobs[0])[0]
+        if current:
+            return AssetOutcome(
+                asset_id=item.asset_id,
+                job_id=f"{item.asset_id}:static",
+                input_fingerprint=item.fingerprint,
+                provider=config.provider,
+                model=config.model,
+                outcome="skipped",
+                job_status="exported",
+                stage="exported",
+                resumed=True,
+                skipped=True,
+                artifact_root=str(store.root),
+            )
     if status is JobStatus.VALIDATION_FAILED:
         return AssetOutcome(
             asset_id=item.asset_id,
@@ -429,6 +434,7 @@ def _run_one(
             stop_requested=control.stop,
         )
         if not completion.passed:
+            revalidated = status in (JobStatus.VALIDATED, JobStatus.EXPORTED)
             return AssetOutcome(
                 asset_id=item.asset_id,
                 job_id=f"{item.asset_id}:static",
@@ -440,6 +446,14 @@ def _run_one(
                 stage="validation_failed",
                 cached=cached,
                 resumed=resumed,
+                error_code=(
+                    "artifact_revalidation_failed" if revalidated else None
+                ),
+                error=(
+                    "既有 validated/exported 成品的验证哈希绑定失效；重新验证未通过"
+                    if revalidated
+                    else None
+                ),
                 request_id=request_id,
                 artifact_root=str(store.root),
             )
@@ -451,7 +465,12 @@ def _run_one(
             model=config.model,
             outcome="exported",
             job_status="exported",
-            stage="exported",
+            stage=(
+                "revalidated_exported"
+                if status in (JobStatus.VALIDATED, JobStatus.EXPORTED)
+                and completion.validation is not None
+                else "exported"
+            ),
             cached=cached,
             resumed=resumed,
             request_id=request_id,
