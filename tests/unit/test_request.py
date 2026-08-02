@@ -10,18 +10,30 @@ from pathlib import Path
 
 import pytest
 
-from pixel_asset_forge.constants import DEFAULT_TARGET_SIZE, DIRECTIONS
+from pixel_asset_forge.constants import DEFAULT_TARGET_SIZE, DIRECTIONS, LOGICAL_SIZES
 from pixel_asset_forge.errors import RequestValidationError, SchemaVersionError
 from pixel_asset_forge.models import load_request, parse_request
+
+#: 每个示例的目标尺寸按**它自己的细节密度**定，不统一锁在默认常量上。
+#:
+#: 32 → 48 是早先的实测结论（角色原生约 80 逻辑像素高，压到 32 丢六成细节）。
+#: knight 再往上到 96 是 2026-08-02 的真实生成实测：带剑人形是本项目细节最密的
+#: 一类，48px 下脸糊成一团、剑只剩一条线、连迈步动作都看不出来；96px 下五官、
+#: 剑柄剑刃、跨步全都清晰（见 docs/static-family-review.md §7.2）。
+EXAMPLE_TARGET_SIZES = {
+    "knight": (96, 96),
+    "slime": DEFAULT_TARGET_SIZE,
+    "fireball": DEFAULT_TARGET_SIZE,
+}
 
 
 @pytest.mark.parametrize("name", ["knight", "slime", "fireball"])
 def test_examples_parse(examples_dir: Path, name: str) -> None:
     request = load_request(examples_dir / f"{name}.yaml")
     assert request.asset_id == f"{name}_01"
-    # 48 而非 32：实测 gpt-image-2 画出的角色原生约 80 逻辑像素高，
-    # 压到 32 要丢六成细节（见 processing/pixel_grid.py）。
-    assert request.style.target_size == DEFAULT_TARGET_SIZE
+    assert request.style.target_size == EXAMPLE_TARGET_SIZES[name]
+    width, height = request.style.target_size
+    assert width in LOGICAL_SIZES and height in LOGICAL_SIZES, "必须是受支持的逻辑尺寸档位"
 
 
 def test_knight_is_not_mirrorable(examples_dir: Path) -> None:

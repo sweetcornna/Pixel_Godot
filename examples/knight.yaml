@@ -19,7 +19,13 @@ description: >-
 
 style:
   perspective: top_down_3_4
-  target_size: [48, 48]
+  # 96 而不是 48 —— 真实生成实测（gpt-image-2，2026-08-02）：
+  # 模型原生把角色画到约 330 逻辑像素高，压到 48px 会丢掉约 85% 的细节，
+  # 脸糊成一团、剑只剩一条线、连走路的迈步动作都看不出来（流水线自己会
+  # 告警建议提到 96）。同一个 seed 出的 96px 版本：五官在、剑柄剑刃分明、
+  # 帧 2 一腿前一腿后的跨步清晰可辨，而身份一致性没有任何损失。
+  # 带武器的人形角色是本项目细节最密的一类，48px 装不下。
+  target_size: [96, 96]
   max_colors: 32
   outline: single_pixel_dark
   shading: two_tone

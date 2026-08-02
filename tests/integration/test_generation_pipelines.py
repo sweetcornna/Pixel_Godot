@@ -20,10 +20,10 @@ from typer.testing import CliRunner
 
 from pixel_asset_forge.cli import EXIT_ERROR, EXIT_OK, app
 from pixel_asset_forge.config import Config
-from pixel_asset_forge.constants import DEFAULT_TARGET_SIZE
 from pixel_asset_forge.errors import ProcessingError
 from pixel_asset_forge.models.job import JobStatus
 from pixel_asset_forge.models.manifest import AssetManifest, DerivedAnimation
+from pixel_asset_forge.models.request import load_request
 from pixel_asset_forge.pipelines import (
     approve_seed,
     create_animation,
@@ -73,7 +73,7 @@ def test_seed_lands_in_awaiting_approval(config: Config, knight_request: Path) -
 
     assert result.seed_path.exists()
     assert result.pixel_path.exists()
-    assert Image.open(result.pixel_path).size == DEFAULT_TARGET_SIZE
+    assert Image.open(result.pixel_path).size == load_request(knight_request).style.target_size
 
     store = store_for(config, "knight_01")
     table = store.load_job_table()
@@ -192,7 +192,10 @@ def test_animation_produces_frames_sheet_and_preview(
 
     assert result.key == "walk_down"
     assert result.frames == 8
-    assert result.frame_size == DEFAULT_TARGET_SIZE
+    # 断言产出尺寸 == 请求里声明的尺寸，而不是 == 默认常量：
+    # 示例可以按自己的细节密度选尺寸（knight 用 96，实测 48 装不下带剑人形），
+    # 而"产出必须等于请求"才是这里真正要守的契约。
+    assert result.frame_size == load_request(knight_request).style.target_size
     assert len(list(store.frames_of("walk_down").glob("*.png"))) == 8
     assert (store.sheets / "walk_down.png").exists()
     assert (store.previews / "walk_down.gif").exists()
