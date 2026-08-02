@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from PIL import Image
 from typer.testing import CliRunner
 
 from pixel_asset_forge.cli import (
@@ -16,8 +17,11 @@ from pixel_asset_forge.cli import (
     EXIT_VALIDATION_FAILED,
     app,
 )
+from pixel_asset_forge.config import Config
 from pixel_asset_forge.models import AssetManifest
 from pixel_asset_forge.models.job import JobKind, JobStatus
+from pixel_asset_forge.pipelines.static_asset import create_static_asset
+from pixel_asset_forge.providers import MockImageProvider
 from pixel_asset_forge.storage import ArtifactStore
 
 runner = CliRunner()
@@ -170,3 +174,41 @@ def test_create_asset_returns_validation_failed_exit_code(
 
     assert created.exit_code == EXIT_VALIDATION_FAILED
     assert "验证未通过" in created.stderr
+
+
+def test_create_asset_returns_validation_failed_for_real_invalid_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = _write_config(tmp_path / "mock.yaml")
+    request_path = tmp_path / "real_invalid_prop.yaml"
+    request_path.write_text(
+        yaml.safe_dump(_static_request("real_invalid_prop", "prop"), sort_keys=False),
+        encoding="utf-8",
+    )
+    config = Config(
+        provider="mock",
+        model="configured-model",
+        output_dir=tmp_path / "outputs",
+        cache_dir=tmp_path / "cache",
+    )
+    create_static_asset(
+        request_path,
+        config,
+        provider=MockImageProvider("configured-model"),
+    )
+    store = ArtifactStore.for_asset(config.output_dir, "real_invalid_prop")
+    Image.new("RGBA", (32, 32), (0, 0, 0, 0)).save(store.frames / "static.png")
+
+    created = runner.invoke(
+        app,
+        ["create-asset", str(request_path), "--config", str(config_path)],
+    )
+
+    assert created.exit_code == EXIT_VALIDATION_FAILED
+    assert "验证未通过" in created.stderr
+    assert not any(store.exports.iterdir())
+    table = store.load_job_table()
+    assert table is not None
+    assert next(iter(table)).status is JobStatus.VALIDATION_FAILED

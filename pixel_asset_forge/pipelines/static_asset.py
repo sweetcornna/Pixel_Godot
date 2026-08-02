@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -80,7 +81,7 @@ def validate_and_export_static_asset(
     asset_dir: str | Path,
     *,
     targets: Sequence[str],
-    stop_requested: object | None = None,
+    stop_requested: threading.Event | None = None,
 ) -> StaticAssetCompletion:
     """验证并导出已处理的静态资产，供单资产与 pack 协调器共用。"""
     store = ArtifactStore(root=Path(asset_dir))
@@ -103,8 +104,7 @@ def validate_and_export_static_asset(
             f"{job.id} 当前状态为 {job.status.value}，不能进入静态验证与导出"
         )
 
-    checker = getattr(stop_requested, "is_set", None)
-    if checker and checker():
+    if stop_requested is not None and stop_requested.is_set():
         raise PauseRequested(f"{job.id} 已验证并停在阶段边界")
 
     exported = run_export(store.root, targets=list(targets))
@@ -144,7 +144,7 @@ def create_static_asset(
     *,
     provider: ImageProvider | None = None,
     regenerate: bool = False,
-    stop_requested: object | None = None,
+    stop_requested: threading.Event | None = None,
     allow_cached_resume: bool = False,
 ) -> StaticAssetResult:
     """生成并处理一个无动画静态资产，停在 ``processed`` 等待真实验证。"""
@@ -186,8 +186,7 @@ def create_static_asset(
     result = None
 
     def should_stop() -> bool:
-        checker = getattr(stop_requested, "is_set", None)
-        return bool(checker and checker())
+        return stop_requested is not None and stop_requested.is_set()
 
     if regenerate:
         require_source_slot(store, "static", regenerate=True)

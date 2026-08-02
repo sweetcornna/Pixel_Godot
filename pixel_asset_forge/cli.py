@@ -1,10 +1,8 @@
 """``pixel-asset`` 命令行。
 
-9 个命令中有 5 个完全不调用 API（``init`` / ``plan`` / ``process`` / ``validate`` / ``export``）
+13 个命令中有 6 个完全不调用 API（``init`` / ``plan`` / ``process`` / ``validate`` /
+``export`` / ``import``）
 —— 这是刻意设计：调试与迭代应尽量在离线侧完成（PLAN §6.1）。
-
-Sprint 1 交付 ``init`` / ``plan`` / ``doctor``；其余命令给出明确的"排期在哪个 Sprint"出口，
-而不是一个看起来像 bug 的堆栈。
 """
 
 from __future__ import annotations
@@ -460,7 +458,11 @@ def create_asset_pack(
         str | None, typer.Option("--model", help="覆盖有效生成模型")
     ] = None,
 ) -> None:
-    """并发生成、验证并导出一个静态资产 pack。"""
+    """并发生成、验证并导出一个静态资产 pack。
+
+    批量执行有 plan 前置：必须先运行 ``pixel-asset plan <pack.yaml> --save``，
+    否则拒绝执行。
+    """
     overrides = {"model": model} if model is not None else None
     config = _load_config(config_path, overrides=overrides)
     control = PackRunControl()
@@ -626,15 +628,6 @@ def _render_plan(result: Any, *, resumed: bool) -> None:
         "[dim]下一步：create-character 产出 canonical seed → "
         "【人工闸门】确认 seed → create-animation → validate。[/dim]"
     )
-
-
-# ---------------------------------------------------------------------------
-# 尚未实现的命令（PLAN §6.1 的其余 6 个）
-# ---------------------------------------------------------------------------
-
-
-def _pending(feature: str, sprint: str) -> None:
-    _fail(NotImplementedYetError(feature, sprint))
 
 
 @app.command("create-character")
@@ -1166,7 +1159,9 @@ def repair(
 
 @app.command()
 def export(
-    asset_dir: Annotated[Path, typer.Argument(help="outputs/<asset_id>")],
+    asset_dir: Annotated[
+        Path, typer.Argument(help="outputs/<asset_id> 或裸 asset_id")
+    ],
     target: Annotated[
         list[str] | None,
         typer.Option("--target", "-t", help="generic-json / godot，可重复"),

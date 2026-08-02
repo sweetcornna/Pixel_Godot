@@ -329,6 +329,38 @@ def test_summary_counts_persisted_validation_failure_and_resume(
     assert summary.assets[0].resumed is True
 
 
+def test_retry_failed_does_not_retry_persisted_validation_failure(
+    tmp_path: Path,
+    examples_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = config(tmp_path)
+    path = single_asset_pack(tmp_path, examples_dir, "validation_failure_retry")
+    save_plan(path, cfg)
+    store = ArtifactStore.for_asset(cfg.output_dir, "health_potion")
+    table = store.load_job_table()
+    assert table is not None
+    next(iter(table)).status = JobStatus.VALIDATION_FAILED
+    store.save_job_table(table)
+    create_called = False
+
+    def unexpected_create(*_args, **_kwargs):
+        nonlocal create_called
+        create_called = True
+        raise AssertionError("validation_failed assets must not be retried")
+
+    async def inline_to_thread(function, /, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asset_pack, "create_static_asset", unexpected_create)
+    monkeypatch.setattr(asyncio, "to_thread", inline_to_thread)
+
+    summary = asyncio.run(run_asset_pack(path, cfg, retry_failed=True))
+
+    assert create_called is False
+    assert summary.assets[0].outcome == "validation_failed"
+
+
 def test_summary_counts_cached_resume(
     tmp_path: Path,
     examples_dir: Path,

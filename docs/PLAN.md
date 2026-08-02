@@ -635,6 +635,7 @@ MCP 仍保持少量高层语义工具。详见 [ADR-005 修订](adr/ADR-005-cli-
 | `pixel-asset plan <input.yaml>` | 自动识别单资产请求或 pack，输出任务 DAG，不执行 | ❌ |
 | `pixel-asset create-character <request.yaml>` | 生成 canonical seed | ✅ |
 | `pixel-asset create-animation --asset A --action X --direction D` | 生成动作网格 | ✅ |
+| `pixel-asset create-asset <request.yaml>` | 生成单个静态资产（生成 → 处理 → 验证 → 导出） | ✅ |
 | `pixel-asset create-asset-pack <pack.yaml>` | 生成一组共享约束的静态资产 | ✅ |
 | `pixel-asset import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ |
 | `pixel-asset interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ |
@@ -1300,7 +1301,7 @@ planner、静态流水线、validation 四处统一为 {pickup, weapon}，拒绝
 CLI 实测 `starter_weapons` 三件武器全链路（plan → create → 逐资产 export
 → 静态重处理零 API）。全套件 793 passed / 5 skipped / 0 failed。
 
-#### 7.3 静态家族收官 · 🚧 正在实现
+#### 7.3 静态家族收官 · ✅ 已完成
 
 **本次范围：`environment_pack` + 静态单资产类型补全（`prop` / `ui_icon` /
 `environment_object`）+ 单资产 CLI 入口。** 动画类 pack（`spell_bundle`、
@@ -1326,12 +1327,29 @@ CLI 实测 `starter_weapons` 三件武器全链路（plan → create → 逐资�
 
 ##### 退出门槛（仅对本次范围主张）
 
-- ⬜ `environment_pack` 走完 plan → create-asset-pack → 逐资产 export
+- ✅ `environment_pack` 走完 plan → create-asset-pack → 逐资产 export
   全链路（集成测试 + CLI 实测）
-- ⬜ `create-asset` 对 `prop` 与 `ui_icon` 各有一条端到端集成测试；
+- ✅ `create-asset` 对 `prop` 与 `ui_icon` 各有一条端到端集成测试；
   对动画请求拒收有测试
-- ⬜ 映射、放行/拒绝、prompt 措辞差异有测试；7.1/7.2 全部既有测试
+- ✅ 映射、放行/拒绝、prompt 措辞差异有测试；7.1/7.2 全部既有测试
   不回归、不削弱断言
+
+**7.3 完成记录**：实现按契约落地（`96c0d84`，经 PR #1 合入）——映射表加
+`environment_pack → environment_object`、`STATIC_ASSET_TYPES` 扩为五类、
+schema enum 三值、prompt 按类型最小措辞（pickup/weapon 一字未动，`ui_icon`
+只多 UI 惯例一句）、抽出 `validate_and_export_static_asset()` 供单资产入口
+与 pack 协调器共用、新增 `create-asset` 命令。收口时独立复核了抽取带来的
+两处边界语义并决定保留：「`VALIDATION_FAILED` 纳入重验」在现有调用路径上
+不可达（pack 协调器更早拦截，续跑语义未变）；「非期望状态抛错」取代的旧
+行为其实是**静默跳过导出却上报 `exported`** 的假成功。两处补 9 条固化测试
+（7 条函数直测 + `--retry-failed` 现状钉死 + CLI 真实验证失败路径），
+`stop_requested` 收紧为 `threading.Event | None`。CLI 全链路实测 7/7：
+plan 前置闸门拒绝未规划执行 → `plan --save` → 三件环境物件全 exported →
+按 `asset_id` 导出走默认 contact sheet → `process` 静态重跑零 API
+（generation-log SHA-256 前后一致）→ `create-asset` prop/ui_icon 全链 →
+动画请求在产物创建前拒收。复核中发现的存量问题（`repair` 对静态资产绕过
+状态机等六项）记入交接文档 §7.2 待拍板/backlog，不在本次范围。
+全套件 819 passed / 5 skipped / 0 failed；ruff、mypy 全绿。
 
 ---
 

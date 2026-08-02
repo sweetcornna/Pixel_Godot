@@ -95,6 +95,9 @@ Sprint 7 要交付「批量资产包」（`potion_pack` / `weapon_pack` / `spell
 
 ## 3. 进行中：7.3「静态家族收官」—— 代码在工作区，**未提交**
 
+> ⚠️ **本节已过期（2026-08-01 当天晚些时候）**：这些改动已作为 `96c0d84` 提交，
+> 并经 PR #1（`9b25abb`）合入 `main`。收口验收的进展与 §3.2 的复核结论见 §7。
+
 契约见 `docs/PLAN.md:1303`（7.3 节）。范围是：`environment_pack` + 静态单资产类型补全
 （`prop` / `ui_icon` / `environment_object`）+ 新增单资产 CLI 入口 `create-asset`。
 **动画类 pack（`spell_bundle`、`combat_bundle`）明确不在本次范围。**
@@ -226,3 +229,60 @@ Sprint 7 要交付「批量资产包」（`potion_pack` / `weapon_pack` / `spell
     并抽查关键 diff。7.1 那三个 bug 都是这一步捞出来的。
   - **不并行改同一批文件**。会话里审计代理已经报出 `cli.py` 的缺口，
     但因为 codex 正在改 `cli.py`，第二轮是等第一轮落地后才派的。
+
+---
+
+## 7. 收口更新（2026-08-01，macOS 侧接手）
+
+接手环境已从 WSL 换到 macOS（`/Users/cornna/project/Pixel_Godot`），§6 的 WSL
+实操须知不再适用。7.3 的工作区改动已作为 `96c0d84` 提交、经 PR #1（`9b25abb`）
+合入 `main` 并推送 —— §2 开头「5 个提交均未推送」与 §4.3 也随之过期。
+
+### 7.1 §3.2 两处语义变化的复核结论（独立代码分析，非转述）
+
+**第 1 条的影响描述与代码事实不符。** 「上次验证失败的资产，续跑时会重新验证」
+不会发生：pack 协调器 `_run_one` 在进入新函数**之前**就把 `VALIDATION_FAILED`
+拦下直接返回（`asset_pack.py:353-365`，抽取前后一字未改），`--retry-failed`
+也只复位 `FAILED` 不含 `VALIDATION_FAILED`（`asset_pack.py:187-188`）；
+`create-asset` 路径则更早死在 `static_asset.py:269-272`。所以两个调用方都
+带不进这个状态，**续跑语义没有变**。新集合与下游 `run_validation` 的候选集
+（`pipelines/validation.py:26-33`）及状态机合法边（`models/job.py:139-141`）
+一致，是共享函数的正确闭包，予以保留。
+
+**第 2 条保留抛错语义。** 旧内联代码不只是静默跳过导出 —— `return` 在 `if` 外，
+状态不符时会照样上报 `outcome="exported"`，是写进 `pack-summary.json` 的假成功。
+新的 `ProcessingError` 会被 `_run_one` 兜底转成 `processing_failed` 并记录真实
+job 状态。改回旧语义等于恢复一个假阳性上报点。
+
+**第 3 条采纳。** `stop_requested` 实际传入方只有 `threading.Event`
+（`asset_pack.py:100,414,429`）与 `None`（CLI 路径），无任何鸭子类型使用者，
+收成 `threading.Event | None`。
+
+两处新语义此前**零测试覆盖**（唯一触及处 `test_create_asset.py:161-164`
+还把整个函数打了桩），固化测试列入收口批次补齐。
+
+### 7.2 复核中顺带发现的问题（记入 backlog / 待拍板）
+
+1. **`repair` 对静态资产是坏的（潜在 bug，非 7.3 引入）**：静态检查的 target
+   是 `"static"`（`validation/engine.py:418`），`repair/executor.py:124` 用
+   `JobKind.ANIMATION` 拼出的 job id 恰好等于静态 job 的 `asset_id:static`，
+   `_advance_job` 会绕过状态机把静态 job 硬写成 `VALIDATION_FAILED`
+   （`repair/executor.py:130-131`）；`--allow-api` 的 REGENERATE_GRID 分支
+   还会对静态资产调 `create_animation`。
+2. **`create-asset` 不可重入，与 pack 口径不一致（待拍板）**：对已 `exported`
+   的资产再跑一次 `create-asset` 报「不能进入静态处理」，pack 对同样情况是
+   `skipped`。
+3. **pack 级 `validation_failed` 资产没有自动重验入口（待拍板，产品口径）**：
+   `process` 修复后 job 仍是 `VALIDATION_FAILED`，pack 重跑与 `--retry-failed`
+   都不放行；目前只能走单资产 `validate` → `export` 收尾。若要放行，改
+   `asset_pack.py:353` 与 `_reset_failed_static_job`，**不要动 `static_asset.py`**。
+
+CLI 全链路实测（7/7 通过，2026-08-01）另报三点非阻断观察，一并记录：
+
+4. **静态 `process` 重跑后状态层不一致**：manifest 状态从 `exported` 回到
+   `processed`，但 job-table 仍是 `exported`。产物与 `static_image` 均正确，
+   不影响 7.3 结论，但与上面第 3 条同族，拍板时一起定口径。
+5. **`pixel_grid.py:217` 的 NumPy `All-NaN slice` RuntimeWarning 泄漏到 stderr**
+   （块网格探测遇全透明块时），pytest 警告汇总里也有同一条。
+6. **处理层警告文案对静态资产不适配**：`environment_object` / `prop` / `ui_icon`
+   的警告仍用「角色」「脸与武器」等措辞。

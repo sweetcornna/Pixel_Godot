@@ -21,7 +21,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 4 | 种子图与动画网格流水线 · Prompt Compiler · 人工闸门 | ✅ 完成 |
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
-| 7 | 道具、特效与批量任务 | 🚧 `potion_pack` 首纵切正在实现；Sprint 7 未完成 |
+| 7 | 道具、特效与批量任务 | 🚧 静态家族已收官（`potion_pack` / `weapon_pack` / `environment_pack` + `create-asset`）；动画类 pack 未开工，Sprint 7 未完成 |
 
 ### 未达标项
 
@@ -78,24 +78,52 @@ uv run pixel-asset export  outputs/knight_01               # Godot + Generic JSO
 **人工闸门不要跳过。** seed 是所有动画的身份基准，它不对则后续动画全部作废重来 ——
 所以 `create-animation` 在 seed 未获批准时会直接拒绝执行。
 
-### `potion_pack` 首纵切
+### 静态资产 Pack
 
-一批药水使用 pack YAML：每个条目都是独立的静态 `pickup`，共享
-`style` / `background` / `export` 和显式 `palette.colors`。pack 中不要写 `model`；
-pack 不选择模型；运行时使用 Config 解析后的有效 `model`（当前默认 `gpt-image-2`），
+一批共享约束的静态资产使用 pack YAML：每个条目都是独立的无动画静态资产，共享
+`style` / `background` / `export` 和显式 `palette.colors`。三种 pack **共用同一份**
+[`schemas/asset-pack.schema.json`](schemas/asset-pack.schema.json)，
+展开成哪种资产类型由 `pack_type` 映射表决定：
+
+| `pack_type` | 展开的资产类型 | 示例 |
+|---|---|---|
+| `potion_pack` | `pickup` | [`examples/potion_pack.yaml`](examples/potion_pack.yaml) |
+| `weapon_pack` | `weapon` | [`examples/weapon_pack.yaml`](examples/weapon_pack.yaml) |
+| `environment_pack` | `environment_object` | [`examples/environment_pack.yaml`](examples/environment_pack.yaml) |
+
+加一种静态 pack 只需在映射表里加一行。pack 中不要写 `model`；pack 不选择模型；
+运行时使用 Config 解析后的有效 `model`（当前默认 `gpt-image-2`），
 仍可按既有配置优先级覆盖。单资产失败不会取消其余资产，同一 pack 可恢复续跑；
 完成后按 `asset_id` 逐项审核和导出。
 
 ```bash
-uv run pixel-asset plan potions.yaml                 # 自动识别 pack，先核对批次计划
-uv run pixel-asset create-asset-pack potions.yaml    # 执行整包，无 seed/动画批准闸门
-uv run pixel-asset export outputs/health_potion -t godot      # 按资产目录导出
-uv run pixel-asset export mana_potion -t godot                # 或按 asset_id 导出
+uv run pixel-asset plan examples/potion_pack.yaml --save        # 自动识别 pack，核对批次计划并落盘
+uv run pixel-asset create-asset-pack examples/potion_pack.yaml  # 执行整包，无 seed/动画批准闸门
+uv run pixel-asset create-asset-pack examples/potion_pack.yaml --retry-failed   # 只重试失败的资产
+uv run pixel-asset export outputs/health_potion -t godot        # 按资产目录导出
+uv run pixel-asset export mana_potion -t godot                  # 或按 asset_id 导出
 ```
 
-> `potions.yaml` 是你按 PLAN §7.1 契约创建的 pack 文件。
-> 这里只宣称 `potion_pack` 首纵切正在实现，不代表 `weapon_pack`、`spell_bundle`
-> 或整个 Sprint 7 已完成。
+**批量执行前必须先 `plan --save`。** `create-asset-pack` 会逐个核对规划指纹，
+缺少已保存任务表、或指纹与当前请求不一致时直接拒绝执行 ——
+不会在用户不知情的情况下开始计费。中断后重跑同一条命令即断点续跑，
+只想重跑失败项时加 `--retry-failed`。
+
+单个静态资产不必包成 pack：
+
+```bash
+uv run pixel-asset create-asset requests/rusty_key.yaml   # 生成 → 处理 → 验证 → 导出
+```
+
+`create-asset` 只接受**不带 `animations`** 的静态资产类型（`pickup` / `weapon` /
+`prop` / `ui_icon` / `environment_object`）；单资产一次 API 调用，不设 plan 前置闸门
+（与 `create-character` 同口径）。动画请求会被拒收并指向 `create-character`。
+
+> `requests/rusty_key.yaml` 是你自己写的单资产 request（`init` 会建好 `requests/` 目录）；
+> `examples/` 下目前只有角色示例与三份 pack 示例。
+
+> `potion_pack` 与 `weapon_pack` 已完成，`environment_pack` 已实现、正在收口验收。
+> 动画类 pack（`spell_bundle` / `combat_bundle`）尚未开工，整个 Sprint 7 未完成。
 
 `plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
 键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**
@@ -111,23 +139,30 @@ uv run pixel-asset export mana_potion -t godot                # 或按 asset_id 
 |---|---|:---:|:---:|
 | `init` | 初始化配置与目录 | ❌ | ✅ |
 | `doctor` | 检测配置、依赖、Key、网格档位 | 仅探测 | ✅ |
-| `plan <input.yaml>` | 自动识别单资产或 pack，输出 DAG 与调用预算 | ❌ | 单资产 ✅；pack 首纵切 🚧 |
+| `plan <input.yaml>` | 自动识别单资产或 pack，输出 DAG 与调用预算 | ❌ | ✅ |
 | `process <outputs/A>` | 仅重跑本地处理链 | ❌ | ✅ |
 | `create-character <request.yaml>` | 生成 canonical seed | ✅ | ✅ |
 | `create-animation --asset A --action X --direction D` | 生成完整动作网格 | ✅ | ✅ |
-| `create-asset-pack <pack.yaml>` | 批量生成共享约束的静态 pickup | ✅ | `potion_pack` 首纵切 🚧 |
+| `create-asset <request.yaml>` | 单个静态资产完整链：生成 → 处理 → 验证 → 导出 | ✅ | ✅ |
+| `create-asset-pack <pack.yaml>` | 批量生成共享约束的静态资产（`pickup` / `weapon` / `environment_object`） | ✅ | ✅ |
 | `import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ | ✅ |
 | `interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ | ✅ |
 | `validate <outputs/A>` | 运行验证引擎 | ❌ | ✅ |
 | `repair <outputs/A>` | 执行修复计划 | 视类型 | ✅ |
-| `export <asset-dir-or-id> -t godot` | 按目录或 `asset_id` 导出 + Contact Sheet | ❌ | 目录 ✅；`asset_id` 首纵切 🚧 |
+| `export <asset-dir-or-id> -t godot` | 按目录或 `asset_id` 导出 + Contact Sheet | ❌ | ✅ |
 
 命令面按完整业务动作演进，不机械固定数量；MCP 仍保持少量高层语义工具。
 `plan`、`process`、`validate`、`export` 等离线入口让调试与迭代尽量不重复调用 API。
 
+`--model` 可在命令行覆盖有效生成模型（`plan` / `create-asset` / `create-asset-pack`），
+优先级为**命令行覆盖 > 环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值**。
+规划指纹包含有效模型：`plan --save` 与 `create-asset-pack` 必须用同一个 `--model`，
+否则会因指纹不一致被拒绝执行。`create-asset-pack --retry-failed` 把任务表中处于
+failed 的资产复位到最近一个可确认检查点后重跑，其余资产不受影响。
+
 ## 示例请求
 
-[`examples/`](examples/) 里的三个用例各覆盖一类风险：
+[`examples/`](examples/) 里的三个角色/特效用例各覆盖一类风险（pack 示例见上）：
 
 | 文件 | 覆盖风险 |
 |---|---|
