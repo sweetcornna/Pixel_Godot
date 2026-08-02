@@ -200,8 +200,41 @@ def test_godot_regions_match_the_atlas(mvp_asset: ArtifactStore) -> None:
         assert (int(w), int(h)) == (size, size)
 
 
-def test_godot_texture_path_uses_res_scheme(mvp_asset: ArtifactStore) -> None:
-    assert 'path="res://slime_01.png"' in tres_of(mvp_asset)
+def test_godot_texture_path_is_relative_so_the_directory_can_go_anywhere(
+    mvp_asset: ArtifactStore,
+) -> None:
+    """``ext_resource`` 必须是相对 ``.tres`` 自身的路径，不能是 ``res://`` 绝对路径。
+
+    绝对形式写死了"png 在项目根"，与我们"整目录复制进项目"的交付说明冲突 ——
+    照说明放进 ``res://assets/`` 就会 Parse Error。相对路径两种放法都成立。
+    """
+    text = tres_of(mvp_asset)
+    assert 'path="slime_01.png"' in text
+    assert "res://" not in text, "回退到绝对路径会让整目录复制到子目录时崩掉"
+
+    # 相对路径成立的前提：引用的纹理确实与 .tres 同目录。
+    godot_dir = mvp_asset.exports / "godot"
+    assert (godot_dir / "slime_01.png").is_file()
+
+
+def test_godot_handoff_doc_ships_with_the_directory(mvp_asset: ArtifactStore) -> None:
+    """四条必设项必须随目录落盘。
+
+    只打在终端的知识传不到下游 —— ``create-asset`` 与 ``create-asset-pack``
+    都不打印 exporter 的 notes，批量生产的人一次也看不到。
+    """
+    manifest = AssetManifest.load(mvp_asset.manifest_path)
+    out_dir = mvp_asset.exports / "godot"
+    result = get_exporter("godot").export(manifest, mvp_asset.root, out_dir)
+
+    doc = out_dir / "GODOT-README.md"
+    assert doc.is_file()
+    assert doc in result.files
+    text = doc.read_text(encoding="utf-8")
+    assert "Nearest" in text, "线性过滤会把像素糊掉"
+    assert "offset" in text, "不设 offset 脚底对不上节点原点"
+    assert "animation_finished" in text, "一次性动作要连信号，循环动作不要"
+    assert manifest.asset_id in text
 
 
 def test_godot_export_says_where_the_real_gate_lives(mvp_asset: ArtifactStore) -> None:
@@ -233,7 +266,9 @@ def test_export_needs_only_manifest_and_frames(mvp_asset: ArtifactStore) -> None
     mvp_asset.request_path.unlink()
 
     summary = run_export(mvp_asset.root, targets=["generic-json", "godot"])
-    assert len(summary.files) == 4
+    # generic-json: json + png / godot: png + .tres + GODOT-README.md
+    assert len(summary.files) == 5
+    assert {p.name for p in summary.files} >= {"GODOT-README.md", "slime_01_frames.tres"}
     assert summary.contact_sheet is not None
 
 
@@ -259,6 +294,30 @@ def test_contact_sheet_covers_every_animation(mvp_asset: ArtifactStore) -> None:
     manifest = AssetManifest.load(mvp_asset.manifest_path)
     sheet = Image.open(summary.contact_sheet)
     assert sheet.height == len(manifest.animations) * manifest.canvas.height * 4
+
+
+def test_contact_sheet_background_cannot_hide_a_whole_color(
+    mvp_asset: ArtifactStore,
+) -> None:
+    """贴片区必须是棋盘格，任何单色都不能与整片背景撞色。
+
+    实测过的真实故障：旧的纯色背景 ``#22222C`` 与本仓库两个示例包的标准描边色
+    ``#211A2C`` 距离只有 8.06，wooden_barrel 42% 的像素在人工审核图上直接隐形 ——
+    而 contact sheet 是帧序/朝向错误的唯一防线。
+    """
+    import math
+
+    from pixel_asset_forge.pipelines.export import CHECKER_DARK, CHECKER_LIGHT
+
+    summary = run_export(mvp_asset.root, targets=["generic-json"])
+    assert summary.contact_sheet is not None
+
+    outline = (0x21, 0x1A, 0x2C)  # 示例包的描边色
+    worst = min(math.dist(outline, CHECKER_LIGHT), math.dist(outline, CHECKER_DARK))
+    assert worst > 60, f"描边色与棋盘格最近的一格只差 {worst:.1f}，仍会隐形"
+
+    # 两格必须真的不同色，否则棋盘格退化成纯色，上面的保证就没了。
+    assert math.dist(CHECKER_LIGHT, CHECKER_DARK) > 100
 
 
 def test_export_can_skip_the_contact_sheet(mvp_asset: ArtifactStore) -> None:

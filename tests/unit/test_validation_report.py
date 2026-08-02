@@ -73,6 +73,12 @@ def test_severity_comes_from_the_check_id_not_the_caller() -> None:
     assert Check.make("anchor_drift", "walk_down", CheckResult.FAIL).severity is Severity.HIGH
 
 
+def test_static_quality_check_severities_match_repair_cost() -> None:
+    assert Check.make("partial_alpha", "static", CheckResult.FAIL).severity is Severity.HIGH
+    assert Check.make("isolated_pixel", "static", CheckResult.FAIL).severity is Severity.MEDIUM
+    assert Check.make("key_color_residue", "static", CheckResult.FAIL).severity is Severity.HIGH
+
+
 def test_summary_counts_every_bucket() -> None:
     r = report(
         Check.make("frame_count", "a", CheckResult.PASS),

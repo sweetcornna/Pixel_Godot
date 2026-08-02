@@ -34,6 +34,9 @@ CheckId = Literal[
     "content_bounds",
     "palette_membership",
     "transparent_rgb_residue",
+    "partial_alpha",
+    "isolated_pixel",
+    "key_color_residue",
     "frame_order_continuity",
     "beat_signature",
     "mirror_flip",
@@ -46,6 +49,31 @@ CheckId = Literal[
     "static_animation",
 ]
 
+ALL_CHECK_IDS: tuple[CheckId, ...] = (
+    "artifact_exists",
+    "artifact_hash",
+    "frame_count",
+    "frame_size",
+    "blank_frame",
+    "cell_overflow",
+    "content_bounds",
+    "palette_membership",
+    "transparent_rgb_residue",
+    "partial_alpha",
+    "isolated_pixel",
+    "key_color_residue",
+    "frame_order_continuity",
+    "beat_signature",
+    "mirror_flip",
+    "anchor_drift",
+    "height_variation",
+    "silhouette_variation",
+    "palette_overflow",
+    "duplicate_frame_exact",
+    "duplicate_frame_approx",
+    "static_animation",
+)
+
 SkipReason = Literal[
     "derived_animation",
     "action_exempt",
@@ -53,6 +81,7 @@ SkipReason = Literal[
     "non_looping_animation",
     "not_applicable",
     "dependency_failed",
+    "static_asset",
 ]
 
 
@@ -81,6 +110,9 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     "content_bounds": Severity.HIGH,
     "palette_membership": Severity.HIGH,
     "transparent_rgb_residue": Severity.FATAL,
+    "partial_alpha": Severity.HIGH,
+    "isolated_pixel": Severity.MEDIUM,
+    "key_color_residue": Severity.HIGH,
     # 实测不可判定（见 validation/frame_order.py）。保留检查项是为了在报告里
     # 显式记录"这条防线是缺的"，而不是让它悄悄消失 —— 但绝不允许它阻断放行。
     "frame_order_continuity": Severity.LOW,
@@ -115,6 +147,8 @@ LOCALLY_REPAIRABLE: frozenset[CheckId] = frozenset(
         "transparent_rgb_residue",
         "palette_membership",
         "palette_overflow",
+        "partial_alpha",
+        "isolated_pixel",
         "anchor_drift",
         "frame_size",
     }

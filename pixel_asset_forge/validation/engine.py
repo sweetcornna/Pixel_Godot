@@ -26,6 +26,7 @@ from ..errors import PlanError
 from ..models.manifest import AssetManifest, DerivedAnimation, GeneratedAnimation, StaticImageInfo
 from ..models.request import STATIC_ASSET_TYPES
 from ..models.validation import (
+    ALL_CHECK_IDS,
     Check,
     CheckId,
     CheckResult,
@@ -33,8 +34,16 @@ from ..models.validation import (
     ValidationReport,
     thresholds_for,
 )
-from ..planning.grid_layout import aspect_mismatch
-from ..processing.chroma_key import hex_to_rgb
+from ..planning.grid_layout import GridLayout, aspect_mismatch
+from ..processing.bounds import OverflowReport, detect_overflow
+from ..processing.chroma_key import apply_chroma_key, hex_to_rgb
+from ..processing.palette import palette_overflow_ratio
+from ..processing.pixel_cleanup import count_isolated
+from ..processing.pixel_grid import (
+    KEY_RESIDUE_WARN_RATIO,
+    snap_rgba_to_grid,
+    strip_key_residue,
+)
 from ..prompts.poses import pose_sequence
 from ..storage.hashes import hash_file
 from .beat_signature import BeatSignature, check_beat_signature
@@ -53,6 +62,23 @@ from .mirror_flip import detect_mirror_flips
 
 #: 相邻帧差异低于此值即认为"几乎没动"。整组都低于它 → static_animation。
 STATIC_THRESHOLD = 0.01
+
+_STATIC_APPLICABLE_CHECKS: frozenset[CheckId] = frozenset(
+    {
+        "artifact_exists",
+        "artifact_hash",
+        "frame_size",
+        "blank_frame",
+        "cell_overflow",
+        "content_bounds",
+        "palette_membership",
+        "transparent_rgb_residue",
+        "partial_alpha",
+        "isolated_pixel",
+        "key_color_residue",
+        "palette_overflow",
+    }
+)
 
 
 
@@ -407,12 +433,62 @@ def validate_derived(key: str, entry: DerivedAnimation) -> list[Check]:
     ]
 
 
+def _complete_static_checks(checks: list[Check]) -> list[Check]:
+    """静态报告必须显式列出全部防线，不能把未运行误报成零跳过。"""
+    present = {check.id for check in checks}
+    for check_id in ALL_CHECK_IDS:
+        if check_id in present:
+            continue
+        applicable = check_id in _STATIC_APPLICABLE_CHECKS
+        checks.append(
+            Check.make(
+                check_id,
+                "static",
+                CheckResult.SKIP,
+                skip_reason="dependency_failed" if applicable else "static_asset",
+                message=(
+                    "静态产物或溯源依赖缺失，无法运行此检查"
+                    if applicable
+                    else "静态资产没有动画帧序列，此检查不适用"
+                ),
+            )
+        )
+    return checks
+
+
+def _static_source_quality(
+    source_path: Path,
+    entry: StaticImageInfo,
+    *,
+    key_color: str,
+) -> tuple[float, OverflowReport]:
+    """从原图重放量化前阶段，独立复核键控残留与源构图边界。"""
+    source = np.array(Image.open(source_path).convert("RGB"))
+    key = hex_to_rgb(key_color)
+    keyed = apply_chroma_key(source, key, threshold=entry.key_threshold)
+    prequant = keyed.rgba
+    if entry.grid_block_size is not None:
+        prequant = snap_rgba_to_grid(
+            prequant,
+            block_size=entry.grid_block_size,
+        ).image
+
+    cleaned, key_residue = strip_key_residue(prequant, key)
+    height, width = cleaned.shape[:2]
+    layout = GridLayout(frames=1, cols=1, rows=1, cell=(width, height))
+    overflow = detect_overflow(cleaned[:, :, 3] > 0, layout)
+    return key_residue, overflow
+
+
 def validate_static_image(
     root: Path,
     entry: StaticImageInfo,
     *,
     expected_size: tuple[int, int],
     palette: list[str],
+    max_colors: int,
+    key_color: str,
+    antialiasing: bool | None,
 ) -> list[Check]:
     """验证静态成品及其 Manifest 溯源。"""
     target = "static"
@@ -435,7 +511,7 @@ def validate_static_image(
         )
     ]
     if not image_exists or not source_exists:
-        return checks
+        return _complete_static_checks(checks)
 
     source_hash_ok = hash_file(source_path) == entry.source_hash
     image_hash_ok = hash_file(image_path) == entry.processed_hash
@@ -494,6 +570,94 @@ def validate_static_image(
         )
     )
 
+    alpha = frame[:, :, 3]
+    partial_alpha = int(((alpha > 0) & (alpha < 255)).sum())
+    if antialiasing is None:
+        checks.append(
+            Check.make(
+                "partial_alpha",
+                target,
+                CheckResult.SKIP,
+                measured=partial_alpha,
+                skip_reason="dependency_failed",
+                message="request.yaml 缺失，无法确认 antialiasing 约束",
+            )
+        )
+    else:
+        partial_alpha_failed = not antialiasing and partial_alpha > 0
+        checks.append(
+            Check.make(
+                "partial_alpha",
+                target,
+                CheckResult.FAIL if partial_alpha_failed else CheckResult.PASS,
+                measured=partial_alpha,
+                threshold=0 if not antialiasing else None,
+                message=(
+                    f"antialiasing=false，但有 {partial_alpha} 个半透明像素（本地可修）"
+                    if partial_alpha_failed
+                    else (
+                        "request 允许 antialiasing，半透明 alpha 不构成违规"
+                        if antialiasing and partial_alpha
+                        else None
+                    )
+                ),
+            )
+        )
+
+    isolated = count_isolated(frame)
+    checks.append(
+        Check.make(
+            "isolated_pixel",
+            target,
+            CheckResult.PASS if isolated == 0 else CheckResult.FAIL,
+            measured=isolated,
+            threshold=0,
+            message=None if isolated == 0 else f"{isolated} 个四面无邻的孤立像素（本地可修）",
+        )
+    )
+
+    source_key_residue, source_overflow = _static_source_quality(
+        source_path,
+        entry,
+        key_color=key_color,
+    )
+    _, final_key_residue = strip_key_residue(frame, hex_to_rgb(key_color))
+    key_residue = max(source_key_residue, final_key_residue)
+    key_residue_failed = key_residue > KEY_RESIDUE_WARN_RATIO
+    checks.append(
+        Check.make(
+            "key_color_residue",
+            target,
+            CheckResult.FAIL if key_residue_failed else CheckResult.PASS,
+            measured=round(key_residue, 4),
+            threshold=KEY_RESIDUE_WARN_RATIO,
+            message=(
+                None
+                if not key_residue_failed
+                else (
+                    f"量化前/成品键控色残留最高占前景 {key_residue:.1%}，"
+                    f"超过 {KEY_RESIDUE_WARN_RATIO:.0%}"
+                )
+            ),
+        )
+    )
+
+    source_touches_edge = source_overflow.min_margin <= 0
+    checks.append(
+        Check.make(
+            "cell_overflow",
+            target,
+            CheckResult.FAIL if source_touches_edge else CheckResult.PASS,
+            measured=round(source_overflow.min_margin, 4),
+            threshold=0.0,
+            message=(
+                None
+                if not source_touches_edge
+                else "主体在原图上接触画布边缘，抠图前可能已被裁切，必须重生成"
+            ),
+        )
+    )
+
     box = content_box(frame)
     touches_edge = box is not None and (
         box[0] <= 0 or box[1] <= 0 or box[2] >= frame.shape[1] or box[3] >= frame.shape[0]
@@ -509,20 +673,53 @@ def validate_static_image(
         )
     )
 
-    allowed = {hex_to_rgb(color) for color in palette}
     actual = palette_of([frame])
-    outside = actual - allowed if allowed else set()
-    checks.append(
-        Check.make(
-            "palette_membership",
-            target,
-            CheckResult.PASS if not outside else CheckResult.FAIL,
-            measured=len(outside),
-            threshold=0,
-            message=None if not outside else f"{len(outside)} 个颜色不属于共享 palette",
+    if palette:
+        allowed = {hex_to_rgb(color) for color in palette}
+        outside = actual - allowed
+        checks.append(
+            Check.make(
+                "palette_membership",
+                target,
+                CheckResult.PASS if not outside else CheckResult.FAIL,
+                measured=len(outside),
+                threshold=0,
+                message=None if not outside else f"{len(outside)} 个颜色不属于共享 palette",
+            )
         )
-    )
-    return checks
+
+        outside_ratio = palette_overflow_ratio([frame], palette)
+        color_count = len(actual)
+        color_limit_ratio = float(color_count > max_colors)
+        overflow_ratio = max(outside_ratio, color_limit_ratio)
+        palette_failed = (
+            outside_ratio > PALETTE_OVERFLOW_MAX or color_count > max_colors
+        )
+        checks.append(
+            Check.make(
+                "palette_overflow",
+                target,
+                CheckResult.FAIL if palette_failed else CheckResult.PASS,
+                measured=round(overflow_ratio, 4),
+                threshold=PALETTE_OVERFLOW_MAX,
+                message=(
+                    f"越界像素 {outside_ratio:.1%}；{color_count} 色 / 上限 {max_colors}"
+                    + ("（本地可修）" if palette_failed else "")
+                ),
+            )
+        )
+    else:
+        for check_id in ("palette_membership", "palette_overflow"):
+            checks.append(
+                Check.make(
+                    check_id,
+                    target,
+                    CheckResult.SKIP,
+                    skip_reason="dependency_failed",
+                    message="Manifest 没有声明 palette，无法复核调色板约束",
+                )
+            )
+    return _complete_static_checks(checks)
 
 
 def validate_asset(asset_dir: str | Path) -> ValidationReport:
@@ -539,11 +736,13 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
     request_frames: dict[str, int] = {}
     request_path = root / "request.yaml"
     locomotion = "biped"
+    antialiasing: bool | None = None
     if request_path.exists():
         from ..models.request import load_request
 
         request = load_request(request_path)
         locomotion = request.resolved_locomotion
+        antialiasing = request.style.antialiasing
         for spec in request.animation_list():
             request_frames[spec.name] = spec.frames
 
@@ -554,17 +753,24 @@ def validate_asset(asset_dir: str | Path) -> ValidationReport:
                 manifest.static_image,
                 expected_size=expected_size,
                 palette=manifest.palette.colors,
+                max_colors=manifest.palette.max_colors,
+                key_color=manifest.background.color_used,
+                antialiasing=antialiasing,
             )
         )
     elif manifest.asset_type in STATIC_ASSET_TYPES and not manifest.animations:
-        report.checks.append(
-            Check.make(
-                "artifact_exists",
-                "static",
-                CheckResult.FAIL,
-                measured=False,
-                threshold=True,
-                message="静态资产的 Manifest 缺少 static_image",
+        report.checks.extend(
+            _complete_static_checks(
+                [
+                    Check.make(
+                        "artifact_exists",
+                        "static",
+                        CheckResult.FAIL,
+                        measured=False,
+                        threshold=True,
+                        message="静态资产的 Manifest 缺少 static_image",
+                    )
+                ]
             )
         )
 

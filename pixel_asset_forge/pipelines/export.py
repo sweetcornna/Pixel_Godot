@@ -29,6 +29,29 @@ CONTACT_SCALE = 4
 LABEL_WIDTH = 96
 BACKGROUND = (34, 34, 44)
 
+#: 贴片区用棋盘格而非纯色。纯色背景与角色描边撞色时，那部分像素在审核图上
+#: 直接隐形 —— 实测本仓库两个示例包的标准描边色 ``#211A2C`` 与旧背景
+#: ``#22222C`` 距离只有 8.06，wooden_barrel 42% 的像素看不见。棋盘格是两色
+#: 交替，任何单色都不可能与整片背景同时同色，同时还区分了"透明"与"深色实体"。
+#: 两格拉开亮度差，好让"最坏情况"（颜色恰在两格中间）也还剩约 66 的距离。
+CHECKER_LIGHT = (150, 150, 158)
+CHECKER_DARK = (74, 74, 82)
+CHECKER_SIZE = CONTACT_SCALE * 2
+
+
+def _checkerboard(size: tuple[int, int]) -> Image.Image:
+    """贴片区背景。确定性生成，保证 contact sheet 可逐字节复现。"""
+    canvas = Image.new("RGB", size, CHECKER_LIGHT)
+    draw = ImageDraw.Draw(canvas)
+    for y in range(0, size[1], CHECKER_SIZE):
+        for x in range(0, size[0], CHECKER_SIZE):
+            if (x // CHECKER_SIZE + y // CHECKER_SIZE) % 2:
+                draw.rectangle(
+                    [x, y, x + CHECKER_SIZE - 1, y + CHECKER_SIZE - 1],
+                    fill=CHECKER_DARK,
+                )
+    return canvas
+
 
 @dataclass
 class ExportSummary:
@@ -53,6 +76,7 @@ def build_contact_sheet(manifest: AssetManifest, root: Path, out: Path) -> Path:
         cell_h, cell_w = frame.shape[:2]
         scaled_w, scaled_h = cell_w * CONTACT_SCALE, cell_h * CONTACT_SCALE
         canvas = Image.new("RGB", (LABEL_WIDTH + scaled_w, scaled_h), BACKGROUND)
+        canvas.paste(_checkerboard((scaled_w, scaled_h)), (LABEL_WIDTH, 0))
         draw = ImageDraw.Draw(canvas)
         draw.text((6, scaled_h // 2 - 6), "static", fill=(220, 220, 230))
         tile = Image.fromarray(frame, "RGBA").resize(
@@ -70,6 +94,9 @@ def build_contact_sheet(manifest: AssetManifest, root: Path, out: Path) -> Path:
 
     canvas = Image.new(
         "RGB", (LABEL_WIDTH + cols * scaled_w, len(views) * scaled_h), BACKGROUND
+    )
+    canvas.paste(
+        _checkerboard((cols * scaled_w, len(views) * scaled_h)), (LABEL_WIDTH, 0)
     )
     draw = ImageDraw.Draw(canvas)
 
@@ -139,6 +166,8 @@ def run_export(
         )
         summary.notes.append(
             "帧序被打乱无法自动检测 —— 请看 contact sheet 与 previews/*.gif 确认播放顺序。"
+            if manifest.animations
+            else "静态资产的 contact sheet 供构图与配色的人工审核。"
         )
 
     _mark_exported(store, manifest)

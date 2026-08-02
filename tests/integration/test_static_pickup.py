@@ -91,7 +91,9 @@ def test_static_pickup_runs_to_export(request_file: Path, config: Config) -> Non
     }
 
     summary = run_export(store.root, targets=["generic-json", "godot"])
-    assert len(summary.files) == 3
+    # generic-json: json + png / godot: png + GODOT-README.md（静态资产不产 .tres）
+    assert len(summary.files) == 4
+    assert {p.name for p in summary.files} >= {"GODOT-README.md"}
     assert summary.contact_sheet is not None and summary.contact_sheet.exists()
     generic = json.loads(
         (store.exports / "generic-json" / "health_potion.json").read_text(encoding="utf-8")

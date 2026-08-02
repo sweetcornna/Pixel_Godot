@@ -37,36 +37,76 @@ schema 版本不升级：schema 描述本来就写着「相对 asset 根目录�
 
 ## 2. 高（修复队列，按优先级）
 
+> **Q1–Q8 已于 2026-08-02 修复并独立复核。** 复核方式不是"测试通过"，
+> 而是**重跑审查当初那四个全部漏过的缺陷注入探针**：
+>
+> | 探针 | 审查时 | 修复后 |
+> |---|---|---|
+> | 半透明 alpha（`antialiasing: false`） | passed | **fail** `partial_alpha` (40 px) |
+> | 孤立像素 | passed | **fail** `isolated_pixel` (6) |
+> | 256 色 / `max_colors=6` | passed | **fail** `palette_overflow` (1.0) |
+> | 键控色残留 | passed | **fail** `key_color_residue` (0.1196) |
+> | 干净产物对照 | — | pass，exit 0，无误报 |
+>
+> 复核中另得到一条 X4 的实测证据：篡改成品后 `validate` 因 job 处于
+> `exported` 而**直接拒绝重跑**（「没有可验证任务」），系统压根不重验 ——
+> 必须连同 job 状态一起复位才测得到。这正是 X4 描述的失效模式。
+
 ### 质量防线类
 
-- **Q1. 静态验证 7 项里 6 项结构性恒真。** `palette_membership` / 
-  `transparent_rgb_residue` / `frame_size` / `content_bounds` 分别被上游的
-  `snap_to_palette` / `zero_transparent_rgb`+`save_png` / `place_on_canvas` /
-  `inner_size=target-2` 构造保证；唯一有判别力的是 `blank_frame`。四个缺陷
-  注入探针（半透明 alpha、孤立像素、256 色爆表、键控残留）**全部漏过**。
-  「验证通过」目前只等于「文件在、哈希对、不是全透明」。
-- **Q2. `max_colors` 静态路径全程无人校验。** `palette_overflow` 只在动画路径跑；
-  `palette_overflow_ratio`（PLAN §9.2 判据）生产代码零调用。
-- **Q3. 「主体被切掉」无自动判据。** `cell_overflow` 依赖 grid+source_image，
-  静态资产两者皆无；`detect_overflow` 结果在 `create_static_asset` 里被丢弃。
-  这类错误恰是「本地补不回、必须重生成」的最该拦的一类。
-- **Q4. skip 理由机制未落地静态路径。** 19 个 CheckId 静态只出现 7 个，
-  另 12 个静默消失，`summary.skipped: 0` 误导消费方。动画路径遵守了
-  「防线缺失要显式记录」，静态路径没有。
-- **Q5. 处理告警不落盘，批量路径连终端都不打。** 「94% 细节丢失」「网格未吸附」
-  只进 stdout；`create-asset-pack` 的 JSON/表格无 warnings 字段。
+- **Q1. 静态验证 7 项里 6 项结构性恒真。** ✅ 已修
+  <br>**问题**：`palette_membership` / `transparent_rgb_residue` / `frame_size` /
+  `content_bounds` 分别被上游的 `snap_to_palette` / `zero_transparent_rgb`+`save_png` /
+  `place_on_canvas` / `inner_size=target-2` 构造保证，唯一有判别力的是 `blank_frame`；
+  四个缺陷注入探针全部漏过，「验证通过」只等于「文件在、哈希对、不是全透明」。
+  <br>**修法**：新增三个对真实产出有判别力的检查项 ——
+  `partial_alpha`（`antialiasing: false` 时不许有半透明像素，HIGH）、
+  `isolated_pixel`（八邻域无邻居的噪点，MEDIUM）、
+  `key_color_residue`（从原图重放键控，量化前后都查，>5% 即 FAIL，HIGH）。
+  量化前也查是关键：有显式调色板时 `snap_to_palette` 会把洋红边**静默映射**成
+  最近的调色板色，只查成品永远发现不了。
+- **Q2. `max_colors` 静态路径全程无人校验。** ✅ 已修
+  <br>**问题**：`palette_overflow` 只在动画路径跑，`palette_overflow_ratio`
+  （PLAN §9.2 判据）生产代码零调用。
+  <br>**修法**：静态路径接上该判据，越界像素率 ≤2% 且实际色数不得超过 `max_colors`。
+- **Q3. 「主体被切掉」无自动判据。** ✅ 已修
+  <br>**问题**：`cell_overflow` 依赖 grid+source_image，静态资产两者皆无；
+  `detect_overflow` 结果在 `create_static_asset` 里被丢弃。这类错误恰是
+  「本地补不回、必须重生成」的最该拦的一类。
+  <br>**修法**：从静态原图重放量化前处理并调用 `detect_overflow`，
+  原图主体触碰画布边缘即 FAIL（FATAL，触发重生成）。
+- **Q4. skip 理由机制未落地静态路径。** ✅ 已修
+  <br>**问题**：22 个 CheckId 静态只出现 7 个，其余静默消失，`summary.skipped: 0`
+  会被消费方读成「没有跳过任何检查」—— 动画路径遵守了「防线缺失要显式记录」
+  （PLAN §6.8.4），静态路径没有。
+  <br>**修法**：静态报告覆盖全部 22 项，正常产物跑 12 项、显式跳过 10 项并标注
+  `skip_reason`（动画专属用 `static_asset`，缺产物/溯源用 `dependency_failed`）。
+- **Q5. 处理告警不落盘，批量路径连终端都不打。** ⬜ 未修
+  <br>「94% 细节丢失」「网格未吸附」只进 stdout；`create-asset-pack` 的
+  JSON/表格无 warnings 字段。
 
 ### 交付类
 
-- **Q6. Contact sheet 背景 `#22222C` 与示例调色板描边色 `#211A2C` 距离 8.06**，
+- **Q6. Contact sheet 背景与描边色撞色。** ✅ 已修
+  <br>**问题**：背景 `#22222C` 与两个示例包的标准描边色 `#211A2C` 距离仅 8.06，
   wooden_barrel 42% / quest_marker 46% 的像素在审核图上不可见 ——
   而 contact sheet 是 README 定位的「唯一人工防线」。
-- **Q7. Godot 交付知识只存在于终端文本。** 无 `.import` 文件（Filter=Nearest
-  无法随目录交付，默认线性过滤会糊掉像素图）；notes 只有 `export` 子命令打印。
-- **Q8. `.tres` 的 `ext_resource` 是项目根绝对路径**（`res://<asset_id>.png`），
-  与导出器 note「整目录复制进项目」矛盾 —— 放进子目录即 Parse Error。
-  静态资产暂不产 `.tres` 所以未踩，动画路径会踩。PLAN §10.4 的
-  「整目录复制即可用」当前不成立。
+  <br>**修法**：贴片区改棋盘格（`#96969E` / `#4A4A52`）。两色交替，任何单色都不可能与整片背景同时同色，
+  顺带区分了「透明」与「深色实体」。实测同一张 wooden_barrel：那 42.3%
+  的描边像素与两格距离变为 73.7 / 205.1。
+- **Q7. Godot 交付知识只存在于终端文本。** ✅ 已修
+  <br>**问题**：Filter=Nearest 等必设项只在终端打印，而 `create-asset` 与
+  `create-asset-pack` 都不打印 exporter 的 notes，批量生产的人一次也看不到。
+  <br>**修法**：导出目录内写 `GODOT-README.md`，四条必设项（纹理 Filter、
+  `offset` 对齐脚底、一次性动作连 `animation_finished`、整目录复制）随目录交付。
+  注：Godot 4 的纹理过滤由项目设置/节点属性决定，不再由 `.import` 控制，
+  因此交付载体是说明文件而非 `.import`（审查原文的建议在这一点上不适用）。
+- **Q8. `.tres` 的 `ext_resource` 是项目根绝对路径。** ✅ 已修
+  <br>**问题**：`res://<asset_id>.png` 写死了「png 在项目根」，与导出器
+  note「整目录复制进项目」矛盾 —— 照说明放进 `res://assets/` 即 Parse Error。
+  <br>**修法**：改为相对 `.tres` 自身的路径（Godot 文本资源格式对相对路径同样
+  合法），整目录放项目根或任意子目录都成立。**待 `tools/godot-gate/` 真机复验**
+  （本机无 Godot 二进制）。
 
 ### 执行语义类（codex）
 

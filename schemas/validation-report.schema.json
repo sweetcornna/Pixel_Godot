@@ -114,6 +114,9 @@
             "content_bounds",
             "palette_membership",
             "transparent_rgb_residue",
+            "partial_alpha",
+            "isolated_pixel",
+            "key_color_residue",
             "frame_order_continuity",
             "beat_signature",
             "mirror_flip",
@@ -187,7 +190,8 @@
             "custom_action_unthresholded",
             "non_looping_animation",
             "not_applicable",
-            "dependency_failed"
+            "dependency_failed",
+            "static_asset"
           ]
         }
       }
