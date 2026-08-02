@@ -79,11 +79,21 @@ _STATIC_PERSPECTIVE = {
 _STATIC_SUBJECT = {
     "pickup": "Crisp pixel art of one single isolated pickup item.",
     "weapon": "Crisp pixel art of one single isolated weapon.",
+    "prop": "Crisp pixel art of one single isolated prop object.",
+    "ui_icon": "Crisp pixel art of one single isolated UI icon.",
+    "environment_object": (
+        "Crisp pixel art of one single isolated environment object."
+    ),
 }
 
 _WEAPON_ORIENTATION = (
     "Weapon orientation: place the weapon diagonally, with its blade tip or muzzle "
     "pointing toward the upper right, following the standard game icon convention."
+)
+
+_UI_ICON_CONVENTION = (
+    "UI icon convention: show the icon straight-on in a front-facing view, with no "
+    "ground contact or cast shadow, and keep its silhouette clearly readable."
 )
 
 _SHADING = {
@@ -220,6 +230,8 @@ def compile_static_prompt(request: AssetRequest, *, key_color: str) -> CompiledP
     ]
     if request.asset_type == "weapon":
         blocks.append(_WEAPON_ORIENTATION)
+    if request.asset_type == "ui_icon":
+        blocks.append(_UI_ICON_CONVENTION)
     blocks.extend(
         [
             (

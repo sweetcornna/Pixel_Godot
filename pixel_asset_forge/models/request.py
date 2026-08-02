@@ -42,7 +42,9 @@ AssetType = Literal[
     "character", "prop", "weapon", "projectile", "impact",
     "spell", "pickup", "ui_icon", "environment_object", "tileset",
 ]
-STATIC_ASSET_TYPES: Final[frozenset[AssetType]] = frozenset({"pickup", "weapon"})
+STATIC_ASSET_TYPES: Final[frozenset[AssetType]] = frozenset(
+    {"pickup", "weapon", "prop", "ui_icon", "environment_object"}
+)
 
 #: 角色的移动形态。姿势节拍按它分支。
 #:

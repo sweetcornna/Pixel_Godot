@@ -129,6 +129,52 @@ def test_static_weapon_prompt_uses_weapon_subject_and_icon_orientation(examples_
     )
 
 
+@pytest.mark.parametrize(
+    ("asset_type", "subject"),
+    [
+        ("pickup", "Crisp pixel art of one single isolated pickup item."),
+        ("weapon", "Crisp pixel art of one single isolated weapon."),
+        ("prop", "Crisp pixel art of one single isolated prop object."),
+        ("ui_icon", "Crisp pixel art of one single isolated UI icon."),
+        (
+            "environment_object",
+            "Crisp pixel art of one single isolated environment object.",
+        ),
+    ],
+)
+def test_static_prompt_uses_a_distinct_subject_for_each_supported_type(
+    examples_dir, asset_type: str, subject: str
+) -> None:
+    pickup = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    request = pickup.model_copy(update={"asset_type": asset_type})
+
+    prompt = compile_static_prompt(request, key_color="#FF00FF").text
+
+    assert prompt.startswith(subject)
+    subjects = (
+        "Crisp pixel art of one single isolated pickup item.",
+        "Crisp pixel art of one single isolated weapon.",
+        "Crisp pixel art of one single isolated prop object.",
+        "Crisp pixel art of one single isolated UI icon.",
+        "Crisp pixel art of one single isolated environment object.",
+    )
+    assert [candidate in prompt for candidate in subjects].count(True) == 1
+
+
+def test_static_ui_icon_prompt_adds_only_the_ui_icon_convention(examples_dir) -> None:
+    pickup = load_pack(examples_dir / "potion_pack.yaml").expand_requests()[0]
+    ui_icon = pickup.model_copy(update={"asset_type": "ui_icon"})
+
+    prompt = compile_static_prompt(ui_icon, key_color="#FF00FF").text
+
+    assert (
+        "UI icon convention: show the icon straight-on in a front-facing view, with no "
+        "ground contact or cast shadow, and keep its silhouette clearly readable."
+        in prompt
+    )
+    assert "Weapon orientation:" not in prompt
+
+
 
 
 

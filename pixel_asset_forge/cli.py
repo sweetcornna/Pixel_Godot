@@ -49,7 +49,7 @@ from .errors import (
 from .logging_utils import configure_logging
 from .models.job import JobKind
 from .models.pack import load_pack
-from .models.request import load_request
+from .models.request import STATIC_ASSET_TYPES, load_request
 from .pipelines import approve_seed as run_approve_seed
 from .pipelines import create_animation as run_create_animation
 from .pipelines import create_character as run_create_character
@@ -57,6 +57,8 @@ from .pipelines import import_keyframes as run_import_keyframes
 from .pipelines import import_seed as run_import_seed
 from .pipelines import next_pending, run_export, run_interpolate, run_process
 from .pipelines.asset_pack import PackRunControl, run_asset_pack
+from .pipelines.static_asset import create_static_asset as run_create_static_asset
+from .pipelines.static_asset import validate_and_export_static_asset
 from .pipelines.validation import run_validation
 from .planning import layout_for_frames, plan_pack, plan_request, seed_layout
 from .repair import execute_plan as execute_repairs
@@ -385,6 +387,63 @@ def plan(
         store.save_request_copy(request_file)
         path = store.save_job_table(request_plan.jobs)
         console.print(f"\n[green]✓[/green] 任务表已写入 {path}")
+
+
+@app.command("create-asset")
+def create_asset(
+    request_file: Annotated[Path, typer.Argument(help="静态 Asset Request YAML")],
+    config_path: Annotated[
+        Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="覆盖有效生成模型")
+    ] = None,
+) -> None:
+    """单个静态资产完整链：生成 → 处理 → 验证 → 导出。
+
+    单资产一次 API 调用，无 plan 前置；批量请用 plan + create-asset-pack。
+    动画请求请使用 create-character。
+    """
+    overrides = {"model": model} if model is not None else None
+    config = _load_config(config_path, overrides=overrides)
+    try:
+        request = load_request(request_file)
+        if request.asset_type not in STATIC_ASSET_TYPES or request.animation_list():
+            allowed = ", ".join(sorted(STATIC_ASSET_TYPES))
+            raise RequestValidationError(
+                f"{request_file}：create-asset 只接受无 animations 的静态资产类型："
+                f"{allowed}。动画请求请使用 `pixel-asset create-character <request.yaml>`。"
+            )
+        result = run_create_static_asset(request_file, config)
+        completion = validate_and_export_static_asset(
+            config.asset_dir(request.asset_id),
+            targets=request.export.targets,
+        )
+    except PixelAssetError as exc:
+        _fail(exc)
+        raise  # pragma: no cover
+
+    if not completion.passed:
+        err_console.print(
+            f"[red]✗[/red] {request.asset_id} 验证未通过；未导出，"
+            f"详见 {config.asset_dir(request.asset_id) / 'validation-report.json'}"
+        )
+        raise typer.Exit(EXIT_VALIDATION_FAILED)
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("资产", result.asset_id)
+    table.add_row("原图", str(result.source_path))
+    table.add_row("像素图", str(result.image_path))
+    table.add_row("验证", "通过")
+    if completion.export is not None:
+        table.add_row("导出", f"{len(completion.export.files)} 个文件")
+        table.add_row("目录", str(config.asset_dir(request.asset_id) / "exports"))
+    table.add_row("缓存", "命中（未计费）" if result.cached else "未命中")
+    console.print(table)
+    for warning in result.warnings:
+        console.print(f"[yellow]![/yellow] {warning}")
 
 
 @app.command("create-asset-pack")

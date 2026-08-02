@@ -25,9 +25,11 @@ from ..providers import ImageProvider, Throttle, get_provider
 from ..storage.artifacts import ArtifactStore
 from ..storage.atomic import atomic_write_json, atomic_write_text
 from ..storage.cache import GenerationCache
-from .export import run_export
-from .static_asset import StaticAssetResult, create_static_asset
-from .validation import run_validation
+from .static_asset import (
+    StaticAssetResult,
+    create_static_asset,
+    validate_and_export_static_asset,
+)
 
 logger = get_logger("pipeline.asset_pack")
 
@@ -421,30 +423,26 @@ def _run_one(
         if control.stop.is_set():
             raise PauseRequested(f"{item.asset_id} 已停在阶段边界")
 
-        status, _, _ = _job_state(config, item.asset_id)
-        if status in (JobStatus.PROCESSED, JobStatus.VALIDATING):
-            report = run_validation(store.root)
-            if not report.passed:
-                return AssetOutcome(
-                    asset_id=item.asset_id,
-                    job_id=f"{item.asset_id}:static",
-                    input_fingerprint=item.fingerprint,
-                    provider=config.provider,
-                    model=config.model,
-                    outcome="validation_failed",
-                    job_status="validation_failed",
-                    stage="validation_failed",
-                    cached=cached,
-                    resumed=resumed,
-                    request_id=request_id,
-                    artifact_root=str(store.root),
-                )
-        if control.stop.is_set():
-            raise PauseRequested(f"{item.asset_id} 已验证并停在阶段边界")
-
-        status, _, _ = _job_state(config, item.asset_id)
-        if status in (JobStatus.VALIDATED, JobStatus.EXPORTED):
-            run_export(store.root, targets=targets)
+        completion = validate_and_export_static_asset(
+            store.root,
+            targets=targets,
+            stop_requested=control.stop,
+        )
+        if not completion.passed:
+            return AssetOutcome(
+                asset_id=item.asset_id,
+                job_id=f"{item.asset_id}:static",
+                input_fingerprint=item.fingerprint,
+                provider=config.provider,
+                model=config.model,
+                outcome="validation_failed",
+                job_status="validation_failed",
+                stage="validation_failed",
+                cached=cached,
+                resumed=resumed,
+                request_id=request_id,
+                artifact_root=str(store.root),
+            )
         return AssetOutcome(
             asset_id=item.asset_id,
             job_id=f"{item.asset_id}:static",

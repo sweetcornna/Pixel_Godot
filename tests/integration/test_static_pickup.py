@@ -123,6 +123,29 @@ def test_static_pipeline_accepts_weapon(request_file: Path, config: Config) -> N
     assert run_validation(store.root).passed
 
 
+@pytest.mark.parametrize("asset_type", ["prop", "ui_icon", "environment_object"])
+def test_static_pipeline_accepts_remaining_static_asset_types(
+    request_file: Path, config: Config, asset_type: str
+) -> None:
+    asset_id = f"test_{asset_type}"
+    static_file = request_file.with_name(f"{asset_id}.yaml")
+    static_file.write_text(
+        request_file.read_text(encoding="utf-8")
+        .replace("asset_id: health_potion", f"asset_id: {asset_id}")
+        .replace("asset_type: pickup", f"asset_type: {asset_type}"),
+        encoding="utf-8",
+    )
+
+    result = create_static_asset(static_file, config)
+    store = ArtifactStore.for_asset(config.output_dir, asset_id)
+
+    assert result.image_path.exists()
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.asset_type == asset_type
+    assert manifest.static_image is not None
+    assert run_validation(store.root).passed
+
+
 def test_static_pipeline_rejects_unsupported_asset_type(
     request_file: Path, config: Config
 ) -> None:
@@ -136,7 +159,9 @@ def test_static_pipeline_rejects_unsupported_asset_type(
 
     with pytest.raises(
         ProcessingError,
-        match=r"无 animations 的资产类型：pickup, weapon",
+        match=(
+            r"无 animations 的资产类型：environment_object, pickup, prop, ui_icon, weapon"
+        ),
     ):
         create_static_asset(spell_file, config)
 

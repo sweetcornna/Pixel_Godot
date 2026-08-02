@@ -516,10 +516,19 @@ def test_generation_commands_fail_without_an_asset(isolated_env: Path) -> None:
 def test_help_lists_all_nine_commands() -> None:
     result = runner.invoke(app, ["--help"])
     for command in (
-        "init", "doctor", "plan", "create-character", "create-animation",
+        "init", "doctor", "plan", "create-asset", "create-character", "create-animation",
         "process", "validate", "repair", "export",
     ):
         assert command in result.stdout
+
+
+def test_create_asset_help_explains_cost_and_skips_the_plan_gate() -> None:
+    result = runner.invoke(app, ["create-asset", "--help"])
+
+    assert result.exit_code == EXIT_OK
+    assert "单资产一次 API 调用，无 plan 前置" in result.stdout
+    assert "批量请用 plan + create-asset-pack" in result.stdout
+    assert "动画请求请使用 create-character" in result.stdout
 
 
 # -- 导入入口消歧（Sprint 6.8.0）-------------------------------------------

@@ -1,0 +1,42 @@
+schema_version: "1.0"
+pack_type: environment_pack
+pack_id: starter_environment
+
+shared:
+  style:
+    perspective: top_down_3_4
+    target_size: [48, 48]
+    max_colors: 14
+    outline: single_pixel_dark
+    shading: two_tone
+    antialiasing: false
+    lighting: fixed_top_left
+  background:
+    mode: chroma_key
+    color: "#FF00FF"
+    fallback_colors: ["#00FF00", "#00FFFF"]
+  export:
+    targets: [generic-json, godot]
+  palette:
+    name: starter_environment
+    colors:
+      - "#211A2C"
+      - "#EEE8D5"
+      - "#B7C9D3"
+      - "#798892"
+      - "#45515A"
+      - "#8C4F32"
+      - "#5E3526"
+      - "#D09A31"
+      - "#7C5A20"
+      - "#587A45"
+      - "#344D35"
+      - "#A6B75B"
+
+assets:
+  - asset_id: wooden_barrel
+    description: A sturdy wooden barrel with dark iron hoops, visible oak staves, and a closed round lid.
+  - asset_id: mossy_boulder
+    description: A squat gray boulder with angular chipped faces and patches of thick green moss across its top.
+  - asset_id: street_lantern
+    description: A freestanding iron street lantern with a square amber glass housing and a weathered dark post.

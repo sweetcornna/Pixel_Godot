@@ -69,7 +69,11 @@ def test_example_expands_to_static_pickup_requests(examples_dir: Path) -> None:
 
 @pytest.mark.parametrize(
     ("pack_type", "asset_type"),
-    [("potion_pack", "pickup"), ("weapon_pack", "weapon")],
+    [
+        ("potion_pack", "pickup"),
+        ("weapon_pack", "weapon"),
+        ("environment_pack", "environment_object"),
+    ],
 )
 def test_pack_type_maps_to_static_asset_type(pack_type: str, asset_type: str) -> None:
     data = pack_data()
@@ -84,7 +88,7 @@ def test_pack_type_maps_to_static_asset_type(pack_type: str, asset_type: str) ->
 def test_pack_schema_exposes_only_supported_static_pack_types() -> None:
     schema = load_schema("asset-pack")
     assert schema["properties"]["pack_type"] == {
-        "enum": ["potion_pack", "weapon_pack"]
+        "enum": ["potion_pack", "weapon_pack", "environment_pack"]
     }
 
     data = pack_data()

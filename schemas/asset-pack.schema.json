@@ -17,7 +17,7 @@
       "const": "1.0"
     },
     "pack_type": {
-      "enum": ["potion_pack", "weapon_pack"]
+      "enum": ["potion_pack", "weapon_pack", "environment_pack"]
     },
     "pack_id": {
       "type": "string",

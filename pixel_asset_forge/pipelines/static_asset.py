@@ -1,7 +1,8 @@
-"""无动画 pickup/weapon 静态流水线。"""
+"""无动画静态资产流水线。"""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from ..errors import PauseRequested, ProcessingError, ProviderError, RetryLimitE
 from ..models.job import Job, JobEvent, JobKind, JobStatus, JobTable
 from ..models.manifest import AnchorInfo, StaticImageInfo
 from ..models.request import STATIC_ASSET_TYPES, AssetRequest, load_request
+from ..models.validation import ValidationReport
 from ..planning.grid_layout import GridLayout
 from ..planning.planner import plan_request
 from ..processing.anchor import CENTER, place_on_canvas
@@ -22,6 +24,8 @@ from ..providers import ImageProvider, bypass_cache, get_provider
 from ..storage.artifacts import ArtifactStore
 from ..storage.hashes import hash_file
 from .common import ensure_manifest, load_rgb, record_generation, require_source_slot
+from .export import ExportSummary, run_export
+from .validation import run_validation
 
 
 @dataclass
@@ -38,6 +42,16 @@ class StaticAssetResult:
     cached: bool
     request_id: str | None
     warnings: list[str]
+
+
+@dataclass
+class StaticAssetCompletion:
+    validation: ValidationReport | None
+    export: ExportSummary | None
+
+    @property
+    def passed(self) -> bool:
+        return self.validation is None or self.validation.passed
 
 
 def _load_table(
@@ -60,6 +74,41 @@ def _static_job(table: JobTable) -> Job:
             f"{table.asset_id} 的任务表应有且仅有一个 static 任务，实际 {len(jobs)} 个"
         )
     return jobs[0]
+
+
+def validate_and_export_static_asset(
+    asset_dir: str | Path,
+    *,
+    targets: Sequence[str],
+    stop_requested: object | None = None,
+) -> StaticAssetCompletion:
+    """验证并导出已处理的静态资产，供单资产与 pack 协调器共用。"""
+    store = ArtifactStore(root=Path(asset_dir))
+    table = store.load_job_table()
+    if table is None:
+        raise ProcessingError(f"{asset_dir} 下没有任务表 —— 先完成静态资产生成与处理")
+    job = _static_job(table)
+
+    validation: ValidationReport | None = None
+    if job.status in (
+        JobStatus.PROCESSED,
+        JobStatus.VALIDATING,
+        JobStatus.VALIDATION_FAILED,
+    ):
+        validation = run_validation(store.root)
+        if not validation.passed:
+            return StaticAssetCompletion(validation=validation, export=None)
+    elif job.status not in (JobStatus.VALIDATED, JobStatus.EXPORTED):
+        raise ProcessingError(
+            f"{job.id} 当前状态为 {job.status.value}，不能进入静态验证与导出"
+        )
+
+    checker = getattr(stop_requested, "is_set", None)
+    if checker and checker():
+        raise PauseRequested(f"{job.id} 已验证并停在阶段边界")
+
+    exported = run_export(store.root, targets=list(targets))
+    return StaticAssetCompletion(validation=validation, export=exported)
 
 
 def _mark_provider_failed(

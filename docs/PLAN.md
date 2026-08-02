@@ -1300,6 +1300,39 @@ planner、静态流水线、validation 四处统一为 {pickup, weapon}，拒绝
 CLI 实测 `starter_weapons` 三件武器全链路（plan → create → 逐资产 export
 → 静态重处理零 API）。全套件 793 passed / 5 skipped / 0 failed。
 
+#### 7.3 静态家族收官 · 🚧 正在实现
+
+**本次范围：`environment_pack` + 静态单资产类型补全（`prop` / `ui_icon` /
+`environment_object`）+ 单资产 CLI 入口。** 动画类 pack（`spell_bundle`、
+`combat_bundle`）不在本次范围，静态收官不改变它们的未完成状态。
+
+##### 契约
+
+- 映射表加一行：`environment_pack → environment_object`；schema 的
+  `pack_type` enum 扩为三值。pack 行为契约与 7.1/7.2 逐字一致，零新语义。
+- `STATIC_ASSET_TYPES` 扩为 {pickup, weapon, prop, ui_icon,
+  environment_object}；拒绝消息继续枚举允许集合。`character` 与其余
+  动画类型在静态路径继续拒绝。
+- 静态 prompt 按类型给最小合理措辞：pickup 与 weapon **一字不动**；
+  prop / environment_object 用对应名词措辞；`ui_icon` 额外声明 UI 图标
+  惯例（正面平视、无地面接触、剪影可读）。不为类型发明超出一句话的
+  风格系统。
+- 新增 CLI `create-asset <request.yaml>`：单个静态资产的完整入口，
+  走与 pack 内单资产相同的链（生成 → 处理 → 验证 → 导出）与同一份
+  `Config` 解析。单资产一次 API 调用，不设 plan 前置闸门（与
+  `create-character` 同口径）；帮助文本说明这点。动画请求一律拒收并
+  指向 `create-character`。
+- `examples/environment_pack.yaml` 新增（3 件环境物件，显式色板）。
+
+##### 退出门槛（仅对本次范围主张）
+
+- ⬜ `environment_pack` 走完 plan → create-asset-pack → 逐资产 export
+  全链路（集成测试 + CLI 实测）
+- ⬜ `create-asset` 对 `prop` 与 `ui_icon` 各有一条端到端集成测试；
+  对动画请求拒收有测试
+- ⬜ 映射、放行/拒绝、prompt 措辞差异有测试；7.1/7.2 全部既有测试
+  不回归、不削弱断言
+
 ---
 
 ### Sprint 8：Tileset 与地图 · **第 10 周**

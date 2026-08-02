@@ -16,10 +16,11 @@ from ..errors import RequestValidationError
 from ..schema_registry import check_schema_version, validate_against
 from .request import AssetRequest, AssetType, BackgroundSpec, ExportSpec, HexColor, StyleSpec
 
-PackType = Literal["potion_pack", "weapon_pack"]
+PackType = Literal["potion_pack", "weapon_pack", "environment_pack"]
 PACK_ASSET_TYPES: Final[Mapping[PackType, AssetType]] = {
     "potion_pack": "pickup",
     "weapon_pack": "weapon",
+    "environment_pack": "environment_object",
 }
 
 
