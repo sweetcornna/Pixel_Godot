@@ -93,8 +93,9 @@ API Key 和图片模型。端点留空表示使用 OpenAI 官方端点，模型�
 脚本或 CI 中的非 TTY 调用仍只生成默认模板，也可用
 `--interactive` / `--no-interactive` 显式控制。
 
-交互输入的 Key 只写入项目 `.env` 的 `PIXEL_ASSET_API_KEY`，文件权限设为
-`0600`，且 `.env` 会加入 `.gitignore`。也可以继续使用真实环境变量：
+交互输入的 Key 只写入项目 `.env` 的 `PIXEL_ASSET_API_KEY`，POSIX 上文件权限
+收紧为 `0600`（Windows 没有这套语义，访问控制交给 NTFS 默认 ACL），且 `.env`
+会加入 `.gitignore`。也可以继续使用真实环境变量：
 
 ```bash
 export PIXEL_ASSET_API_KEY=...     # 或 OPENAI_API_KEY
