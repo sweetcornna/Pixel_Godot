@@ -150,6 +150,24 @@ class GenericJsonExporter(Exporter):
                 },
             }
 
+        maps = manifest.tileset.maps
+        if maps:
+            from ..pipelines.tilemap import load_map_rows
+
+            payload["maps"] = {
+                name: {
+                    "width": entry.width,
+                    "height": entry.height,
+                    "seed": entry.seed,
+                    "tiles_used": entry.tiles_used,
+                    # 逐行 tile_id，与 tiles[*] 的键对得上 —— 消费者查一次表就能
+                    # 拿到图集坐标。用 id 而不是索引：索引一旦与顺序脱钩就全错，
+                    # 而且错得看不出来。
+                    "rows": load_map_rows(root, entry),
+                }
+                for name, entry in sorted(maps.items())
+            }
+
         path = out_dir / f"{manifest.asset_id}.json"
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -166,6 +184,14 @@ class GenericJsonExporter(Exporter):
                 + ("已校准。" if adjacency.calibrated else "**未用真实 tile 校准**。")
                 + "只列了基础地面 tile 之间的关系 —— 两种材质判为不相容是正确结果，"
                 "说明中间还缺一类过渡 tile。"
+            )
+        if maps:
+            listing = "、".join(
+                f"{name}({entry.width}×{entry.height}, seed={entry.seed})"
+                for name, entry in sorted(maps.items())
+            )
+            result.notes.append(
+                f"maps[*].rows 是逐行的 tile_id，可直接查 tiles[*] 拿图集坐标：{listing}。"
             )
         return result
 

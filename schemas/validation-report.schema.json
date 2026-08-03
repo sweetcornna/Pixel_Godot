@@ -129,7 +129,8 @@
             "static_animation",
             "tile_seam",
             "tile_border",
-            "tile_adjacency"
+            "tile_adjacency",
+            "map_adjacency"
           ]
         },
         "target": {

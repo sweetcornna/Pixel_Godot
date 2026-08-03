@@ -69,6 +69,10 @@ class ArtifactStore:
     def exports(self) -> Path:
         return self.root / "exports"
 
+    @property
+    def maps(self) -> Path:
+        return self.root / "maps"
+
     def intermediate(self, stage: str) -> Path:
         return self.root / "intermediate" / stage
 

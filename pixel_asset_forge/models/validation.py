@@ -50,6 +50,7 @@ CheckId = Literal[
     "tile_seam",
     "tile_border",
     "tile_adjacency",
+    "map_adjacency",
 ]
 
 ALL_CHECK_IDS: tuple[CheckId, ...] = (
@@ -78,6 +79,7 @@ ALL_CHECK_IDS: tuple[CheckId, ...] = (
     "tile_seam",
     "tile_border",
     "tile_adjacency",
+    "map_adjacency",
 )
 
 SkipReason = Literal[
@@ -154,6 +156,9 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     # 或阈值换过一版而表没重算。ADR-001 是 manifest-first，让它阻断放行，
     # 但不必与"整套 tile 不可用"同级。
     "tile_adjacency": Severity.HIGH,
+    # 一张违反邻接表的地图，接缝会满屏可见 —— 和 tile 本身拼不起来一样糟。
+    # 而且它是**确定性算法的硬性质**：真的判失败就说明求解器有 bug，不是品味问题。
+    "map_adjacency": Severity.FATAL,
 }
 
 #: 本地即可修复的检查项 —— 不需要重新调用 API（PLAN §9.3）。
