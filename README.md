@@ -43,22 +43,27 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 理由与实测数据见 `pixel_asset_forge/validation/frame_order.py` 的模块文档。
 `export` 产出的 `previews/contact-sheet.png` 就是为这条缺口准备的。
 
-**3. Tiled 产物尚未真机验证（Godot 那一半已补上）。**
+**3. Tiled 已完成官方加载 + 渲染真机验证；仍未验证 GUI 窗口交互本身。**
 
 - **Godot ✅** —— `SpriteFrames`（角色动画）2026-07-29 在 Godot 4.3 验过；
   Sprint 8 的 `TileSet` `.tres` 与地图已于 **2026-08-02 在 Godot 4.7.1 headless
   验过**，四层全部通过（加载 → 纹理衔接 → **图集那一格里装的确实是那块 tile 的像素**
   → 地图逐格 `set_cell`/`get_cell_atlas_coords` 读回）。门槛与"改坏再跑"的实测
   记录见 [`tools/godot-gate/`](tools/godot-gate/)。
-- **Tiled ⚠️** —— 已有 **pytmx 第三方互证**（2026-08-03）：用 Python 生态的
-  TMX 参考实现独立解析我们的 .tmx/.tsx，28 格逐格图集坐标与源地图一致，
-  firstgid/columns/tilecount 对上；两条篡改反例（GID+1、firstgid 偏移）都被
-  独立解码抓出。见 `tests/integration/test_tiled_pytmx.py` —— 它**不引用**我们
-  自己的 GID 函数，独立性是全部意义。
-  仍欠 Tiled **GUI** 真机打开验证 —— pytmx 互证 ≠ 官方渲染器行为。
+- **Tiled 官方加载 + 渲染 ✅** —— 2026-08-03 在 Tiled 1.11.90 随附的
+  `tmxrasterizer` 上实跑：官方 libtiled 跟随 `.tmx` → 外部 `.tsx` → 图集加载并渲染，
+  与“源 tile 图 + 地图逐格 `tile_id`”独立合成的期望图 **28,672 个 RGBA 像素完全
+  一致**。GID 全体 `+1` 与 `firstgid 1 -> 0` 两条改坏反例各产生 28,672 个差异像素，
+  均被逐像素比对判为 FAIL。门槛与实测记录见
+  [`tools/tiled-gate/`](tools/tiled-gate/)，集成测试见
+  `tests/integration/test_tiled_rasterizer.py`。
+- **Tiled GUI 窗口交互 ⚠️** —— 尚未实际启动窗口验证鼠标、菜单、面板与编辑保存。
+  对“官方加载并渲染这份地图”的验证已经完成；这里不把 headless 官方渲染夸大成
+  完整 GUI 交互测试。原有 `pytmx` 第三方互证仍保留，且同样不引用项目自己的 GID
+  编解码函数。
 
-Sprint 8 总门槛第五条"Godot 与 Tiled 均可打开"因此**只完成了 Godot 那一半，
-继续不打勾**。
+Sprint 8 总门槛第五条"Godot 与 Tiled 均可打开"所需的**官方加载与渲染证据已经
+补齐**；若把"打开"严格限定为人工操作 Tiled GUI，仍只欠窗口交互本身这一层。
 
 ---
 
