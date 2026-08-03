@@ -2227,14 +2227,24 @@ Skill 只负责任务理解与调度，CLI 才是核心实现。
 
 **发布**：PyPI · GitHub Release · Codex Skill 安装脚本 · Claude Code Skill 安装脚本 · 可选 Docker 镜像
 
-**退出门槛**
+**退出门槛 —— 2026-08-03 全部达成，逐条证据：**
 
-- ✅ 全新环境可按文档安装
-- ✅ `pixel-asset doctor` 能检测配置
-- ✅ Mock 测试完全离线
-- ✅ Live API 测试默认关闭
-- ✅ 所有产出物都有可追溯 Manifest
-- ✅ 示例 Godot 工程可直接运行
+- ✅ **全新环境可按文档安装** —— 9.5 实测：干净 Python 3.12 venv 只装 wheel，
+  doctor 退出 0、mock create-asset 跑通、manifest 落盘、导入路径在 site-packages
+- ✅ **`pixel-asset doctor` 能检测配置** —— CI build job 每次装 wheel 跑 doctor；
+  live gate 与 9.5 实测两处独立复证
+- ✅ **Mock 测试完全离线** —— CI 无任何 secret，1065 条测试三平台全绿
+- ✅ **Live API 测试默认关闭** —— CI 有专门一步断言 tests/live 是 skip 而非 fail
+- ✅ **所有产出物都有可追溯 Manifest** —— ADR-001 长期约束；live gate 的真实产物
+  同样带 Manifest 与哈希（含地图的 seed 可复现）
+- ✅ **示例 Godot 工程可直接运行** —— `examples/godot-demo/`：真实 gpt-image-2
+  骑士资产 + AnimatedSprite2D 按衔接层四条接好（Nearest / offset / 一次性动作接
+  animation_finished / 整目录复制），Godot 4.7.1 headless 13 项 VERIFY-OK
+  （实现 Codex、审查独立复跑）。verify.gd 随工程入库可复跑
+
+Sprint 9 各切：9.1 CI（三类破坏实测）· 9.2 Skill 防漂移（四反例）·
+9.3 MCP（五道闸门）· 9.4 live gate（真实 FAIL→校准→PASS）· 9.5 发布
+（twine 双 PASSED + 装机实证）。
 
 推进纪律沿用 Sprint 7 / 8：**一个纵切一次范围**，契约先写死再实现，
 每切只对自己的范围主张完成，上面这六条总门槛在全部纵切落地前**不打勾**。
