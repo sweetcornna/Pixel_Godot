@@ -158,6 +158,61 @@ def _median_cell(sources: list[bytes]) -> tuple[int, int]:
     )
 
 
+def _content_height(frame: np.ndarray) -> int:
+    """内容的像素高度。**空帧返回 0，不兜底成 1。**
+
+    兜底成 1 曾经是这条链最危险的一行：它把"这一格根本没画出来"说成"内容高
+    1 像素"，下游拿它做分母算缩放倍数，倍数就成了"目标高 ÷ 1" = 画布高。
+    实测一张 480×375 的空中间帧被要求放大到 46080×36000 —— 16.6 亿像素、
+    单是 RGBA 就 6.6 GB，加上重采样的中间量足以吃穿整台机器的内存，
+    触发内核 OOM（连桌面进程一起杀）。返回 0 让调用方**必须**表态。
+    """
+    rows = np.nonzero(frame[:, :, 3])[0]
+    return int(rows.max() - rows.min() + 1) if rows.size else 0
+
+
+#: 中间帧重采样后允许的最大边长，以画布边长为单位。
+#:
+#: 中间帧最终要被 :func:`align_frames` 摆进画布，比画布大出几倍就已经毫无意义 ——
+#: 真实数据里它们只有画布的一倍上下（96 画布对 63×102）。留 8 倍是**安全阀而非
+#: 业务约束**：正常值离它一个量级，够得着它的只有算错的倍数。
+MAX_INBETWEEN_CANVAS_MULTIPLE = 8
+
+
+def inbetween_size(
+    frame: np.ndarray, *, wanted_height: float, canvas: tuple[int, int]
+) -> tuple[int, int]:
+    """把一张中间帧缩放到"内容高等于 ``wanted_height``"所需的目标尺寸。
+
+    单独提出来是因为它有**两条必须堵死的失败路径**，而它们都不是靠跑一遍命令
+    能发现的 —— 出事时进程直接被 OOM 杀掉，连回溯都没有：
+
+    1. 帧是空的 → 分母为 0。兜底成 1 会算出天文数字的放大倍数（见
+       :func:`_content_height`），所以这里直接拒绝。
+    2. 内容只有寥寥几像素高（抽帧把一条边框或一撮噪点当成了一帧）→ 倍数虽然
+       有限但依然荒谬。用画布边长设硬上界兜住。
+    """
+    own_h, own_w = frame.shape[:2]
+    own_content = _content_height(frame)
+    if own_content == 0:
+        raise ProcessingError(
+            "这一帧键控后没有任何内容，定不出缩放倍数 —— "
+            "模型没把这一格画出来，或者抽帧把格间空白当成了一帧"
+        )
+
+    factor = wanted_height / own_content
+    size = (max(1, round(own_w * factor)), max(1, round(own_h * factor)))
+    limit = MAX_INBETWEEN_CANVAS_MULTIPLE * max(canvas)
+    if max(size) > limit:
+        raise ProcessingError(
+            f"中间帧要被缩放到 {size[0]}×{size[1]}，超过画布 {canvas[0]}×{canvas[1]} 的 "
+            f"{MAX_INBETWEEN_CANVAS_MULTIPLE} 倍上限 —— 源图 {own_w}×{own_h} 里只有 "
+            f"{own_content} 像素高的内容，目标高却是 {wanted_height:.0f}。"
+            "这一格多半没画对，重跑 `interpolate --regenerate`"
+        )
+    return size
+
+
 def _tile(image: Image.Image, size: tuple[int, int], cols: int, rows: int) -> bytes:
     """把一张关键帧平铺进每个格子，作为 ``edit`` 的底图。
 
@@ -318,11 +373,13 @@ def run_interpolate(
     scaled = (max(1, round(content_w * scale)), max(1, round(content_h * scale)))
     key_scaled = [nearest_resize(f, scaled) for f in key_cropped]
 
-    def _content_height(frame: np.ndarray) -> int:
-        rows = np.nonzero(frame[:, :, 3])[0]
-        return int(rows.max() - rows.min() + 1) if rows.size else 1
-
     key_heights = [_content_height(f) for f in key_scaled]
+    if any(height == 0 for height in key_heights):
+        blank = [i for i, height in enumerate(key_heights) if height == 0]
+        raise ProcessingError(
+            f"{key} 的关键帧 {blank} 键控后是空的 —— 中间帧的尺寸是照关键帧的内容高"
+            "插值出来的，基准为空就无从算起。检查关键帧原图与背景键控色。"
+        )
 
     ordered: list[np.ndarray] = []
     for index, frame in enumerate(key_scaled):
@@ -337,10 +394,13 @@ def run_interpolate(
         for step, raw_frame in enumerate(gap_frames):
             weight = (step + 1) / (total + 1)
             wanted = start_h + (end_h - start_h) * weight
-            own_h, own_w = raw_frame.shape[:2]
-            own_content = _content_height(raw_frame)
-            factor = wanted / max(1, own_content)
-            size = (max(1, round(own_w * factor)), max(1, round(own_h * factor)))
+            try:
+                size = inbetween_size(raw_frame, wanted_height=wanted, canvas=canvas)
+            except ProcessingError as exc:
+                raise ProcessingError(
+                    f"{key} 间隔 {index} 的第 {step + 1}/{total} 帧：{exc.message}"
+                ) from exc
+            factor = size[1] / raw_frame.shape[0]
             # 中间帧的源分辨率往往是关键帧的两倍（端点不按请求尺寸返回，实测
             # 关键帧格 543×724、间隔格 1136×1384），缩小倍数因此大得多。
             # 这个倍数下最近邻丢的是内容本身 —— 弓被采成一条断续虚线。
