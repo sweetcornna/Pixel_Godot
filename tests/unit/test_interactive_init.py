@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -40,7 +41,8 @@ def test_interactive_init_writes_all_three_values(project: Path) -> None:
     assert (project / ".env").read_text(encoding="utf-8") == (
         f"PIXEL_ASSET_API_KEY={secret}\n"
     )
-    assert stat.S_IMODE((project / ".env").stat().st_mode) == 0o600
+    if os.name == "posix":  # Windows 没有 POSIX 权限位语义
+        assert stat.S_IMODE((project / ".env").stat().st_mode) == 0o600
     assert secret not in result.stdout
 
 
@@ -112,7 +114,8 @@ def test_existing_dotenv_only_updates_key_line(project: Path) -> None:
         "PIXEL_ASSET_API_KEY=new-secret\n"
         "PIXEL_ASSET_MODEL=keep-this-too\n"
     )
-    assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
+    if os.name == "posix":  # Windows 没有 POSIX 权限位语义
+        assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
 
 
 def test_interactive_init_preserves_custom_fields_in_existing_yaml(project: Path) -> None:

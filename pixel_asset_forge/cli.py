@@ -198,7 +198,11 @@ def _prompt_base_url(default: str) -> str:
 
 
 def _write_project_api_key(path: Path, key: str) -> None:
-    """只更新项目 ``.env`` 的 Key 行，并把文件权限收紧到 0600。"""
+    """只更新项目 ``.env`` 的 Key 行，并把文件权限收紧到 0600。
+
+    权限位只在 POSIX 上生效；Windows 没有这套语义，``chmod`` 调用无害但
+    不产生 0600，访问控制交给 NTFS 默认 ACL。提示语与测试都按平台如实处理。
+    """
     if path.exists():
         path.chmod(0o600)
         original = path.read_text(encoding="utf-8")
@@ -293,7 +297,8 @@ def init(
         if api_key:
             env_path = directory / PROJECT_ENV_NAME
             _write_project_api_key(env_path, api_key)
-            console.print(f"[green]✓[/green] API Key 已写入 {env_path}（权限 0600，值不显示）")
+            perm_note = "权限 0600，" if os.name == "posix" else ""
+            console.print(f"[green]✓[/green] API Key 已写入 {env_path}（{perm_note}值不显示）")
     elif config_path.exists() and not force:
         console.print(f"[yellow]![/yellow] {config_path} 已存在，未改动（加 --force 覆盖）")
     else:
