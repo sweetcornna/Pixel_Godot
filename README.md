@@ -22,7 +22,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
-| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile 首纵切已完成（生成 → 无缝验证 → Godot TileSet 导出）；邻接、autotile、地图生成未开工 |
+| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile（生成 → 无缝验证 → Godot TileSet 导出）与邻接表推导已完成；地图生成、Tiled 导出、Godot terrain 未开工 |
 
 ### 未达标项
 
@@ -181,6 +181,32 @@ tile 与其它资产有两处不同，照抄示例时容易踩空：
 
 `export` 产出的 contact sheet 会把每块 tile 铺成 3×3：判据只算数值，
 平铺起来像不像、有没有肉眼可见的重复图案，还得人看。
+
+#### 邻接表：哪块能挨着哪块
+
+`create-tileset` 顺带从像素推出一张邻接表，写进 Manifest 并随 `generic-json`
+导出，给地图生成当输入。**不额外调用 API**。
+
+判据同样是两条，理由与上面那对同源 —— 接缝比的分母是纹理颗粒度，而**噪声一大它
+就会把"材质换了"这件事稀释掉**：实测草接水在颗粒度 60 时接缝比只有 1.88（阈值 3），
+单靠它会判成相容。所以第二条 `edge_color_gap` 比的是两侧边缘的**均值之差**，
+不做任何归一化，噪声抬不高它。
+
+```
+adjacency.right = {"grass_base": ["grass_base"], "dirt_path": ["dirt_path"], ...}
+```
+
+`examples/grass_field.yaml` 推出来是**对角矩阵**，这是正确答案不是退化：草、土、水
+本来就不能直接挨着，中间需要过渡 tile —— 而那类 tile 目前还没有。这张表如实说出了
+"想把草和水放一起，你还缺一类 tile"。
+
+Manifest 只存 `right` / `down` 两个方向（`A 右接 B` 与 `B 右接 A` 是两件事，
+只有 `A 右接 B ⟺ B 左接 A` 才是同一件事），导出的 JSON 给全四个方向省得每个
+消费者各写一遍转置。`validate` 的 `tile_adjacency` 会拿当前像素重算比对 ——
+产出之后有人换过 tile 图，它会喊停。
+
+> Godot 的 terrain / peering bits **还没做**：那要求 tileset 里本来就有
+> edge / corner / transition 那几类 tile，眼下一块都没有，硬填只能靠猜。
 
 `plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
 键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**

@@ -128,7 +128,8 @@
             "duplicate_frame_approx",
             "static_animation",
             "tile_seam",
-            "tile_border"
+            "tile_border",
+            "tile_adjacency"
           ]
         },
         "target": {

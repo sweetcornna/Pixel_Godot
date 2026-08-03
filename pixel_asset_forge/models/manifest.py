@@ -202,6 +202,35 @@ class TileEntry(_Base):
     processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
 
 
+class TileAdjacency(_Base):
+    """哪块 tile 能挨着哪块（PLAN §8.2）。
+
+    **只存 ``right`` 与 ``down``。** ``A 右接 B`` 与 ``B 右接 A`` 是两件事
+    （前者比 A 的末列与 B 的首列，后者反过来），只有 ``A 右接 B ⟺ B 左接 A``
+    才是同一件事 —— 所以另两个方向是这两个的转置，用 :meth:`neighbours` 现算，
+    不另存一份让它们各自漂移。
+
+    两个阈值随产物记死：判定用的阈值不写下来，换一版阈值之后就没法解释旧产物里
+    这张表是怎么来的。``calibrated`` 与 §9.1 同口径 —— 眼下是工程默认值。
+    """
+
+    seam_ratio_max: float = Field(gt=0)
+    edge_color_gap_max: float = Field(gt=0)
+    calibrated: bool = False
+
+    right: dict[str, list[str]] = Field(min_length=1)
+    down: dict[str, list[str]] = Field(min_length=1)
+
+    def neighbours(self, tile_id: str, direction: str) -> list[str]:
+        """某块 tile 在某个方向上允许的邻居。四个方向都答得出。"""
+        if direction in ("right", "down"):
+            return list((self.right if direction == "right" else self.down).get(tile_id, ()))
+        if direction not in ("left", "up"):
+            raise ValueError(f"未知方向：{direction}。可选：right / down / left / up")
+        stored = self.right if direction == "left" else self.down
+        return sorted(other for other, allowed in stored.items() if tile_id in allowed)
+
+
 class TilesetInfo(_Base):
     """整套 tile 的产物记录。
 
@@ -211,6 +240,29 @@ class TilesetInfo(_Base):
 
     tile_size: tuple[int, int]
     tiles: dict[str, TileEntry] = Field(min_length=1)
+    adjacency: TileAdjacency | None = None
+    """邻接表。8.1 产出的 Manifest 里没有这一项，读的时候必须容许它缺席。"""
+
+    @model_validator(mode="after")
+    def _check_adjacency_covers_the_tiles(self) -> TilesetInfo:
+        """邻接表里的每个 tile_id 都必须真的存在，否则地图生成会引用到空气。"""
+        if self.adjacency is None:
+            return self
+        known = set(self.tiles)
+        for direction in ("right", "down"):
+            table: dict[str, list[str]] = getattr(self.adjacency, direction)
+            unknown = (set(table) | {t for row in table.values() for t in row}) - known
+            if unknown:
+                raise ValueError(
+                    f"邻接表 {direction} 里出现了不存在的 tile：{sorted(unknown)}"
+                )
+            missing = known - set(table)
+            if missing:
+                raise ValueError(
+                    f"邻接表 {direction} 漏了这些 tile：{sorted(missing)} —— "
+                    "缺一行与'这一行是空的'含义不同，前者是漏算，后者是判定为没有邻居"
+                )
+        return self
 
 
 class GeneratedAnimation(_Base):

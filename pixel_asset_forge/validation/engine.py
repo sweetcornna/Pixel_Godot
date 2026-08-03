@@ -52,6 +52,7 @@ from ..processing.pixel_grid import (
 )
 from ..prompts.poses import pose_sequence
 from ..storage.hashes import hash_file
+from .adjacency import derive_adjacency
 from .beat_signature import BeatSignature, check_beat_signature
 from .frame_order import UNDETECTABLE_MESSAGE, measure_frame_order
 from .metrics import (
@@ -443,7 +444,10 @@ def validate_derived(key: str, entry: DerivedAnimation) -> list[Check]:
 #: tileset 上真正会跑的检查。其余的在报告里显式记为不适用，
 #: 理由同静态家族：不能把"没运行"悄悄呈现成"零跳过"。
 _TILESET_APPLICABLE_CHECKS: frozenset[CheckId] = frozenset(
-    {"artifact_exists", "frame_size", "palette_membership", "tile_seam", "tile_border"}
+    {
+        "artifact_exists", "frame_size", "palette_membership",
+        "tile_seam", "tile_border", "tile_adjacency",
+    }
 )
 
 
@@ -532,6 +536,9 @@ def validate_tileset(
     """
     checks: list[Check] = []
     expected = entry.tile_size
+    # 邻接要拿全套 tile 一起重算，所以边验边收 —— 只收尺寸也对的，
+    # 尺寸不对的那块连接缝方向的长度都对不上，喂进去只会炸在无关的地方。
+    usable: dict[str, np.ndarray] = {}
     for tile_id, tile in sorted(entry.tiles.items()):
         image_path = root / tile.image
         exists = image_path.is_file()
@@ -552,6 +559,8 @@ def validate_tileset(
 
         image = np.array(Image.open(image_path).convert("RGBA"))
         actual = (image.shape[1], image.shape[0])
+        if actual == expected:
+            usable[tile_id] = image
         checks.append(
             Check.make(
                 "frame_size",
@@ -614,6 +623,74 @@ def validate_tileset(
                     ),
                 )
             )
+
+    checks.extend(_check_tile_adjacency(entry, usable))
+    return checks
+
+
+def _check_tile_adjacency(
+    entry: TilesetInfo, images: dict[str, np.ndarray]
+) -> list[Check]:
+    """邻接表说的话，与盘上的像素现在说的话，是否还是同一句（PLAN §8.2）。
+
+    **用 Manifest 里记着的阈值重算，不用当前默认值。** 产物是在那组阈值下做出来的，
+    以后改了默认值不该反过来把旧产物判成坏的 —— 那不是漂移，是记录得诚实。
+    这条检查抓的是真会裂开的那道缝：产出之后有人动过 tile 图、手改过 Manifest、
+    或者推导本身有 bug。
+
+    通过时也要记一笔 —— 只在出问题时才发出的检查项会在顺利路径上从报告里整条
+    消失，8.1 的 ``artifact_exists`` 踩的就是这个坑。
+    """
+    if entry.adjacency is None:
+        return [
+            Check.make(
+                "tile_adjacency",
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="not_applicable",
+                message="这套 tile 的 Manifest 里没有邻接表（8.1 及更早的产物）",
+            )
+        ]
+    if set(images) != set(entry.tiles):
+        missing = sorted(set(entry.tiles) - set(images))
+        return [
+            Check.make(
+                "tile_adjacency",
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="dependency_failed",
+                message=f"这些 tile 缺失或尺寸不符，邻接无从重算：{missing}",
+            )
+        ]
+
+    fresh = derive_adjacency(
+        images,
+        seam_max=entry.adjacency.seam_ratio_max,
+        gap_max=entry.adjacency.edge_color_gap_max,
+    )
+    checks: list[Check] = []
+    for tile_id in sorted(images):
+        drifted = [
+            direction
+            for direction, recomputed in (("right", fresh.right), ("down", fresh.down))
+            if sorted(entry.adjacency.neighbours(tile_id, direction))
+            != sorted(recomputed[tile_id])
+        ]
+        checks.append(
+            Check.make(
+                "tile_adjacency",
+                tile_id,
+                CheckResult.PASS if not drifted else CheckResult.FAIL,
+                measured=len(drifted),
+                threshold=0,
+                message=(
+                    None
+                    if not drifted
+                    else f"邻接表的 {'、'.join(drifted)} 方向与当前像素对不上 —— "
+                    "重跑 `create-tileset` 重算（不调用 API、不产生计费）"
+                ),
+            )
+        )
     return checks
 
 
