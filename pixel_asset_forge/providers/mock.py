@@ -33,7 +33,24 @@ from ..storage.hashes import hash_bytes
 from .base import ImageProvider, ReferenceImage
 
 _GRID_RE = re.compile(r"(\d+)\s*[x×]\s*(\d+)\s*(?:cell\s*)?grid", re.IGNORECASE)
+_COLS_ROWS_RE = re.compile(
+    r"(\d+)\s*columns?\s*[x×]\s*(\d+)\s*rows?", re.IGNORECASE
+)
+"""prompt 里描述网格的**规范措辞**，两条生成路径都用它：
+
+- ``compiler``：``a 4 columns x 3 rows grid of 12 equally sized cells``
+- ``inbetween``：``Layout: exactly 3 columns x 1 rows of 3 equally sized cells``
+
+补间那条曾经两条正则都不命中（它既不写 ``NxM grid`` 也不写 ``N poses``），
+于是 Mock 退回按物理尺寸猜格数 —— 1440 // 512 = 2，在一张要求 3 格的图上
+只画了 2 个人形。中间那格是纯背景，下游抽帧抽出一张空帧，
+再往下就是 :mod:`..pipelines.interpolate` 里那次失控的放大。
+"""
+
 _POSES_RE = re.compile(r"exactly\s+(\d+)\s+(?:distinct\s+)?poses?", re.IGNORECASE)
+
+#: prompt 在描述格子布局时必然出现的短语。见 :func:`_parse_layout` 里"拒绝猜"的判据。
+_LAYOUT_MARKER = "equally sized cells"
 _HEX_RE = re.compile(r"#([0-9A-Fa-f]{6})")
 _BACKGROUND_HEX_RE = re.compile(
     r"Background:\s*[^#]*#([0-9A-Fa-f]{6})",
@@ -66,11 +83,23 @@ def _parse_layout(prompt: str, size: tuple[int, int]) -> tuple[int, int, int]:
     poses = _POSES_RE.search(prompt)
     frames = int(poses.group(1)) if poses else 0
 
-    match = _GRID_RE.search(prompt)
+    match = _COLS_ROWS_RE.search(prompt) or _GRID_RE.search(prompt)
     if match:
         cols, rows = int(match.group(1)), int(match.group(2))
     elif frames and "one horizontal row" in prompt.lower():
         cols, rows = frames, 1
+    elif _LAYOUT_MARKER in prompt.lower():
+        # prompt 明写了格子布局，却没解析出格数 —— 此时**不许猜**。
+        # 按物理尺寸猜出的格数一旦与 prompt 不一致，Mock 画的格数就与下游按
+        # prompt 切分的格数对不上，切出来的"帧"落在格间空白上。这种分歧不会
+        # 报错，只会在下游变成一张空帧，是最难查的一类问题（实测它一路走到
+        # 重采样才以 OOM 收场）。ADR-002：Mock 是一等公民，宁可在这里失败。
+        raise ValueError(
+            "Mock 解析不出 prompt 里的网格布局，拒绝按物理尺寸猜 —— "
+            "prompt 描述了 equally sized cells，却没有可识别的 "
+            "'N columns x M rows' / 'NxM grid' / 'exactly N poses'。"
+            "改 prompt 措辞时请同步 mock 的解析规则。"
+        )
     else:
         cols = max(1, width // CELL_SIZE)
         rows = max(1, height // CELL_SIZE)

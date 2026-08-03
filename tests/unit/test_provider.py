@@ -196,3 +196,66 @@ def test_retry_policy_delay_is_capped() -> None:
     policy = RetryPolicy(base_delay=1.0, multiplier=2.0, max_delay=10.0)
     assert policy.delay_for(1) == 1.0
     assert policy.delay_for(10) == 10.0
+
+
+# -- Mock 必须按 prompt 说的格数画 ------------------------------------------
+#
+# 这一组是被一次系统级 OOM 逼出来的。补间 prompt 写的是
+# "Layout: exactly 3 columns x 1 rows of 3 equally sized cells"，而 Mock 当时
+# 只认 "NxM grid" 与 "exactly N poses" 两种措辞，两条都不命中 —— 于是它退回
+# 按物理尺寸猜：1440 // 512 = 2 格，在一张要求 3 格的图上只画了 2 个人形。
+# 中间那格是纯背景，下游抽帧抽出一张**空帧**，补间拿它算缩放倍数
+# （分母被兜底成 1），要求把 480×375 放大到 46080×36000 —— 6.6 GB 一张，
+# 吃穿内存触发内核 OOM。
+#
+# 所以这里断言的不是"正则写对了"，而是 **prompt 与 Mock 对同一张图的格数
+# 理解一致**：措辞今后再漂移，也必须在这里当场失败，而不是在下游变成空帧。
+
+
+def _inbetween_prompt(frames: int, cell: tuple[int, int], minimal_request):  # type: ignore[no-untyped-def]
+    from pixel_asset_forge.models import parse_request
+    from pixel_asset_forge.planning.grid_layout import layout_matching_cell
+    from pixel_asset_forge.prompts.inbetween import compile_inbetween_prompt
+
+    layout = layout_matching_cell(frames, cell)
+    prompt = compile_inbetween_prompt(
+        parse_request(minimal_request),
+        action="walk", direction="down", frames=frames,
+        layout=layout, key_color="#FF00FF",
+    )
+    return prompt, layout
+
+
+@pytest.mark.parametrize("frames", [2, 3, 4])
+def test_mock_reads_the_same_grid_the_inbetween_prompt_states(frames, minimal_request) -> None:  # type: ignore[no-untyped-def]
+    """补间 prompt 与 Mock 必须对格数达成一致 —— 分歧不会报错，只会产出空帧。"""
+    from pixel_asset_forge.providers.mock import _parse_layout
+
+    prompt, layout = _inbetween_prompt(frames, (543, 724), minimal_request)
+    cols, rows, drawn = _parse_layout(prompt.text, prompt.size)
+
+    assert (cols, rows) == (layout.cols, layout.rows), (
+        f"prompt 要 {layout.cols}×{layout.rows}，Mock 读成 {cols}×{rows}"
+    )
+    assert drawn == layout.capacity
+
+
+@pytest.mark.parametrize("frames", [2, 3, 4])
+def test_every_inbetween_cell_actually_gets_a_pose(frames, minimal_request) -> None:  # type: ignore[no-untyped-def]
+    """格数一致还不够 —— 每一格都得真有内容，空格就是下游那张空帧的来源。"""
+    prompt, layout = _inbetween_prompt(frames, (543, 724), minimal_request)
+    image = open_image(
+        MockImageProvider().generate(prompt.text, size=prompt.size).image
+    )
+    bg = background_mask(image, (255, 0, 255))
+    for index in range(layout.capacity):
+        left, top, right, bottom = layout.cell_box(index)
+        assert not bg[top:bottom, left:right].all(), f"第 {index} 格是空的"
+
+
+def test_mock_refuses_to_guess_a_layout_it_cannot_parse() -> None:
+    """猜错格数不会报错，只会在下游变成空帧 —— 宁可在这里失败（ADR-002）。"""
+    from pixel_asset_forge.providers.mock import _parse_layout
+
+    with pytest.raises(ValueError, match="拒绝按物理尺寸猜"):
+        _parse_layout("Layout: three across of equally sized cells", (1440, 480))
