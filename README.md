@@ -25,7 +25,8 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
 | 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成、Tiled 导出已完成；过渡 tile、Godot terrain 未开工，Godot / Tiled 均欠一次真机验证 |
-| 9 | Skill、MCP、CI 与发布 | 🚧 进行中 —— CI、Skill 追平、MCP（6 个高层工具）已完成，各自的闸门都经反例实测；PyPI 发布未开工 |
+| 9 | Skill、MCP、CI 与发布 | ✅ 完成 —— CI 三平台、Skill 防漂移、MCP 6 工具、live gate（真实模型 FAIL→校准→PASS）、发布纵切（twine 双 PASSED + 全新环境装机实证）；六条总退出门槛全部达成 |
+| 10 | Godot 工作站 | ✂️ 范围裁剪（owner 决策 2026-08-03）—— 本项目只做资产生成与自动化；已交付：三 plugin 结构、许可声明、衔接层四条真机背书、`examples/godot-demo/`（真实资产，13 项 VERIFY-OK）；"AI 驱动编辑器开发游戏"不做 |
 
 ### 未达标项
 
