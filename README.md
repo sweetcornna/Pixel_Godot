@@ -30,10 +30,12 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 
 ### 未达标项
 
-**1. per-action 阈值只完成了五个角色动作的校准。** `idle` / `walk` / `attack` /
-`hurt` / `death` 已用 6 个角色、30 个动作复验；`cast` / `travel` / `impact` / `loop`
-仍无样本，`up` 方向修正系数也未验证。详见
-[阈值校准记录](docs/threshold-calibration.md)。
+**1. per-action 阈值只完成了五个角色动作的真实校准。** `idle` / `walk` / `attack` /
+`hurt` / `death` 已用 6 个角色、30 个动作复验。`cast` / `travel` / `impact` / `loop`
+与 `up` 方向 ×1.3 修正系数的[一键校准 harness](tools/calibration/README.md) 已就绪，固定
+矩阵可一条命令生成、量测、聚合并列出 contact sheet/GIF；2026-08-03 已完成 25/25 次
+mock 全链演练。**真实校准仍欠一次 live 运行**，需要 API Key、25 次调用预算和人工审图，
+不能把 mock 演练写成已完成校准。详见[阈值校准记录](docs/threshold-calibration.md)。
 
 **2. 帧序被打乱无法自动检测。** PLAN §9.2 称这是"捕捉静默失败的唯一自动手段"，
 但实测四种判据在正序与随机乱序上完全重叠，其中"局部离群"判据**方向相反**

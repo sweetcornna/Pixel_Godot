@@ -1,0 +1,188 @@
+{
+  "schema_version": "1.0",
+  "sample_count": 16,
+  "by_action": {
+    "cast": {
+      "sample_count": 6,
+      "height_variation": {
+        "min": 0.015915119363395226,
+        "max": 0.02120141342756184,
+        "mean": 0.020320364416867406
+      },
+      "silhouette_variation": {
+        "min": 0.08372093023255814,
+        "max": 0.11223234063499878,
+        "mean": 0.09018675045332192
+      },
+      "anchor_drift": {
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5
+      }
+    },
+    "impact": {
+      "sample_count": 3,
+      "height_variation": {
+        "min": 0.015915119363395226,
+        "max": 0.01643835616438356,
+        "mean": 0.01626394389738745
+      },
+      "silhouette_variation": {
+        "min": 0.11223234063499878,
+        "max": 0.11818879508825787,
+        "mean": 0.11620331027050484
+      },
+      "anchor_drift": {
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5
+      }
+    },
+    "loop": {
+      "sample_count": 2,
+      "height_variation": {
+        "min": 0.032,
+        "max": 0.032520325203252036,
+        "mean": 0.03226016260162602
+      },
+      "silhouette_variation": {
+        "min": 0.08968125337655321,
+        "max": 0.1069631983055335,
+        "mean": 0.09832222584104336
+      },
+      "anchor_drift": {
+        "min": 0.45674044265593494,
+        "max": 0.4700944386149004,
+        "mean": 0.4634174406354177
+      }
+    },
+    "travel": {
+      "sample_count": 2,
+      "height_variation": {
+        "min": 0.032,
+        "max": 0.032,
+        "mean": 0.032
+      },
+      "silhouette_variation": {
+        "min": 0.1069631983055335,
+        "max": 0.1069631983055335,
+        "mean": 0.1069631983055335
+      },
+      "anchor_drift": {
+        "min": 0.45674044265593494,
+        "max": 0.45674044265593494,
+        "mean": 0.45674044265593494
+      }
+    },
+    "walk": {
+      "sample_count": 3,
+      "height_variation": {
+        "min": 0.04336043360433604,
+        "max": 0.04336043360433604,
+        "mean": 0.043360433604336036
+      },
+      "silhouette_variation": {
+        "min": 0.12372293560783579,
+        "max": 0.12372293560783579,
+        "mean": 0.1237229356078358
+      },
+      "anchor_drift": {
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5
+      }
+    }
+  },
+  "by_action_direction": {
+    "cast_down": {
+      "sample_count": 6,
+      "height_variation": {
+        "min": 0.015915119363395226,
+        "max": 0.02120141342756184,
+        "mean": 0.020320364416867406
+      },
+      "silhouette_variation": {
+        "min": 0.08372093023255814,
+        "max": 0.11223234063499878,
+        "mean": 0.09018675045332192
+      },
+      "anchor_drift": {
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5
+      }
+    },
+    "impact": {
+      "sample_count": 3,
+      "height_variation": {
+        "min": 0.015915119363395226,
+        "max": 0.01643835616438356,
+        "mean": 0.01626394389738745
+      },
+      "silhouette_variation": {
+        "min": 0.11223234063499878,
+        "max": 0.11818879508825787,
+        "mean": 0.11620331027050484
+      },
+      "anchor_drift": {
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5
+      }
+    },
+    "loop": {
+      "sample_count": 2,
+      "height_variation": {
+        "min": 0.032,
+        "max": 0.032520325203252036,
+        "mean": 0.03226016260162602
+      },
+      "silhouette_variation": {
+        "min": 0.08968125337655321,
+        "max": 0.1069631983055335,
+        "mean": 0.09832222584104336
+      },
+      "anchor_drift": {
+        "min": 0.45674044265593494,
+        "max": 0.4700944386149004,
+        "mean": 0.4634174406354177
+      }
+    },
+    "travel_down": {
+      "sample_count": 2,
+      "height_variation": {
+        "min": 0.032,
+        "max": 0.032,
+        "mean": 0.032
+      },
+      "silhouette_variation": {
+        "min": 0.1069631983055335,
+        "max": 0.1069631983055335,
+        "mean": 0.1069631983055335
+      },
+      "anchor_drift": {
+        "min": 0.45674044265593494,
+        "max": 0.45674044265593494,
+        "mean": 0.45674044265593494
+      }
+    },
+    "walk_up": {
+      "sample_count": 3,
+      "height_variation": {
+        "min": 0.04336043360433604,
+        "max": 0.04336043360433604,
+        "mean": 0.043360433604336036
+      },
+      "silhouette_variation": {
+        "min": 0.12372293560783579,
+        "max": 0.12372293560783579,
+        "mean": 0.1237229356078358
+      },
+      "anchor_drift": {
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5
+      }
+    }
+  }
+}

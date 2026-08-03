@@ -16,3 +16,6 @@ refs/
 
 # Live gate 的原图/处理中间产物体积大；量化报告留在 reports/ 接受版本审查
 tools/live-gate/runs/
+
+# 校准 harness 同一约定：原图/GIF 留本地，量化报告镜像到 reports/ 入库
+tools/calibration/runs/
