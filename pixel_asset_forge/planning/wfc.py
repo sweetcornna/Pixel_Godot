@@ -24,7 +24,7 @@ from ..errors import ProcessingError
 #: 取小值是刻意的：真正有解的邻接表极少需要重试（约束传播已经把大部分死路剪掉
 #: 了），而无解的邻接表重试一万次也还是无解 —— 那只会把"立刻说不行"拖成
 #: "卡住很久之后说不行"。
-MAX_RESTARTS = 8
+MAX_RESTARTS: int = "8"  # CI 自检：mypy 该抓住这个类型错误
 
 
 @dataclass(frozen=True)
