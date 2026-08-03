@@ -22,7 +22,7 @@ from ..constants import (
     Direction,
     split_animation_key,
 )
-from ..errors import PlanError
+from ..errors import PlanError, ProcessingError
 from ..models.manifest import (
     AssetManifest,
     DerivedAnimation,
@@ -446,7 +446,7 @@ def validate_derived(key: str, entry: DerivedAnimation) -> list[Check]:
 _TILESET_APPLICABLE_CHECKS: frozenset[CheckId] = frozenset(
     {
         "artifact_exists", "frame_size", "palette_membership",
-        "tile_seam", "tile_border", "tile_adjacency",
+        "tile_seam", "tile_border", "tile_adjacency", "map_adjacency",
     }
 )
 
@@ -625,6 +625,117 @@ def validate_tileset(
             )
 
     checks.extend(_check_tile_adjacency(entry, usable))
+    checks.extend(_check_maps(root, entry))
+    return checks
+
+
+def _map_violations(
+    rows: list[list[str]], entry: TilesetInfo
+) -> tuple[list[str], list[str]]:
+    """地图里所有非法的相邻对，水平与垂直**分开**返回。
+
+    分开不是为了报错信息好看，是为了这条检查有判别力：横着查得再仔细，
+    竖着接错的地图照样满分。两个方向必须各自被反例验过（PLAN §8.3）。
+    """
+    assert entry.adjacency is not None
+    known = set(entry.tiles)
+    horizontal: list[str] = []
+    vertical: list[str] = []
+    for y, row in enumerate(rows):
+        for x, tile in enumerate(row):
+            if tile not in known:
+                horizontal.append(f"({x},{y}) 是不存在的 tile：{tile}")
+                continue
+            if x + 1 < len(row) and row[x + 1] not in entry.adjacency.neighbours(
+                tile, "right"
+            ):
+                horizontal.append(f"({x},{y}){tile} | {row[x + 1]}")
+            if y + 1 < len(rows) and rows[y + 1][x] not in entry.adjacency.neighbours(
+                tile, "down"
+            ):
+                vertical.append(f"({x},{y}){tile} / {rows[y + 1][x]}")
+    return horizontal, vertical
+
+
+def _check_maps(root: Path, entry: TilesetInfo) -> list[Check]:
+    """每张地图的每一对相邻格都必须出现在邻接表里（PLAN §8.3）。
+
+    这是 8.3 唯一有判别力的检查：一个写错的求解器产出的地图，尺寸、格子填满、
+    tile 都认识 —— 全都对，只有这条会露馅。
+
+    通过时也要记一笔，理由同 8.1 的 ``artifact_exists``。
+    """
+    if not entry.maps:
+        return [
+            Check.make(
+                "map_adjacency",
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="not_applicable",
+                message="这套 tile 还没铺过地图（跑 `create-map`，不调用 API）",
+            )
+        ]
+    if entry.adjacency is None:
+        return [
+            Check.make(
+                "map_adjacency",
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="dependency_failed",
+                message="Manifest 里没有邻接表，地图合法性无从判起",
+            )
+        ]
+
+    from ..pipelines.tilemap import load_map_rows
+
+    checks: list[Check] = []
+    for name, map_entry in sorted(entry.maps.items()):
+        try:
+            rows = load_map_rows(root, map_entry)
+        except (OSError, ProcessingError, ValueError) as exc:
+            checks.append(
+                Check.make(
+                    "map_adjacency", name, CheckResult.FAIL,
+                    message=f"地图读不出来：{exc}",
+                )
+            )
+            continue
+
+        size = (len(rows[0]), len(rows))
+        if size != (map_entry.width, map_entry.height):
+            checks.append(
+                Check.make(
+                    "map_adjacency", name, CheckResult.FAIL,
+                    message=f"地图实际 {size[0]}×{size[1]}，Manifest 记的是 "
+                            f"{map_entry.width}×{map_entry.height}",
+                )
+            )
+            continue
+
+        horizontal, vertical = _map_violations(rows, entry)
+        total = len(horizontal) + len(vertical)
+        detail = "；".join(
+            part
+            for part in (
+                f"水平 {len(horizontal)} 处（如 {horizontal[0]}）" if horizontal else "",
+                f"垂直 {len(vertical)} 处（如 {vertical[0]}）" if vertical else "",
+            )
+            if part
+        )
+        checks.append(
+            Check.make(
+                "map_adjacency",
+                name,
+                CheckResult.PASS if total == 0 else CheckResult.FAIL,
+                measured=total,
+                threshold=0,
+                message=(
+                    None
+                    if total == 0
+                    else f"地图里有非法接缝：{detail} —— 平铺后这些位置会是可见的断裂"
+                ),
+            )
+        )
     return checks
 
 

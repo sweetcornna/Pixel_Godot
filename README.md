@@ -22,7 +22,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
-| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile（生成 → 无缝验证 → Godot TileSet 导出）与邻接表推导已完成；地图生成、Tiled 导出、Godot terrain 未开工 |
+| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成已完成；Tiled / TMX 导出、过渡 tile、Godot terrain 未开工 |
 
 ### 未达标项
 
@@ -208,6 +208,29 @@ Manifest 只存 `right` / `down` 两个方向（`A 右接 B` 与 `B 右接 A` �
 > Godot 的 terrain / peering bits **还没做**：那要求 tileset 里本来就有
 > edge / corner / transition 那几类 tile，眼下一块都没有，硬填只能靠猜。
 
+#### 铺一张地图
+
+```bash
+uv run pixel-asset create-map outputs/grass_field --width 24 --height 16 --seed 42
+```
+
+WFC 的 Simple Tiled Model，吃的就是上面那张邻接表。**不调用 API**，
+同 seed + 同邻接表 + 同尺寸 → 同一张地图，逐格相等。
+
+`validate` 的 `map_adjacency` 会逐对相邻格核对合法性（水平与垂直分开查——
+只查一个方向的检查对另一半失败恒判通过）。撞上矛盾时求解器**换 seed 重试，
+仍然不行就报错**，绝不交一张有非法接缝的半成品。
+
+> **对现在这套 tile，铺出来的地图只有一种材质，而这是正确结果。** 邻接表是
+> 对角矩阵（材质之间接不上），而地图网格是连通的——每一步都要求两边相容，
+> 于是整张图必然同一种材质。缺的是**过渡 tile**，不是更好的求解器。
+> 多材质求解能力由 `tests/unit/test_wfc.py` 用合成邻接表验证。
+
+地图随 `generic-json` 导出（`maps[*].rows` 是逐行 tile_id，查 `tiles[*]` 即得图集
+坐标）。Godot 那边给的是一段 `set_cell()` 的 GDScript——**没有产原生 `.tscn`**：
+`TileMapLayer` 把地图存成打包字节数组，本机无 Godot 可验，凭记忆拼二进制不如给
+一段读一遍就能确认对错的代码。
+
 `plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
 键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**
 
@@ -229,6 +252,7 @@ Manifest 只存 `right` / `down` 两个方向（`A 右接 B` 与 `B 右接 A` �
 | `create-asset <request.yaml>` | 单个静态资产完整链：生成 → 处理 → 验证 → 导出 | ✅ | ✅ |
 | `create-asset-pack <pack.yaml>` | 批量生成共享约束的一组资产（静态三种 + 动画 `spell_bundle` / `combat_bundle`） | ✅ | ✅ |
 | `create-tileset <request.yaml>` | 生成一整套地面 tile：逐块生成 → 整套统一处理 | ✅ | ✅ |
+| `create-map <outputs/A> --width W --height H --seed N` | 按邻接表铺一张地图（WFC） | ❌ | ✅ |
 | `import <request.yaml> <source> --as seed\|keyframes` | 导入已有素材 | ❌ | ✅ |
 | `interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ | ✅ |
 | `validate <outputs/A>` | 运行验证引擎 | ❌ | ✅ |

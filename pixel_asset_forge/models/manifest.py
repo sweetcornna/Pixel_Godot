@@ -231,6 +231,23 @@ class TileAdjacency(_Base):
         return sorted(other for other, allowed in stored.items() if tile_id in allowed)
 
 
+class TileMapEntry(_Base):
+    """一张铺好的地图（PLAN §8.3）。
+
+    **地图本身不内联在这里。** 64×64 就是 4096 个 id，塞进 Manifest 会把它撑成
+    一份数据文件。地图自己落一个 JSON，这里只记路径、哈希与参数 —— 凭 Manifest
+    加文件能重建全部产物（ADR-001），而 ``seed`` 让它连"怎么铺出来的"都可复现。
+    """
+
+    path: AssetRelativePath
+    hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+    seed: int
+    tiles_used: list[str] = Field(min_length=1)
+    """实际用到的 tile。一眼看得出这张地图是不是只有一种材质。"""
+
+
 class TilesetInfo(_Base):
     """整套 tile 的产物记录。
 
@@ -242,6 +259,9 @@ class TilesetInfo(_Base):
     tiles: dict[str, TileEntry] = Field(min_length=1)
     adjacency: TileAdjacency | None = None
     """邻接表。8.1 产出的 Manifest 里没有这一项，读的时候必须容许它缺席。"""
+
+    maps: dict[str, TileMapEntry] = Field(default_factory=dict)
+    """铺好的地图，按名字索引。没跑过 ``create-map`` 就是空的。"""
 
     @model_validator(mode="after")
     def _check_adjacency_covers_the_tiles(self) -> TilesetInfo:
@@ -262,6 +282,15 @@ class TilesetInfo(_Base):
                     f"邻接表 {direction} 漏了这些 tile：{sorted(missing)} —— "
                     "缺一行与'这一行是空的'含义不同，前者是漏算，后者是判定为没有邻居"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _check_maps_only_use_known_tiles(self) -> TilesetInfo:
+        """地图用到的 tile 必须真的存在，否则加载时会引用到空气。"""
+        for name, entry in self.maps.items():
+            unknown = sorted(set(entry.tiles_used) - set(self.tiles))
+            if unknown:
+                raise ValueError(f"地图 {name} 用到了不存在的 tile：{unknown}")
         return self
 
 

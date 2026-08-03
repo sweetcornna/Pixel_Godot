@@ -379,3 +379,157 @@ def test_adjacency_reaches_the_generic_json_export(
             "dirt_path": ["dirt_path"],
             "shallow_water": ["shallow_water"],
         }
+
+
+# -- 8.3 地图生成 ------------------------------------------------------------
+
+
+def _create_map(store: ArtifactStore, config_path: Path, **opts: object):  # type: ignore[no-untyped-def]
+    args = ["create-map", str(store.root), "--config", str(config_path)]
+    for key, value in opts.items():
+        args += [f"--{key.replace('_', '-')}", str(value)]
+    return runner.invoke(app, args)
+
+
+def test_map_generation_is_offline_and_reproducible(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """地图生成不调用 API；同 seed 逐格可复现。"""
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    log_before = store.generation_log_path.read_bytes()
+
+    result = _create_map(store, config_path, width=12, height=8, seed=20260802)
+    assert result.exit_code == EXIT_OK, result.stdout
+    assert store.generation_log_path.read_bytes() == log_before
+
+    first = json.loads((store.maps / "overworld.json").read_text(encoding="utf-8"))
+    _create_map(store, config_path, width=12, height=8, seed=20260802)
+    assert json.loads((store.maps / "overworld.json").read_text(encoding="utf-8")) == first
+
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.tileset is not None
+    entry = manifest.tileset.maps["overworld"]
+    assert (entry.width, entry.height, entry.seed) == (12, 8, 20260802)
+
+
+def test_the_real_tileset_can_only_produce_a_single_material_map(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """如实记账：这套 tile 铺不出多材质地图，而这**是正确结果**。
+
+    8.2 对 grass_field 推出的是对角矩阵（草只接草、土只接土、水只接水），
+    而地图网格是连通的 —— 每一步都要求两边相容，于是整张图必然一种材质。
+    缺的是过渡 tile，不是更好的求解器。多材质的求解能力由
+    tests/unit/test_wfc.py 用合成邻接表验证。
+    """
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    result = _create_map(store, config_path, width=10, height=6, seed=1)
+
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.tileset is not None
+    assert len(manifest.tileset.maps["overworld"].tiles_used) == 1
+    # 这件事必须让用户看见，否则他会以为求解器坏了。
+    # 去空白再比：Rich 会按终端宽度折行，"过渡 tile" 可能被断成两行。
+    compact = "".join(result.stdout.split())
+    assert "对角矩阵" in compact and "过渡tile" in compact
+
+
+def test_validate_accepts_a_generated_map(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    _create_map(store, config_path, width=10, height=6, seed=5)
+    _validate(store, config_path)
+
+    report = json.loads(store.validation_report_path.read_text(encoding="utf-8"))
+    ran = [c for c in report["checks"] if c["id"] == "map_adjacency"]
+    assert [c["target"] for c in ran] == ["overworld"]
+    assert ran[0]["result"] == CheckResult.PASS.value
+    assert ran[0]["measured"] == 0
+
+
+def _rewrite_map(store: ArtifactStore, rows: list[list[str]]) -> None:
+    """把地图换成给定内容，并同步 Manifest 里的哈希 —— 这样漏网的只可能是合法性。"""
+    from pixel_asset_forge.storage.hashes import hash_file
+
+    path = store.maps / "overworld.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["rows"] = rows
+    payload["width"], payload["height"] = len(rows[0]), len(rows)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.tileset is not None
+    entry = manifest.tileset.maps["overworld"]
+    entry.hash = hash_file(path)
+    entry.width, entry.height = len(rows[0]), len(rows)
+    entry.tiles_used = sorted({t for row in rows for t in row})
+    manifest.save(store.manifest_path)
+
+
+@pytest.mark.parametrize(
+    ("axis", "rows"),
+    [
+        # 只在**水平**方向违规：每一列自上而下同材质，横着却是草接土。
+        ("horizontal", [["grass_base", "dirt_path"], ["grass_base", "dirt_path"]]),
+        # 只在**垂直**方向违规：每一行左右同材质，竖着却是草接土。
+        ("vertical", [["grass_base", "grass_base"], ["dirt_path", "dirt_path"]]),
+    ],
+)
+def test_an_illegal_map_is_caught_in_either_direction(
+    tileset_env: tuple[Path, Path, ArtifactStore], axis: str, rows: list[list[str]]
+) -> None:
+    """两个方向各一张反例 —— 少一张，这条检查就有一半是瞎的。
+
+    只查水平不查垂直（或反之）是这类检查最常见的写法，而它对另一半失败恒判通过。
+    """
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    _create_map(store, config_path, width=2, height=2, seed=1)
+    _rewrite_map(store, rows)
+    _validate(store, config_path)
+
+    report = json.loads(store.validation_report_path.read_text(encoding="utf-8"))
+    failed = [
+        c
+        for c in report["checks"]
+        if c["id"] == "map_adjacency" and c["result"] == CheckResult.FAIL.value
+    ]
+    assert len(failed) == 1, f"{axis} 方向的非法地图没被抓到"
+    assert failed[0]["measured"] == 2
+    assert axis == ("horizontal" if "水平" in failed[0]["message"] else "vertical")
+
+
+def test_the_map_reaches_the_generic_json_export(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    _create_map(store, config_path, width=7, height=4, seed=9)
+    _validate(store, config_path)
+    exported = runner.invoke(
+        app, ["export", str(store.root), "--config", str(config_path)]
+    )
+    assert exported.exit_code == EXIT_OK, exported.stdout
+
+    payload = json.loads(
+        (store.exports / "generic-json" / f"{ASSET_ID}.json").read_text(encoding="utf-8")
+    )
+    overworld = payload["maps"]["overworld"]
+    assert (overworld["width"], overworld["height"], overworld["seed"]) == (7, 4, 9)
+    assert len(overworld["rows"]) == 4
+    # rows 里的 id 必须都能在 tiles 里查到图集坐标，否则消费者拿它没用。
+    for row in overworld["rows"]:
+        assert len(row) == 7
+        for tile_id in row:
+            assert tile_id in payload["tiles"]
+
+    # Godot 那边给的是 set_cell 片段，不是伪造的 tile_map_data。
+    godot_readme = (store.exports / "godot" / "GODOT-README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "set_cell" in godot_readme
+    assert "tile_map_data" in godot_readme  # 说明了为什么不产它

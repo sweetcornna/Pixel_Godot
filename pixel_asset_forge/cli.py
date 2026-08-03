@@ -57,6 +57,7 @@ from .pipelines import next_pending, run_export, run_interpolate, run_process
 from .pipelines.asset_pack import PackRunControl, run_asset_pack
 from .pipelines.static_asset import create_static_asset as run_create_static_asset
 from .pipelines.static_asset import validate_and_export_static_asset
+from .pipelines.tilemap import create_map as run_create_map
 from .pipelines.tileset import create_tileset as run_create_tileset
 from .pipelines.validation import run_validation
 from .planning import layout_for_frames, plan_pack, plan_request, seed_layout
@@ -538,6 +539,50 @@ def create_tileset_command(
     console.print(
         "\n[dim]下一步：validate 查无缝平铺。API 返回成功 ≠ tile 拼得起来。[/dim]"
     )
+
+
+@app.command("create-map")
+def create_map_command(
+    asset_dir: Annotated[Path, typer.Argument(help="已处理好的 tileset 资产目录")],
+    width: Annotated[int, typer.Option("--width", "-w", help="地图宽（格）")] = 24,
+    height: Annotated[int, typer.Option("--height", "-h", help="地图高（格）")] = 16,
+    seed: Annotated[int, typer.Option("--seed", help="随机种子。同 seed 同地图")] = 0,
+    name: Annotated[str, typer.Option("--name", help="地图名")] = "overworld",
+    config_path: Annotated[
+        Path | None, typer.Option("--config", "-c", help="指定项目配置文件")
+    ] = None,
+) -> None:
+    """按邻接表铺一张地图（WFC）。**不调用 API。**
+
+    同 seed + 同邻接表 + 同尺寸 → 同一张地图。撞上矛盾会换 seed 重试，
+    仍然不行就报错 —— 绝不交一张有非法接缝的半成品。
+    """
+    _load_config(config_path)
+    try:
+        result = run_create_map(
+            asset_dir, name=name, width=width, height=height, seed=seed
+        )
+    except PixelAssetError as exc:
+        _fail(exc)
+        raise  # pragma: no cover
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("地图", f"{result.name} · {result.width}×{result.height} 格")
+    table.add_row("种子", str(result.seed))
+    table.add_row("用到 tile", f"{len(result.tiles_used)} 种：{'、'.join(result.tiles_used)}")
+    table.add_row("文件", str(result.path))
+    console.print(table)
+
+    if result.single_material:
+        console.print(
+            "\n[yellow]![/yellow] 整张地图只有一种材质。这是[bold]正确结果[/bold]："
+            "这套 tile 的邻接表是对角矩阵（材质之间接不上），而地图网格是连通的，"
+            "\n  于是整张图必然同一种材质。要铺出多材质地图，缺的是[bold]过渡 tile[/bold]，"
+            "不是更好的求解器。"
+        )
+    console.print("\n[dim]下一步：validate 查地图里有没有非法接缝。[/dim]")
 
 
 @app.command("create-asset-pack")

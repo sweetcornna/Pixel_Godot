@@ -183,6 +183,35 @@ def build_tileset(
     )
 
 
+def _tilemap_note(manifest: AssetManifest, coords: dict[str, tuple[int, int]]) -> str:
+    """铺好的地图怎么进 Godot。
+
+    **刻意不产原生 `.tscn`。** Godot 4 的 ``TileMapLayer`` 把地图存成
+    ``tile_map_data`` —— 一段打包的字节数组。手写它要精确复刻 Godot 的二进制
+    布局，而本机没有 Godot 可验（TileSet 的 ``.tres`` 已经欠着一笔真机验证）。
+    凭记忆拼一段二进制再声称它能用，是在既有欠账上再加一笔。
+
+    ``set_cell()`` 是公开 API 的直白用法，读一遍就能确认对错（PLAN §8.3）。
+    """
+    assert manifest.tileset is not None
+    names = "、".join(sorted(manifest.tileset.maps))
+    cells = ", ".join(
+        f'"{tile_id}": Vector2i({col}, {row})'
+        for tile_id, (col, row) in sorted(coords.items())
+    )
+    return (
+        f"已铺好的地图（{names}）没有做成 .tscn —— TileMapLayer 的 tile_map_data 是打包"
+        "字节数组，本机无 Godot 可验，凭记忆拼二进制不如给你一段能读懂的代码。"
+        "从 generic-json 导出里取 maps[*].rows，用 set_cell 填即可：\n"
+        "    const ATLAS := {" + cells + "}\n"
+        "    var data = JSON.parse_string(FileAccess.get_file_as_string(json_path))\n"
+        '    for y in data["maps"]["' + sorted(manifest.tileset.maps)[0] + '"]["rows"].size():\n'
+        '        var row = data["maps"]["' + sorted(manifest.tileset.maps)[0] + '"]["rows"][y]\n'
+        "        for x in row.size():\n"
+        "            $TileMapLayer.set_cell(Vector2i(x, y), 0, ATLAS[row[x]])"
+    )
+
+
 class GodotExporter(Exporter):
     target = "godot"
 
@@ -216,6 +245,8 @@ class GodotExporter(Exporter):
             "本 TileSet 尚未在真机 Godot 上验证 —— SpriteFrames 那条链验过，"
             "这条还没有。首次导入若报错请回报（PLAN §8.1）。",
         ]
+        if manifest.tileset.maps:
+            notes.append(_tilemap_note(manifest, coords))
         result.notes.extend(notes)
         handoff = out_dir / HANDOFF_NAME
         handoff.write_text(_handoff_doc(manifest, notes), encoding="utf-8")
