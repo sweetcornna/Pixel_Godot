@@ -398,3 +398,74 @@ def test_loading_a_manifest_with_escaping_static_path_is_refused(tmp_path: Path)
 
     with pytest.raises(RequestValidationError):
         AssetManifest.load(path)
+
+
+# -- 跨平台：路径一律存 POSIX 分隔符 ----------------------------------------
+#
+# 这一组是 CI 首次在 Windows 上跑全套件时逼出来的（PLAN §9.1）。
+# 各处写路径用的 `str(path.relative_to(root))` 在 Windows 上给出反斜杠，
+# 而反斜杠在 Linux 上是**合法文件名字符** —— Windows 上产出的 Manifest 拿到
+# Linux 就找不到文件，报错还是"文件不存在"这种毫无线索的形态。
+#
+# 在 Linux 上跑的这几条是**唯一**能在开发机上守住这条契约的东西：
+# 不写它，这个 bug 就只有 Windows CI 看得见，而 Windows CI 是几个月才有人看一眼。
+
+
+@pytest.mark.parametrize(
+    ("stored", "want"),
+    [
+        ("frames\\static.png", "frames/static.png"),
+        ("source\\walk-down-original.png", "source/walk-down-original.png"),
+        ("frames\\walk_down\\walk_down_000.png", "frames/walk_down/walk_down_000.png"),
+        # 已经是 POSIX 的原样不动
+        ("frames/static.png", "frames/static.png"),
+    ],
+)
+def test_backslashes_are_normalised_to_posix(stored: str, want: str) -> None:
+    entry = StaticImageInfo(
+        source_image=stored,
+        image=stored,
+        requested_size=(1024, 1024),
+        actual_size=(1024, 1024),
+        key_threshold=145.0,
+        source_hash="0" * 64,
+        processed_hash="0" * 64,
+    )
+    assert entry.source_image == want
+    assert entry.image == want
+
+
+def test_normalisation_does_not_open_an_escape_hatch() -> None:
+    """归一化不能把逃逸检查绕过去 —— 反斜杠版的 `..` 同样要被拒。"""
+    with pytest.raises(PydanticValidationError):
+        StaticImageInfo(
+            source_image="..\\..\\pwned.png",
+            image="frames/static.png",
+            requested_size=(1024, 1024),
+            actual_size=(1024, 1024),
+            key_threshold=145.0,
+            source_hash="0" * 64,
+            processed_hash="0" * 64,
+        )
+
+
+def test_every_path_field_normalises_not_just_static_image() -> None:
+    """收口点是 AssetRelativePath，所以每个用它的字段都该被覆盖。
+
+    逐个点名而不是只验一个：漏掉的那个字段在 Windows 上照样会存反斜杠。
+    """
+    animation = GeneratedAnimation(
+        fps=10,
+        loop=True,
+        source_image="source\\walk-down-original.png",
+        key_threshold=140.0,
+        frames=["frames\\walk_down\\a.png", "frames\\walk_down\\b.png"],
+    )
+    assert animation.source_image == "source/walk-down-original.png"
+    assert animation.frames == ["frames/walk_down/a.png", "frames/walk_down/b.png"]
+
+    manifest = make_manifest(asset_id="knight_01", asset_type="character")
+    manifest.sheets["walk_down"] = "sheets\\walk_down.png"
+    assert AssetManifest.model_validate(manifest.to_dict()).sheets["walk_down"] == (
+        "sheets/walk_down.png"
+    )

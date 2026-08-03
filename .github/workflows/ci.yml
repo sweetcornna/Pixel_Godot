@@ -1,0 +1,103 @@
+name: CI
+
+# 一个永远通过的 CI 没有价值。这份 workflow 的三类破坏（lint / 类型 / 测试）
+# 都实测红过，记录见 docs/ci-gate.md —— 只看绿灯等于没验。
+#
+# 刻意**不用** continue-on-error、不用 `|| true`：任何一步失败都必须让整个 job 红。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Live 测试需要真实 Key 且会产生计费。CI 不配置任何 secret，
+  # 这个变量保持未设 —— tests/live/ 照常被 skip（Sprint 9 总门槛第四条）。
+  RUN_LIVE_IMAGE_TESTS: ""
+
+jobs:
+  lint:
+    name: ruff + mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras --group dev
+      - name: ruff
+        run: uv run ruff check pixel_asset_forge tests
+      - name: mypy
+        run: uv run mypy pixel_asset_forge
+
+  test:
+    name: pytest · ${{ matrix.os }} · py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台红了要看得见其余平台的结果 —— 否则"Windows 挂了"会把
+      # "macOS 到底过没过"一起藏掉。
+      fail-fast: false
+      matrix:
+        # 三平台是刻意的：本项目至今只在 Linux 上跑过，Windows 与 macOS
+        # 这是第一次。红了如实记账，**不许为了绿灯把平台删掉**。
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          # 开发机用的版本，只在 Linux 上补一格。
+          - os: ubuntu-latest
+            python: "3.14"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - run: uv sync --all-extras --group dev
+      # 含 tests/unit（内有 schemas/*.json 的自检）、tests/integration、
+      # tests/golden。schema 校验写成测试而不是单独一步：那样本地也跑得到，
+      # 不会变成"只有 CI 知道的规矩"。
+      - name: pytest
+        run: uv run pytest
+      - name: live 测试必须是 skip 而不是 fail
+        run: uv run pytest tests/live -rs
+
+  build:
+    name: 包构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv build
+      # schemas 是 force-include 进 wheel 的（见 pyproject）。漏了它，
+      # 装完的包一条 request 都校验不了，而这在源码树里跑测试是发现不了的 ——
+      # 那时 schema_dir() 会退回仓库根目录。
+      - name: wheel 里必须带上 schemas
+        run: |
+          python - <<'PY'
+          import zipfile, glob, sys
+          wheel = glob.glob("dist/*.whl")[0]
+          names = set(zipfile.ZipFile(wheel).namelist())
+          want = {
+              f"pixel_asset_forge/_schemas/{n}"
+              for n in (
+                  "asset-request.schema.json", "asset-pack.schema.json",
+                  "asset-manifest.schema.json", "validation-report.schema.json",
+              )
+          }
+          missing = sorted(want - names)
+          if missing:
+              sys.exit(f"wheel 里缺少 schema：{missing}")
+          print(f"{wheel} 带齐了 {len(want)} 份 schema")
+          PY
+      - name: 装出来的包能跑 doctor
+        run: |
+          uv venv /tmp/probe
+          VIRTUAL_ENV=/tmp/probe uv pip install dist/*.whl
+          /tmp/probe/bin/pixel-asset doctor
