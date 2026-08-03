@@ -1,0 +1,1181 @@
+{
+  "schema_version": "1.0",
+  "gate": "live",
+  "timestamp_utc": "20260803T072050.458269Z",
+  "status": "FAIL",
+  "exit_code": 1,
+  "provider": "openai",
+  "model": "gpt-image-2",
+  "run_dir": "tools/live-gate/runs/20260803T072050.458269Z",
+  "budget": {
+    "planned_calls": 5,
+    "completed_calls": 5,
+    "assets": [
+      {
+        "name": "grass_field tileset",
+        "calls": 3
+      },
+      {
+        "name": "knight_01 seed",
+        "calls": 1
+      },
+      {
+        "name": "knight_01 walk_down",
+        "calls": 1
+      }
+    ]
+  },
+  "summary": {
+    "assets_passed": 2,
+    "assets_total": 3,
+    "fatal_high_failures": 1,
+    "metrics_passed": 9,
+    "metrics_total": 10,
+    "checks": {
+      "total": 52,
+      "passed": 29,
+      "failed": 1,
+      "warnings": 0,
+      "skipped": 22
+    }
+  },
+  "assets": [
+    {
+      "name": "grass_field",
+      "passed": false,
+      "validation_passed": false,
+      "validation_source": "ValidationReport.passed",
+      "metrics": [
+        {
+          "asset": "grass_field",
+          "check_id": "tile_seam",
+          "target": "dirt_path",
+          "measured": 0.521,
+          "threshold": 3.0,
+          "comparison": "<=",
+          "passed": true
+        },
+        {
+          "asset": "grass_field",
+          "check_id": "tile_seam",
+          "target": "grass_base",
+          "measured": 0.899,
+          "threshold": 3.0,
+          "comparison": "<=",
+          "passed": true
+        },
+        {
+          "asset": "grass_field",
+          "check_id": "tile_seam",
+          "target": "shallow_water",
+          "measured": 0.971,
+          "threshold": 3.0,
+          "comparison": "<=",
+          "passed": true
+        },
+        {
+          "asset": "grass_field",
+          "check_id": "tile_border",
+          "target": "dirt_path",
+          "measured": 0.333,
+          "threshold": 2.0,
+          "comparison": "<=",
+          "passed": true
+        },
+        {
+          "asset": "grass_field",
+          "check_id": "tile_border",
+          "target": "grass_base",
+          "measured": 1.589,
+          "threshold": 2.0,
+          "comparison": "<=",
+          "passed": true
+        },
+        {
+          "asset": "grass_field",
+          "check_id": "tile_border",
+          "target": "shallow_water",
+          "measured": 2.178,
+          "threshold": 2.0,
+          "comparison": "<=",
+          "passed": false
+        },
+        {
+          "asset": "grass_field",
+          "check_id": "palette_overflow",
+          "target": "tileset_palette",
+          "measured": 16,
+          "threshold": 16,
+          "comparison": "<=",
+          "passed": true
+        }
+      ],
+      "checks": [
+        {
+          "id": "artifact_exists",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": true,
+          "threshold": true
+        },
+        {
+          "id": "frame_size",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "tile_seam",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.521,
+          "threshold": 3.0
+        },
+        {
+          "id": "tile_border",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.333,
+          "threshold": 2.0
+        },
+        {
+          "id": "palette_membership",
+          "target": "dirt_path",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "artifact_exists",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": true,
+          "threshold": true
+        },
+        {
+          "id": "frame_size",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "tile_seam",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.899,
+          "threshold": 3.0
+        },
+        {
+          "id": "tile_border",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 1.589,
+          "threshold": 2.0
+        },
+        {
+          "id": "palette_membership",
+          "target": "grass_base",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "artifact_exists",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": true,
+          "threshold": true
+        },
+        {
+          "id": "frame_size",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "tile_seam",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.971,
+          "threshold": 3.0
+        },
+        {
+          "id": "tile_border",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "fail",
+          "measured": 2.178,
+          "threshold": 2.0,
+          "message": "整圈边缘明显不同于中心（边框或暗角）：平铺后是一片规则网格线"
+        },
+        {
+          "id": "palette_membership",
+          "target": "shallow_water",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "tile_adjacency",
+          "target": "dirt_path",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "tile_adjacency",
+          "target": "grass_base",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "tile_adjacency",
+          "target": "shallow_water",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "map_adjacency",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "这套 tile 还没铺过地图（跑 `create-map`，不调用 API）",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "artifact_hash",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "frame_count",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "blank_frame",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "cell_overflow",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "content_bounds",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "transparent_rgb_residue",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "partial_alpha",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "isolated_pixel",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "key_color_residue",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "frame_order_continuity",
+          "target": "tileset",
+          "severity": "low",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "beat_signature",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "mirror_flip",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "anchor_drift",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "height_variation",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "silhouette_variation",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "palette_overflow",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "duplicate_frame_exact",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "duplicate_frame_approx",
+          "target": "tileset",
+          "severity": "low",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "static_animation",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        }
+      ]
+    },
+    {
+      "name": "knight_01_seed",
+      "passed": true,
+      "validation_passed": true,
+      "validation_source": "create_character completed; upstream has no seed ValidationReport",
+      "metrics": [
+        {
+          "asset": "knight_01_seed",
+          "check_id": "palette_overflow",
+          "target": "seed_palette",
+          "measured": 32,
+          "threshold": 32,
+          "comparison": "<=",
+          "passed": true
+        }
+      ],
+      "checks": []
+    },
+    {
+      "name": "knight_01_walk_down",
+      "passed": true,
+      "validation_passed": true,
+      "validation_source": "ValidationReport.passed (target=walk_down)",
+      "metrics": [
+        {
+          "asset": "knight_01_walk_down",
+          "check_id": "anchor_drift",
+          "target": "walk_down",
+          "measured": 0.33,
+          "threshold": 1.0,
+          "comparison": "<=",
+          "passed": true
+        },
+        {
+          "asset": "knight_01_walk_down",
+          "check_id": "palette_overflow",
+          "target": "walk_down_palette",
+          "measured": 32,
+          "threshold": 32,
+          "comparison": "<=",
+          "passed": true
+        }
+      ],
+      "checks": [
+        {
+          "id": "frame_count",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 8.0,
+          "threshold": 8.0
+        },
+        {
+          "id": "frame_size",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "blank_frame",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "transparent_rgb_residue",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "cell_overflow",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 8.0,
+          "threshold": 8.0,
+          "message": "成功分离出 8 个 sprite；长短边比偏差 0.0%"
+        },
+        {
+          "id": "anchor_drift",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.33,
+          "threshold": 1.0,
+          "message": "脚底极差 0.0px、水平极差 0.6px（本地可修）"
+        },
+        {
+          "id": "height_variation",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0863,
+          "threshold": 0.12
+        },
+        {
+          "id": "silhouette_variation",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.1668,
+          "threshold": 0.2
+        },
+        {
+          "id": "palette_overflow",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.02,
+          "message": "32 色 / 上限 32（本地可修）"
+        },
+        {
+          "id": "duplicate_frame_exact",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "static_animation",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0755,
+          "threshold": 0.01
+        },
+        {
+          "id": "frame_order_continuity",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "low",
+          "result": "skip",
+          "measured": 2.263,
+          "message": "帧序是否被打乱无法自动判定：实测四种判据在正序与随机乱序上完全重叠，其中局部离群判据方向相反（正序反而更高），照 PLAN §9.2 实现会把正确产出判为失败。请人眼查看 previews/ 下的 GIF 确认播放顺序。",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "beat_signature",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "skip",
+          "message": "down 不是侧视 —— 跨步在正面沿深度分开，投影到屏幕上几乎没有水平位移，脚跨度这个判据在那里是反的",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "mirror_flip",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0,
+          "message": "朝向一致（8 帧参与判定）"
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "asset": "grass_field",
+      "check_id": "tile_seam",
+      "target": "dirt_path",
+      "measured": 0.521,
+      "threshold": 3.0,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "grass_field",
+      "check_id": "tile_seam",
+      "target": "grass_base",
+      "measured": 0.899,
+      "threshold": 3.0,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "grass_field",
+      "check_id": "tile_seam",
+      "target": "shallow_water",
+      "measured": 0.971,
+      "threshold": 3.0,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "grass_field",
+      "check_id": "tile_border",
+      "target": "dirt_path",
+      "measured": 0.333,
+      "threshold": 2.0,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "grass_field",
+      "check_id": "tile_border",
+      "target": "grass_base",
+      "measured": 1.589,
+      "threshold": 2.0,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "grass_field",
+      "check_id": "tile_border",
+      "target": "shallow_water",
+      "measured": 2.178,
+      "threshold": 2.0,
+      "comparison": "<=",
+      "passed": false
+    },
+    {
+      "asset": "grass_field",
+      "check_id": "palette_overflow",
+      "target": "tileset_palette",
+      "measured": 16,
+      "threshold": 16,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "knight_01_seed",
+      "check_id": "palette_overflow",
+      "target": "seed_palette",
+      "measured": 32,
+      "threshold": 32,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "knight_01_walk_down",
+      "check_id": "anchor_drift",
+      "target": "walk_down",
+      "measured": 0.33,
+      "threshold": 1.0,
+      "comparison": "<=",
+      "passed": true
+    },
+    {
+      "asset": "knight_01_walk_down",
+      "check_id": "palette_overflow",
+      "target": "walk_down_palette",
+      "measured": 32,
+      "threshold": 32,
+      "comparison": "<=",
+      "passed": true
+    }
+  ],
+  "validation_reports": [
+    {
+      "schema_version": "1.1",
+      "asset_id": "grass_field",
+      "pipeline_version": "0.1.0",
+      "thresholds_calibrated": true,
+      "checks": [
+        {
+          "id": "artifact_exists",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": true,
+          "threshold": true
+        },
+        {
+          "id": "frame_size",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "tile_seam",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.521,
+          "threshold": 3.0
+        },
+        {
+          "id": "tile_border",
+          "target": "dirt_path",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.333,
+          "threshold": 2.0
+        },
+        {
+          "id": "palette_membership",
+          "target": "dirt_path",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "artifact_exists",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": true,
+          "threshold": true
+        },
+        {
+          "id": "frame_size",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "tile_seam",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.899,
+          "threshold": 3.0
+        },
+        {
+          "id": "tile_border",
+          "target": "grass_base",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 1.589,
+          "threshold": 2.0
+        },
+        {
+          "id": "palette_membership",
+          "target": "grass_base",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "artifact_exists",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": true,
+          "threshold": true
+        },
+        {
+          "id": "frame_size",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "tile_seam",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.971,
+          "threshold": 3.0
+        },
+        {
+          "id": "tile_border",
+          "target": "shallow_water",
+          "severity": "fatal",
+          "result": "fail",
+          "measured": 2.178,
+          "threshold": 2.0,
+          "message": "整圈边缘明显不同于中心（边框或暗角）：平铺后是一片规则网格线"
+        },
+        {
+          "id": "palette_membership",
+          "target": "shallow_water",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "tile_adjacency",
+          "target": "dirt_path",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "tile_adjacency",
+          "target": "grass_base",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "tile_adjacency",
+          "target": "shallow_water",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "map_adjacency",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "这套 tile 还没铺过地图（跑 `create-map`，不调用 API）",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "artifact_hash",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "frame_count",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "blank_frame",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "cell_overflow",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "content_bounds",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "transparent_rgb_residue",
+          "target": "tileset",
+          "severity": "fatal",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "partial_alpha",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "isolated_pixel",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "key_color_residue",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "frame_order_continuity",
+          "target": "tileset",
+          "severity": "low",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "beat_signature",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "mirror_flip",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "anchor_drift",
+          "target": "tileset",
+          "severity": "high",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "height_variation",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "silhouette_variation",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "palette_overflow",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "duplicate_frame_exact",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "duplicate_frame_approx",
+          "target": "tileset",
+          "severity": "low",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "static_animation",
+          "target": "tileset",
+          "severity": "medium",
+          "result": "skip",
+          "message": "tileset 没有动画帧序列，也不做去背景，此检查不适用",
+          "skip_reason": "not_applicable"
+        }
+      ],
+      "passed": false,
+      "summary": {
+        "total": 38,
+        "passed": 17,
+        "failed": 1,
+        "warnings": 0,
+        "skipped": 20
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "asset_id": "knight_01",
+      "pipeline_version": "0.1.0",
+      "thresholds_calibrated": true,
+      "checks": [
+        {
+          "id": "frame_count",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 8.0,
+          "threshold": 8.0
+        },
+        {
+          "id": "frame_size",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass"
+        },
+        {
+          "id": "blank_frame",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "transparent_rgb_residue",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "cell_overflow",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "fatal",
+          "result": "pass",
+          "measured": 8.0,
+          "threshold": 8.0,
+          "message": "成功分离出 8 个 sprite；长短边比偏差 0.0%"
+        },
+        {
+          "id": "anchor_drift",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "high",
+          "result": "pass",
+          "measured": 0.33,
+          "threshold": 1.0,
+          "message": "脚底极差 0.0px、水平极差 0.6px（本地可修）"
+        },
+        {
+          "id": "height_variation",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0863,
+          "threshold": 0.12
+        },
+        {
+          "id": "silhouette_variation",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.1668,
+          "threshold": 0.2
+        },
+        {
+          "id": "palette_overflow",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.02,
+          "message": "32 色 / 上限 32（本地可修）"
+        },
+        {
+          "id": "duplicate_frame_exact",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0
+        },
+        {
+          "id": "static_animation",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0755,
+          "threshold": 0.01
+        },
+        {
+          "id": "frame_order_continuity",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "low",
+          "result": "skip",
+          "measured": 2.263,
+          "message": "帧序是否被打乱无法自动判定：实测四种判据在正序与随机乱序上完全重叠，其中局部离群判据方向相反（正序反而更高），照 PLAN §9.2 实现会把正确产出判为失败。请人眼查看 previews/ 下的 GIF 确认播放顺序。",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "beat_signature",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "skip",
+          "message": "down 不是侧视 —— 跨步在正面沿深度分开，投影到屏幕上几乎没有水平位移，脚跨度这个判据在那里是反的",
+          "skip_reason": "not_applicable"
+        },
+        {
+          "id": "mirror_flip",
+          "target": "walk_down",
+          "action": "walk",
+          "direction": "down",
+          "severity": "medium",
+          "result": "pass",
+          "measured": 0.0,
+          "threshold": 0.0,
+          "message": "朝向一致（8 帧参与判定）"
+        }
+      ],
+      "thresholds_used": {
+        "walk": {
+          "height_variation_max": 0.12,
+          "silhouette_variation_max": 0.2,
+          "anchor_drift_max_px": 1,
+          "palette_overflow_max": 0.02
+        }
+      },
+      "passed": true,
+      "summary": {
+        "total": 14,
+        "passed": 12,
+        "failed": 0,
+        "warnings": 0,
+        "skipped": 2
+      }
+    }
+  ]
+}
