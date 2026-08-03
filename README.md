@@ -63,11 +63,21 @@ Sprint 8 总门槛第五条"Godot 与 Tiled 均可打开"因此**只完成了 Go
 
 ## 安装
 
-需要 Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)。
+需要 Python 3.12+。发布包可用 [uv](https://docs.astral.sh/uv/) 安装为独立工具：
+
+```bash
+uv tool install pixel-asset-forge         # CLI
+uv tool install 'pixel-asset-forge[mcp]'  # CLI + MCP（二选一）
+```
+
+从源码开发或验证本仓库时：
 
 ```bash
 uv sync --all-extras
+./scripts/install-skill.sh  # 安装 Claude Code Skill；已有 ~/.codex 时也安装 Codex Skill
 ```
+
+卸载 Skill 使用 `./scripts/install-skill.sh --uninstall`。
 
 API Key 只从环境变量读取，**永远不要写进配置文件或请求文件**：
 
