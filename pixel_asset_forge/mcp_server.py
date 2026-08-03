@@ -251,4 +251,13 @@ def build_server() -> Any:
 
 
 def main() -> None:  # pragma: no cover - 进程入口
-    build_server().run()
+    # 缺 [mcp] extra 是发布后最常见的失败形态 —— 给一行干净的报错，
+    # 而不是把 traceback 甩给刚 pip install 完的用户。
+    import sys
+
+    try:
+        server = build_server()
+    except PixelAssetError as exc:
+        print(f"pixel-asset-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    server.run()

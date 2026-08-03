@@ -5,6 +5,16 @@ description = "Manifest 驱动的像素游戏资产编译器 —— 自然语言
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+keywords = ["pixel-art", "godot", "tiled", "gamedev", "asset-pipeline"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics",
+]
 dependencies = [
     "pydantic>=2.9",
     "typer>=0.15",
@@ -16,6 +26,10 @@ dependencies = [
     "scipy>=1.18.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/sweetcornna/Pixel_Godot"
+Repository = "https://github.com/sweetcornna/Pixel_Godot"
+
 [project.optional-dependencies]
 openai = ["openai>=1.60"]
 mcp = [
@@ -24,6 +38,7 @@ mcp = [
 
 [project.scripts]
 pixel-asset = "pixel_asset_forge.cli:app"
+pixel-asset-mcp = "pixel_asset_forge.mcp_server:main"
 
 [dependency-groups]
 dev = [
