@@ -13,3 +13,6 @@ build/
 # 实跑产出与参考仓库都在仓库外（~/.pixel-asset-live），这里只是防手滑
 .pixel-asset-cache/
 refs/
+
+# Live gate 的原图/处理中间产物体积大；量化报告留在 reports/ 接受版本审查
+tools/live-gate/runs/
