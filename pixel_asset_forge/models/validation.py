@@ -49,6 +49,7 @@ CheckId = Literal[
     "static_animation",
     "tile_seam",
     "tile_border",
+    "tile_adjacency",
 ]
 
 ALL_CHECK_IDS: tuple[CheckId, ...] = (
@@ -76,6 +77,7 @@ ALL_CHECK_IDS: tuple[CheckId, ...] = (
     "static_animation",
     "tile_seam",
     "tile_border",
+    "tile_adjacency",
 )
 
 SkipReason = Literal[
@@ -147,6 +149,11 @@ CHECK_SEVERITY: dict[CheckId, Severity] = {
     # 是满屏可见的缺陷，不是"看看再说"。两条都定 FATAL。
     "tile_seam": Severity.FATAL,
     "tile_border": Severity.FATAL,
+    # 邻接表与像素对不上不代表 tile 本身坏了 —— 坏了的话 tile_seam 会先炸。
+    # 它说的是"Manifest 在描述一件与产物不符的事"：多半是产出后有人动过 tile 图，
+    # 或阈值换过一版而表没重算。ADR-001 是 manifest-first，让它阻断放行，
+    # 但不必与"整套 tile 不可用"同级。
+    "tile_adjacency": Severity.HIGH,
 }
 
 #: 本地即可修复的检查项 —— 不需要重新调用 API（PLAN §9.3）。

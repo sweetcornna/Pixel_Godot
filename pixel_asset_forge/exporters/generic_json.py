@@ -130,6 +130,26 @@ class GenericJsonExporter(Exporter):
                 for view in views
             },
         }
+
+        adjacency = manifest.tileset.adjacency
+        if adjacency is not None:
+            # 四个方向都写出来，与 Manifest 只存两个方向**不矛盾**：Manifest 是
+            # 事实的存放处，一个事实只该有一份；导出物是给下游消费的，地图生成器
+            # 要按"这一格的左边能放什么"查表，让它自己转置只会让每个消费者
+            # 各写一遍转置逻辑。四份由同一份事实现算而来，不会各自漂移。
+            payload["adjacency"] = {
+                "seam_ratio_max": adjacency.seam_ratio_max,
+                "edge_color_gap_max": adjacency.edge_color_gap_max,
+                "calibrated": adjacency.calibrated,
+                **{
+                    direction: {
+                        view.tile_id: adjacency.neighbours(view.tile_id, direction)
+                        for view in views
+                    }
+                    for direction in ("right", "down", "left", "up")
+                },
+            }
+
         path = out_dir / f"{manifest.asset_id}.json"
         path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -139,6 +159,14 @@ class GenericJsonExporter(Exporter):
             f"{len(views)} 块 tile 排成 {columns}×{rows} 图集；"
             "tiles[*] 同时给了格坐标与像素坐标，按引擎习惯取其一。"
         )
+        if adjacency is not None:
+            result.notes.append(
+                "adjacency 给出四个方向各自允许的邻居，可直接喂给地图生成器。"
+                f"阈值 seam≤{adjacency.seam_ratio_max}、gap≤{adjacency.edge_color_gap_max}，"
+                + ("已校准。" if adjacency.calibrated else "**未用真实 tile 校准**。")
+                + "只列了基础地面 tile 之间的关系 —— 两种材质判为不相容是正确结果，"
+                "说明中间还缺一类过渡 tile。"
+            )
         return result
 
     def export(self, manifest: AssetManifest, root: Path, out_dir: Path) -> ExportResult:

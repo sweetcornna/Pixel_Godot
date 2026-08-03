@@ -261,3 +261,121 @@ def test_static_request_is_rejected_by_create_tileset(
     )
     assert result.exit_code != EXIT_OK
     assert "create-asset" in result.stderr
+
+
+# -- 8.2 邻接推导 ------------------------------------------------------------
+
+
+def test_adjacency_lands_in_the_manifest_without_extra_api_calls(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """邻接是纯推导：它进 Manifest，但**不该多花一分钱**。"""
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+
+    log_before = store.generation_log_path.read_bytes()
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.tileset is not None
+    adjacency = manifest.tileset.adjacency
+    assert adjacency is not None
+    assert adjacency.calibrated is False, "阈值还没用真实 tile 校准过，别谎报"
+
+    # 三种材质互不相容 —— 这是**正确答案不是退化**：草、土、水本来就不能直接
+    # 挨着，中间需要 transition tile，而那类 tile 不在 8.1 的产出里。
+    for direction in ("right", "down"):
+        table = getattr(adjacency, direction)
+        assert set(table) == {"grass_base", "dirt_path", "shallow_water"}
+        for tile_id, allowed in table.items():
+            assert allowed == [tile_id], f"{tile_id} 的 {direction} 不该接得上别的材质"
+
+    # 重跑不额外计费：邻接推导只读盘上已有的 tile。
+    _create(request_path, config_path)
+    assert store.generation_log_path.read_bytes() == log_before
+
+
+def test_left_and_up_are_derived_not_stored(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """Manifest 只存两个方向 —— 四份副本会各自漂移。"""
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+
+    raw = json.loads(store.manifest_path.read_text(encoding="utf-8"))
+    stored = set(raw["tileset"]["adjacency"])
+    assert "left" not in stored and "up" not in stored
+
+    adjacency = AssetManifest.load(store.manifest_path).tileset.adjacency  # type: ignore[union-attr]
+    assert adjacency is not None
+    for a in ("grass_base", "dirt_path", "shallow_water"):
+        for b in ("grass_base", "dirt_path", "shallow_water"):
+            assert (b in adjacency.neighbours(a, "right")) == (
+                a in adjacency.neighbours(b, "left")
+            )
+
+
+def test_editing_a_tile_after_derivation_is_caught_by_validate(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """邻接表描述的是产物。产物被换掉而表没重算，必须有人喊停。
+
+    这是 `tile_adjacency` 唯一会 FAIL 的场合，也正是它存在的理由 ——
+    通过侧由上面几个用例守着，只验通过侧的检查没有判别力。
+    """
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    _validate(store, config_path)
+    clean = json.loads(store.validation_report_path.read_text(encoding="utf-8"))
+    assert all(
+        c["result"] == CheckResult.PASS.value
+        for c in clean["checks"]
+        if c["id"] == "tile_adjacency"
+    )
+
+    # 把 dirt_path 的图盖到 grass_base 上 —— 盘上两块 tile 现在是同一种材质，
+    # 于是它们**互相接得上**了，而表里还写着各自只能接自己。
+    #
+    # 换成纯色块是不够的：那样 grass_base 依旧只跟自己相容，整张表一字不变，
+    # 检查不报警才是对的。反例必须真的改变关系，否则验的是个假的失败。
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.tileset is not None
+    tiles = manifest.tileset.tiles
+    (store.root / tiles["grass_base"].image).write_bytes(
+        (store.root / tiles["dirt_path"].image).read_bytes()
+    )
+
+    _validate(store, config_path)
+    report = json.loads(store.validation_report_path.read_text(encoding="utf-8"))
+    drifted = [
+        c
+        for c in report["checks"]
+        if c["id"] == "tile_adjacency" and c["result"] == CheckResult.FAIL.value
+    ]
+    assert sorted(c["target"] for c in drifted) == ["dirt_path", "grass_base"]
+    assert all("重算" in c["message"] for c in drifted)
+
+
+def test_adjacency_reaches_the_generic_json_export(
+    tileset_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """导出物要能直接喂给地图生成器，所以四个方向都写出来。"""
+    request_path, config_path, store = tileset_env
+    _create(request_path, config_path)
+    _validate(store, config_path)
+    exported = runner.invoke(
+        app, ["export", str(store.root), "--config", str(config_path)]
+    )
+    assert exported.exit_code == EXIT_OK, exported.stdout
+
+    payload = json.loads(
+        (store.exports / "generic-json" / f"{ASSET_ID}.json").read_text(encoding="utf-8")
+    )
+    adjacency = payload["adjacency"]
+    assert adjacency["calibrated"] is False
+    assert adjacency["seam_ratio_max"] > 0 and adjacency["edge_color_gap_max"] > 0
+    # Manifest 只存两个方向，导出物给全四个 —— 由同一份事实现算，不会漂移。
+    for direction in ("right", "down", "left", "up"):
+        assert adjacency[direction] == {
+            "grass_base": ["grass_base"],
+            "dirt_path": ["dirt_path"],
+            "shallow_water": ["shallow_water"],
+        }

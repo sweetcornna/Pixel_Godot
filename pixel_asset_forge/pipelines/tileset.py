@@ -26,6 +26,7 @@ from ..models.manifest import (
     CanvasInfo,
     PaletteInfo,
     ProviderInfo,
+    TileAdjacency,
     TileEntry,
     TilesetInfo,
 )
@@ -36,6 +37,7 @@ from ..prompts import compile_tile_prompt
 from ..providers import ImageProvider, get_provider
 from ..storage import ArtifactStore
 from ..storage.hashes import hash_file
+from ..validation.adjacency import derive_adjacency
 from .common import load_rgb, record_generation, require_source_slot
 
 logger = get_logger("pipeline.tileset")
@@ -186,6 +188,11 @@ def create_tileset(
             processed_hash=hash_file(out),
         )
 
+    # 邻接推导。**不调用 API** —— 只读刚处理好的 tile，重跑不产生额外计费。
+    # 放在这里而不是 validate 里：它产出的是 Manifest 数据（产物的一部分），
+    # 而 validate 的职责是**核对**产物，不是生成产物。
+    adjacency = derive_adjacency(processed.tiles)
+
     width, height = processed.tile_size
     manifest = AssetManifest(
         asset_id=request.asset_id,
@@ -197,7 +204,17 @@ def create_tileset(
         palette=PaletteInfo(
             max_colors=request.style.max_colors, colors=processed.palette.colors
         ),
-        tileset=TilesetInfo(tile_size=(width, height), tiles=entries),
+        tileset=TilesetInfo(
+            tile_size=(width, height),
+            tiles=entries,
+            adjacency=TileAdjacency(
+                seam_ratio_max=adjacency.seam_ratio_max,
+                edge_color_gap_max=adjacency.edge_color_gap_max,
+                calibrated=False,
+                right=adjacency.right,
+                down=adjacency.down,
+            ),
+        ),
         status="processed",
     )
     manifest.save(store.manifest_path)
@@ -208,10 +225,13 @@ def create_tileset(
     store.save_job_table(table)
 
     logger.info(
-        "tileset %s 处理完成：%d 块 tile，共享 %d 色",
+        "tileset %s 处理完成：%d 块 tile，共享 %d 色，邻接对 %d/%d",
         request.asset_id,
         len(entries),
         len(processed.palette.colors),
+        sum(len(v) for v in adjacency.right.values())
+        + sum(len(v) for v in adjacency.down.values()),
+        2 * len(entries) ** 2,
     )
     return TilesetPipelineResult(
         asset_id=request.asset_id,

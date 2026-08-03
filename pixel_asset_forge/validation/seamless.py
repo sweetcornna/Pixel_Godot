@@ -41,21 +41,79 @@ def _lines(rgb: np.ndarray, axis: SeamAxis) -> np.ndarray:
     return np.moveaxis(rgb, 1, 0) if axis == "horizontal" else rgb
 
 
+def _interior_diffs(lines: np.ndarray) -> np.ndarray:
+    """内部每一对相邻扫描线的平均差异。"""
+    return np.asarray(np.abs(lines[1:] - lines[:-1]).mean(axis=(1, 2)))
+
+
+def pair_seam_ratio(first: np.ndarray, second: np.ndarray, axis: SeamAxis) -> float:
+    """``first`` 的末列（行）接 ``second`` 的首列（行）时，接缝处的差异比。
+
+    分子是接缝处**逐像素差异的均值**，分母是两块 tile 内部相邻扫描线差异的
+    中位数。问的是"把这两块拼起来，接缝处的落差比这两块料子本身的典型落差大多少"。
+
+    **分母取两块合起来的中位数**，不是只取 ``first`` 的：只拿一侧的颗粒度当尺子，
+    会让"光滑 tile 接粗糙 tile"按错误的量纲判定，还会让关系凭空带上与接缝无关的
+    方向性。合起来取中位数则天然对称。
+
+    ``first is second`` 时合集就是同一批差异各出现两次，中位数不变 ——
+    于是这个函数退化成 :func:`seam_ratio`，**逐位相等**。8.2 的邻接矩阵对角线
+    因此必然与 8.1 已经验过的无缝判定同源（PLAN §8.2）。
+
+    取中位数而不是均值：地面 tile 里常有少量高对比的细节（石子、裂缝），
+    均值会被它们抬高，从而把真实的接缝突变稀释掉。
+    """
+    a = _lines(_rgb(first), axis)
+    b = _lines(_rgb(second), axis)
+    if len(a) < 2 or len(b) < 2:
+        return 0.0
+    if a.shape[1:] != b.shape[1:]:
+        raise ValueError(
+            f"两块 tile 在接缝方向上的长度不一致：{a.shape[1:]} vs {b.shape[1:]}"
+        )
+    interior = np.concatenate([_interior_diffs(a), _interior_diffs(b)])
+    seam = float(np.abs(a[-1] - b[0]).mean())
+    return seam / max(float(np.median(interior)), _DELTA_FLOOR)
+
+
 def seam_ratio(tile: np.ndarray, axis: SeamAxis) -> float:
     """接缝处相邻扫描线的差异 ÷ 内部相邻扫描线差异的中位数。
 
     可平铺的 tile 里，接缝只是又一处普通的相邻关系，比值应当在 1 附近；
     对边接不上时接缝差异会显著高于内部的典型差异。
 
-    取中位数而不是均值：地面 tile 里常有少量高对比的细节（石子、裂缝），
-    均值会被它们抬高，从而把真实的接缝突变稀释掉。
+    "首尾相接"就是**这块 tile 接它自己**，所以这里直接委托给
+    :func:`pair_seam_ratio` —— 两者相等是**构造出来的**，不是各写一遍再指望它们
+    碰巧一致。
     """
-    lines = _lines(_rgb(tile), axis)
-    if len(lines) < 2:
+    return pair_seam_ratio(tile, tile, axis)
+
+
+def edge_color_gap(first: np.ndarray, second: np.ndarray, axis: SeamAxis) -> float:
+    """接缝两侧那一列（行）的**均值之差**，逐通道取最大。单位是 0–255 色阶。
+
+    **刻意不做任何归一化**，这是它与 :func:`pair_seam_ratio` 的全部区别，
+    也是它存在的理由。8.1 的教训是"分母不能取会被失败信号抬高的量"，
+    这里踩的是同一块石头的另一面：``pair_seam_ratio`` 的分母是颗粒度，而高频
+    噪声纹理的颗粒度本来就大 —— 两块材质完全不同的高噪 tile（草接水）接缝差异
+    虽大，除以同样大的颗粒度后照样落在阈值下方，判通过。
+
+    两条判据的差别正在"先取绝对值还是先取均值"上，而这个差别恰好把两种失败分开：
+
+    ==========================================  ==================  ==========
+    ..                                          同材质（噪声不对齐）  材质换了
+    ==========================================  ==================  ==========
+    ``mean(|first末列 − second首列|)``           大                  大
+    ``|mean(first末列) − mean(second首列)|``     小                  大
+    ==========================================  ==================  ==========
+
+    第一行除以颗粒度后回到 1 附近；第二行不除任何东西，所以噪声抬不高它。
+    """
+    a = _lines(_rgb(first), axis)
+    b = _lines(_rgb(second), axis)
+    if len(a) < 1 or len(b) < 1:
         return 0.0
-    interior = np.abs(lines[1:] - lines[:-1]).mean(axis=(1, 2))
-    seam = float(np.abs(lines[-1] - lines[0]).mean())
-    return seam / max(float(np.median(interior)), _DELTA_FLOOR)
+    return float(np.max(np.abs(a[-1].mean(axis=0) - b[0].mean(axis=0))))
 
 
 def _grain(rgb: np.ndarray) -> np.ndarray:

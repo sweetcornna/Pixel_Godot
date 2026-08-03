@@ -511,6 +511,9 @@
           "additionalProperties": {
             "$ref": "#/$defs/tile_entry"
           }
+        },
+        "adjacency": {
+          "$ref": "#/$defs/tile_adjacency"
         }
       }
     },
@@ -535,6 +538,53 @@
         },
         "processed_hash": {
           "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "tile_adjacency": {
+      "description": "哪块 tile 能挨着哪块（PLAN §8.2）。只存 right 与 down —— A 右接 B 与 B 右接 A 是两件事，只有 A 右接 B ⟺ B 左接 A 才是同一件事，所以另两个方向是这两个的转置，现算而不另存。两个阈值随产物记死：不写下来就没法解释这张表是怎么来的。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seam_ratio_max",
+        "edge_color_gap_max",
+        "right",
+        "down"
+      ],
+      "properties": {
+        "seam_ratio_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "edge_color_gap_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "calibrated": {
+          "type": "boolean",
+          "description": "阈值是否用真实 tile 校准过。眼下是工程默认值。"
+        },
+        "right": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          }
+        },
+        "down": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          }
         }
       }
     }
