@@ -22,7 +22,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
-| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成已完成；Tiled / TMX 导出、过渡 tile、Godot terrain 未开工 |
+| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成、Tiled 导出已完成；过渡 tile、Godot terrain 未开工，Godot / Tiled 均欠一次真机验证 |
 
 ### 未达标项
 
@@ -39,11 +39,20 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 理由与实测数据见 `pixel_asset_forge/validation/frame_order.py` 的模块文档。
 `export` 产出的 `previews/contact-sheet.png` 就是为这条缺口准备的。
 
-**3. Godot TileSet 尚未真机验证。** `SpriteFrames`（角色动画）那条链已于 2026-07-29
-在 **Godot 4.3 真机验证**通过（载入、核对帧数/fps/loop、挂到 `AnimatedSprite2D` 播放），
-重跑见 `tools/godot-gate/`。但 Sprint 8 新增的 `TileSet` `.tres` **还没有** ——
-它只按文档格式写并做了结构断言（`tile_size` 与 `texture_region_size` 一致、
-每格 `列:行/0 = 0` 齐全）。导出说明里也如实写了这一句。
+**3. Tiled 产物尚未真机验证（Godot 那一半已补上）。**
+
+- **Godot ✅** —— `SpriteFrames`（角色动画）2026-07-29 在 Godot 4.3 验过；
+  Sprint 8 的 `TileSet` `.tres` 与地图已于 **2026-08-02 在 Godot 4.7.1 headless
+  验过**，四层全部通过（加载 → 纹理衔接 → **图集那一格里装的确实是那块 tile 的像素**
+  → 地图逐格 `set_cell`/`get_cell_atlas_coords` 读回）。门槛与"改坏再跑"的实测
+  记录见 [`tools/godot-gate/`](tools/godot-gate/)。
+- **Tiled ❌** —— 本机没有 Tiled 也没有 TMX 解析库（`which tiled` 为空、无 `pytmx`）。
+  保证止于"结构符合文档所述、GID 能往回解回原 tile"。**"能打开"本身不是判据**
+  —— `firstgid` 差 1、行列主序搞反、CSV 按列输出，这三种写错法 Tiled 都会正常
+  打开、然后渲染出一张全错的地图。导出说明里如实写了这一句。
+
+Sprint 8 总门槛第五条"Godot 与 Tiled 均可打开"因此**只完成了 Godot 那一半，
+继续不打勾**。
 
 ---
 
@@ -231,6 +240,32 @@ WFC 的 Simple Tiled Model，吃的就是上面那张邻接表。**不调用 API
 `TileMapLayer` 把地图存成打包字节数组，本机无 Godot 可验，凭记忆拼二进制不如给
 一段读一遍就能确认对错的代码。
 
+#### Tiled 导出
+
+```bash
+uv run pixel-asset export outputs/grass_field -t tiled
+```
+
+产出 `.tsx` / `.tsj`（外部 tileset）与每张地图的 `.tmx` / `.tmj`。
+
+**"能打开"不是判据。** Tiled 的地图是一串 GID（`firstgid + 行主序局部 id`，
+`0` 表示空格），而这条链上每一步都能悄悄写错、**写错的文件照样能打开**：
+
+| 写错什么 | Tiled 打开时 | 实际后果 |
+|---|---|---|
+| `firstgid` 差 1 | 正常打开 | 整张地图错位一格 |
+| 行主序写成列主序 | 正常打开 | 非方形图集上 tile 全乱 |
+| CSV 按列输出 | 正常打开 | 地图被转置 |
+
+所以判据是**往回解**：把写出去的文件读回来，GID → 局部 id → 图集格坐标 → tile_id，
+逐格与源地图比对。测试里还各配了一个反例，证明这条判据真的抓得住那两种错。
+
+地图数据用 `csv` 编码而非 base64+zlib——本机没有 Tiled 可验，压缩过的字节流写错了
+肉眼看不出，CSV 读一眼就知道对不对。
+
+> **这些文件没有被 Tiled 打开验证过。** 保证止于"结构符合文档所述、GID 能往回解
+> 回原 tile"，不等于 Tiled 一定能正常渲染。与 Godot TileSet 那笔欠账并列。
+
 `plan` 完全离线：它自动识别单资产 request 或 pack，输出任务 DAG、预计 API 调用次数、
 键控色冲突预检结果与风险告警，不生成任何图。**大批量生成之前先跑它。**
 
@@ -257,7 +292,7 @@ WFC 的 Simple Tiled Model，吃的就是上面那张邻接表。**不调用 API
 | `interpolate <outputs/A> --key X --target-fps N` | 生成式补间 | ✅ | ✅ |
 | `validate <outputs/A>` | 运行验证引擎 | ❌ | ✅ |
 | `repair <outputs/A>` | 执行修复计划 | 视类型 | ✅ |
-| `export <asset-dir-or-id> -t godot` | 按目录或 `asset_id` 导出 + Contact Sheet | ❌ | ✅ |
+| `export <asset-dir-or-id> -t godot\|generic-json\|tiled` | 按目录或 `asset_id` 导出 + Contact Sheet | ❌ | ✅ |
 
 命令面按完整业务动作演进，不机械固定数量；MCP 仍保持少量高层语义工具。
 `plan`、`process`、`validate`、`export` 等离线入口让调试与迭代尽量不重复调用 API。

@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,13 +117,3 @@ def create_map(
         seed=tile_map.seed,
         tiles_used=tile_map.tiles_used,
     )
-
-
-def load_map_rows(root: Path, entry: TileMapEntry) -> list[list[str]]:
-    """把地图 JSON 读回逐行的 tile_id。验证与导出都要用。"""
-    path = root / entry.path
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    rows = payload.get("rows")
-    if not isinstance(rows, list) or not rows:
-        raise ProcessingError(f"{path} 里没有 rows")
-    return [list(row) for row in rows]

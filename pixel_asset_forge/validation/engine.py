@@ -686,12 +686,10 @@ def _check_maps(root: Path, entry: TilesetInfo) -> list[Check]:
             )
         ]
 
-    from ..pipelines.tilemap import load_map_rows
-
     checks: list[Check] = []
     for name, map_entry in sorted(entry.maps.items()):
         try:
-            rows = load_map_rows(root, map_entry)
+            rows = map_entry.load_rows(root)
         except (OSError, ProcessingError, ValueError) as exc:
             checks.append(
                 Check.make(

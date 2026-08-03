@@ -152,8 +152,6 @@ class GenericJsonExporter(Exporter):
 
         maps = manifest.tileset.maps
         if maps:
-            from ..pipelines.tilemap import load_map_rows
-
             payload["maps"] = {
                 name: {
                     "width": entry.width,
@@ -163,7 +161,7 @@ class GenericJsonExporter(Exporter):
                     # 逐行 tile_id，与 tiles[*] 的键对得上 —— 消费者查一次表就能
                     # 拿到图集坐标。用 id 而不是索引：索引一旦与顺序脱钩就全错，
                     # 而且错得看不出来。
-                    "rows": load_map_rows(root, entry),
+                    "rows": entry.load_rows(root),
                 }
                 for name, entry in sorted(maps.items())
             }

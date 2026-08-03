@@ -247,6 +247,20 @@ class TileMapEntry(_Base):
     tiles_used: list[str] = Field(min_length=1)
     """实际用到的 tile。一眼看得出这张地图是不是只有一种材质。"""
 
+    def load_rows(self, root: Path) -> list[list[str]]:
+        """把地图 JSON 读回逐行的 ``tile_id``。
+
+        这个方法长在这里而不是流水线里：读地图的有验证、有两个导出器，
+        而流水线层已经被 ``pipelines/__init__`` 串成一个环 —— 从导出器去 import
+        它会绕回 ``exporters``。**知道怎么读自己那个文件的，本来就该是它自己。**
+        """
+        path = root / self.path
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rows = payload.get("rows")
+        if not isinstance(rows, list) or not rows:
+            raise ProcessingError(f"{path} 里没有 rows")
+        return [list(row) for row in rows]
+
 
 class TilesetInfo(_Base):
     """整套 tile 的产物记录。

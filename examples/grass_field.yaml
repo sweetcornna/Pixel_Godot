@@ -43,4 +43,4 @@ tileset:
         repeating ripples and a few submerged pebbles. No border.
 
 export:
-  targets: [generic-json, godot]
+  targets: [generic-json, godot, tiled]
