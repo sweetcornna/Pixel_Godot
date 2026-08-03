@@ -18,6 +18,7 @@ import random
 from dataclasses import dataclass
 
 from ..errors import ProcessingError
+import os  # CI 自检：ruff 该抓住这个未使用的 import
 
 #: 撞上矛盾后换 seed 重试的次数。超过就认为这套邻接表在这个尺寸上无解。
 #:
