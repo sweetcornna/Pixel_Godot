@@ -1,5 +1,7 @@
 # Pixel Asset Forge
 
+[![CI](https://github.com/sweetcornna/Pixel_Godot/actions/workflows/ci.yml/badge.svg)](https://github.com/sweetcornna/Pixel_Godot/actions/workflows/ci.yml)
+
 把自然语言描述编译为可直接导入游戏引擎的像素资产。
 
 不是 GPT Image API 的包装器，而是 **Manifest 驱动的像素资产编译器**：
@@ -23,6 +25,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
 | 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成、Tiled 导出已完成；过渡 tile、Godot terrain 未开工，Godot / Tiled 均欠一次真机验证 |
+| 9 | Skill、MCP、CI 与发布 | 🚧 进行中 —— CI 已上线（ruff/mypy/pytest × 三平台 + 打包），闸门经三类破坏实测；Skill、MCP、PyPI 发布未开工 |
 
 ### 未达标项
 
