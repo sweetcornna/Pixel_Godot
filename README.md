@@ -80,17 +80,30 @@ uv sync --all-extras
 
 卸载 Skill 使用 `./scripts/install-skill.sh --uninstall`。
 
-API Key 只从环境变量读取，**永远不要写进配置文件或请求文件**：
+在项目目录运行 `pixel-asset init` 时，如果 stdin 是终端，会依次询问兼容端点、
+API Key 和图片模型。端点留空表示使用 OpenAI 官方端点，模型默认
+`gpt-image-2`；已有 `pixel-asset.yaml` 会把当前端点和模型作为默认值。
+脚本或 CI 中的非 TTY 调用仍只生成默认模板，也可用
+`--interactive` / `--no-interactive` 显式控制。
+
+交互输入的 Key 只写入项目 `.env` 的 `PIXEL_ASSET_API_KEY`，文件权限设为
+`0600`，且 `.env` 会加入 `.gitignore`。也可以继续使用真实环境变量：
 
 ```bash
 export PIXEL_ASSET_API_KEY=...     # 或 OPENAI_API_KEY
 ```
 
+有效优先级为：命令行覆盖 > 真实环境变量 > 项目 `.env` > 项目 YAML >
+用户级 YAML > 内置默认值。`.env` 从当前目录向上查找，只加载
+`PIXEL_ASSET_*` 配置白名单与上述两个 Key 变量；YAML 配置或请求文件中仍然
+**绝不允许出现 API Key**。`pixel-asset doctor` 会说明 Key 来自环境变量还是
+`.env` 文件，但永远不打印 Key 本身。
+
 ## 快速开始
 
 ```bash
-uv run pixel-asset doctor                    # 检查环境（不需要 Key）
-uv run pixel-asset init                      # 生成项目配置与目录
+uv run pixel-asset init                      # 交互生成项目配置、.env 与目录
+uv run pixel-asset doctor --probe            # 检查环境并探测图片服务
 uv run pixel-asset plan examples/knight.yaml # 看清楚要生成什么、要花多少次调用
 
 uv run pixel-asset create-character examples/knight.yaml   # 产出 canonical seed
@@ -340,7 +353,8 @@ tile id。返回体积有明确上界并有测试守着。
 `plan`、`process`、`validate`、`export` 等离线入口让调试与迭代尽量不重复调用 API。
 
 `--model` 可在命令行覆盖有效生成模型（`plan` / `create-asset` / `create-asset-pack`），
-优先级为**命令行覆盖 > 环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值**。
+优先级为**命令行覆盖 > 环境变量 > 项目 `.env` > 项目级 YAML > 用户级 YAML >
+内置默认值**。
 规划指纹包含有效模型：`plan --save` 与 `create-asset-pack` 必须用同一个 `--model`，
 否则会因指纹不一致被拒绝执行。`create-asset-pack --retry-failed` 把任务表中处于
 failed 的资产复位到最近一个可确认检查点后重跑，其余资产不受影响。

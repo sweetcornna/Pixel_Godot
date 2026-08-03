@@ -1,19 +1,21 @@
 """配置加载。
 
-优先级（PLAN §8 Sprint 1）：**命令行覆盖 > 环境变量 > 项目级 YAML > 用户级 YAML > 内置默认值**。
+优先级（PLAN §8 Sprint 1）：**命令行覆盖 > 环境变量 > 项目级 .env > 项目级 YAML >
+用户级 YAML > 内置默认值**。
 
-API Key 只从环境变量读，**永远不从配置文件读、也永远不写入配置文件**。
-这不是为了省事 —— 是为了让"Key 泄漏到仓库里"这件事在结构上不可能发生。
+API Key 只从环境变量或项目级 ``.env`` 读，**永远不从 YAML 配置文件读、
+也永远不写入 YAML 配置文件**。这不是为了省事 —— 是为了让
+"Key 泄漏到项目配置里"这件事在结构上不可能发生。
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, NamedTuple
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr
 
 from .constants import (
     DEFAULT_MAX_CONCURRENCY,
@@ -24,6 +26,7 @@ from .constants import (
 from .errors import ConfigError, MissingApiKeyError
 
 PROJECT_CONFIG_NAME = "pixel-asset.yaml"
+PROJECT_ENV_NAME = ".env"
 USER_CONFIG_PATH = Path.home() / ".config" / "pixel-asset" / "config.yaml"
 
 #: 按序探测，第一个非空的胜出。
@@ -52,6 +55,14 @@ _INT_FIELDS = {
     "requests_per_minute",
 }
 _BOOL_FIELDS = {"cache_enabled"}
+
+_DOTENV_KEYS = frozenset((*API_KEY_ENV_VARS, *_ENV_FIELDS))
+
+
+class _ApiKeyValue(NamedTuple):
+    value: str
+    variable: str
+    source: Literal["environment", "dotenv"]
 
 
 class Config(BaseModel):
@@ -83,29 +94,41 @@ class Config(BaseModel):
     #: 配置来源轨迹，供 doctor 展示"这个值是从哪来的"。
     sources: list[str] = Field(default_factory=list)
 
+    #: 显式配置文件可以不在 cwd 下；Provider 仍应读取同项目的 .env。
+    _dotenv_start: Path | None = PrivateAttr(default=None)
+
     # -- API Key ----------------------------------------------------------
 
     @staticmethod
-    def api_key() -> SecretStr | None:
-        for var in API_KEY_ENV_VARS:
-            value = os.environ.get(var, "").strip()
-            if value:
-                return SecretStr(value)
-        return None
+    def api_key(start: Path | None = None) -> SecretStr | None:
+        resolved = _resolve_api_key(start=start)
+        return SecretStr(resolved.value) if resolved is not None else None
 
     @staticmethod
-    def api_key_env_var() -> str | None:
-        """返回实际提供了 Key 的环境变量名（只回名字，不回值）。"""
-        for var in API_KEY_ENV_VARS:
-            if os.environ.get(var, "").strip():
-                return var
-        return None
+    def api_key_env_var(start: Path | None = None) -> str | None:
+        """返回实际提供了 Key 的变量名（只回名字，不回值）。"""
+        resolved = _resolve_api_key(start=start)
+        return resolved.variable if resolved is not None else None
+
+    @staticmethod
+    def api_key_source(start: Path | None = None) -> str | None:
+        """返回 Key 来源标签，供诊断信息使用。"""
+        resolved = _resolve_api_key(start=start)
+        if resolved is None:
+            return None
+        if resolved.source == "environment":
+            return f"环境变量 {resolved.variable}"
+        return ".env 文件"
+
+    def resolved_api_key_source(self) -> str | None:
+        """按当前配置绑定的项目目录返回 Key 来源。"""
+        return self.api_key_source(start=self._dotenv_start)
 
     def require_api_key(self) -> SecretStr:
-        key = self.api_key()
+        key = self.api_key(start=self._dotenv_start)
         if key is None:
             raise MissingApiKeyError(
-                "未检测到 API Key。请设置环境变量 "
+                "未检测到 API Key。请设置项目 .env 或环境变量 "
                 + " 或 ".join(API_KEY_ENV_VARS)
                 + "。绝不要把 Key 写进 request 文件或配置文件。"
             )
@@ -150,6 +173,28 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _read_dotenv(path: Path) -> dict[str, str]:
+    """读取项目 ``.env`` 中的白名单变量，不修改进程环境。"""
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if key not in _DOTENV_KEYS:
+            continue
+
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
 def find_project_config(start: Path | None = None) -> Path | None:
     """从 ``start`` 逐级向上找 ``pixel-asset.yaml``。"""
     current = (start or Path.cwd()).resolve()
@@ -157,6 +202,32 @@ def find_project_config(start: Path | None = None) -> Path | None:
         path = candidate / PROJECT_CONFIG_NAME
         if path.exists():
             return path
+    return None
+
+
+def find_project_env(start: Path | None = None) -> Path | None:
+    """从 ``start`` 逐级向上找项目 ``.env``。"""
+    current = (start or Path.cwd()).resolve()
+    for candidate in (current, *current.parents):
+        path = candidate / PROJECT_ENV_NAME
+        if path.exists():
+            return path
+    return None
+
+
+def _resolve_api_key(*, start: Path | None = None) -> _ApiKeyValue | None:
+    """解析 Key；真实环境变量整体优先于项目 ``.env``。"""
+    for var in API_KEY_ENV_VARS:
+        value = os.environ.get(var, "").strip()
+        if value:
+            return _ApiKeyValue(value, var, "environment")
+
+    dotenv_path = find_project_env(start)
+    dotenv = _read_dotenv(dotenv_path) if dotenv_path is not None else {}
+    for var in API_KEY_ENV_VARS:
+        value = dotenv.get(var, "").strip()
+        if value:
+            return _ApiKeyValue(value, var, "dotenv")
     return None
 
 
@@ -185,6 +256,18 @@ def load_config(
             merged.update(project_data)
             sources.append(f"项目级配置 {project_path}")
 
+    dotenv_start = project_path.parent if project_path is not None else Path.cwd().resolve()
+    dotenv_path = find_project_env(dotenv_start)
+    dotenv = _read_dotenv(dotenv_path) if dotenv_path is not None else {}
+    dotenv_data = {
+        field: _coerce(field, dotenv[var])
+        for var, field in _ENV_FIELDS.items()
+        if dotenv.get(var)
+    }
+    if dotenv:
+        merged.update(dotenv_data)
+        sources.append(f"项目级 .env {dotenv_path}")
+
     env_data = {
         field: _coerce(field, env[var]) for var, field in _ENV_FIELDS.items() if env.get(var)
     }
@@ -204,19 +287,24 @@ def load_config(
         )
 
     merged["sources"] = sources
-    return Config.model_validate(merged)
+    config = Config.model_validate(merged)
+    config._dotenv_start = dotenv_start
+    return config
 
 
 DEFAULT_CONFIG_TEMPLATE = f"""\
 # Pixel Asset Forge 项目配置
 #
-# 优先级：命令行覆盖 > 环境变量 > 本文件 > 用户级配置（{USER_CONFIG_PATH}）> 内置默认值
+# 优先级：命令行覆盖 > 环境变量 > 项目 .env > 本文件 > 用户级配置（{USER_CONFIG_PATH}）> 内置默认值
 #
-# ⚠️ 绝不要在这里写 API Key。Key 只从环境变量读取：
+# ⚠️ 绝不要在这里写 API Key。Key 只从项目 .env 或环境变量读取：
 #      {" 或 ".join(API_KEY_ENV_VARS)}
 
 provider: openai
 model: gpt-image-2
+
+# 自定义 OpenAI 兼容端点；留空使用官方 OpenAI 端点。
+# base_url:
 
 # 透明背景降级路径使用的模型（ADR-004 第 4 档，兜底而非主路径）
 fallback_model: gpt-image-1.5

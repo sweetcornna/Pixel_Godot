@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -29,7 +31,9 @@ from .config import (
     API_KEY_ENV_VARS,
     DEFAULT_CONFIG_TEMPLATE,
     PROJECT_CONFIG_NAME,
+    PROJECT_ENV_NAME,
     Config,
+    _read_yaml,
     find_project_config,
     load_config,
 )
@@ -131,17 +135,166 @@ def _load_config(
 # ---------------------------------------------------------------------------
 
 
+def _yaml_config_line(field: str, value: str) -> str:
+    """把单个字符串值交给 YAML 库转义，避免用户输入破坏模板。"""
+    return yaml.safe_dump({field: value}, allow_unicode=True, sort_keys=False).strip()
+
+
+def _render_config_template(*, base_url: str, model: str) -> str:
+    """在保留默认模板注释结构的前提下写入交互项。"""
+    rendered = DEFAULT_CONFIG_TEMPLATE.replace(
+        "model: gpt-image-2", _yaml_config_line("model", model), 1
+    )
+    if base_url:
+        rendered = rendered.replace("# base_url:", _yaml_config_line("base_url", base_url), 1)
+    return rendered
+
+
+def _update_config_text(text: str, *, base_url: str, model: str) -> str:
+    """对已存在的配置只做 ``model`` / ``base_url`` 的行级替换。
+
+    交互式 init 重跑不该重置用户调过的其他字段（``max_concurrency`` /
+    ``output_dir`` 等）—— 整体重写模板留给显式 ``--force``。
+    """
+    lines = text.splitlines(keepends=True)
+
+    model_line = _yaml_config_line("model", model) + "\n"
+    for i, line in enumerate(lines):
+        if re.match(r"model\s*:", line):
+            lines[i] = model_line
+            break
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(model_line)
+
+    base_line = _yaml_config_line("base_url", base_url) + "\n" if base_url else "# base_url:\n"
+    for i, line in enumerate(lines):
+        if re.match(r"(#\s*)?base_url\s*:", line):
+            lines[i] = base_line
+            break
+    else:
+        if base_url:
+            lines.append(base_line)
+
+    return "".join(lines)
+
+
+def _prompt_base_url(default: str) -> str:
+    """询问并规范化 OpenAI 兼容端点。"""
+    while True:
+        value = str(
+            typer.prompt(
+                "端点服务器 base_url（留空使用官方 OpenAI 端点）",
+                default=default,
+                show_default=bool(default),
+            )
+        ).strip()
+        if not value:
+            return ""
+        if value.startswith(("http://", "https://")):
+            return value.rstrip("/")
+        console.print("[red]✗[/red] base_url 必须以 http:// 或 https:// 开头，请重新输入")
+
+
+def _write_project_api_key(path: Path, key: str) -> None:
+    """只更新项目 ``.env`` 的 Key 行，并把文件权限收紧到 0600。"""
+    if path.exists():
+        path.chmod(0o600)
+        original = path.read_text(encoding="utf-8")
+    else:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+        original = ""
+
+    replacement = f"{API_KEY_ENV_VARS[0]}={key}\n"
+    lines: list[str] = []
+    replaced = False
+    for line in original.splitlines(keepends=True):
+        stripped = line.lstrip()
+        name = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+        if name == API_KEY_ENV_VARS[0]:
+            if not replaced:
+                lines.append(replacement)
+                replaced = True
+            continue
+        lines.append(line)
+
+    if not replaced:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines.append("\n")
+        lines.append(replacement)
+    path.write_text("".join(lines), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def _probe_provider(config: Config) -> tuple[bool, str]:
+    """执行 doctor 与 init 共用的 Provider 连通性探测。"""
+    try:
+        from .providers import get_provider
+
+        info = get_provider(config).probe()
+        return bool(info.get("reachable")), json.dumps(info, ensure_ascii=False)
+    except PixelAssetError as exc:
+        return False, exc.message
+
+
 @app.command()
 def init(
     directory: Annotated[Path, typer.Argument(help="项目目录，默认当前目录")] = Path(),
     force: Annotated[bool, typer.Option("--force", help="覆盖已存在的配置文件")] = False,
+    interactive: Annotated[
+        bool | None,
+        typer.Option(
+            "--interactive/--no-interactive",
+            help="启用或关闭交互配置；默认仅在 stdin 是 TTY 时启用",
+        ),
+    ] = None,
 ) -> None:
     """初始化项目配置与输出目录。不调用 API。"""
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
 
     config_path = directory / PROJECT_CONFIG_NAME
-    if config_path.exists() and not force:
+    interactive_mode = sys.stdin.isatty() if interactive is None else interactive
+    api_key = ""
+
+    if interactive_mode:
+        existing_config: dict[str, Any] = {}
+        if config_path.exists() and not force:
+            try:
+                existing_config = _read_yaml(config_path)
+            except PixelAssetError as exc:
+                _fail(exc)
+
+        base_url_default = str(existing_config.get("base_url") or "")
+        model_default = str(
+            existing_config.get("model") or Config.model_fields["model"].default
+        )
+        base_url = _prompt_base_url(base_url_default)
+        api_key = str(
+            typer.prompt(
+                "API Key（留空跳过）",
+                default="",
+                hide_input=True,
+                show_default=False,
+            )
+        ).strip()
+        model = str(typer.prompt("图片模型名", default=model_default)).strip() or model_default
+
+        if config_path.exists() and not force:
+            updated = _update_config_text(
+                config_path.read_text(encoding="utf-8"), base_url=base_url, model=model
+            )
+        else:
+            updated = _render_config_template(base_url=base_url, model=model)
+        config_path.write_text(updated, encoding="utf-8")
+        console.print(f"[green]✓[/green] 写入 {config_path}")
+        if api_key:
+            env_path = directory / PROJECT_ENV_NAME
+            _write_project_api_key(env_path, api_key)
+            console.print(f"[green]✓[/green] API Key 已写入 {env_path}（权限 0600，值不显示）")
+    elif config_path.exists() and not force:
         console.print(f"[yellow]![/yellow] {config_path} 已存在，未改动（加 --force 覆盖）")
     else:
         config_path.write_text(DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
@@ -154,22 +307,35 @@ def init(
 
     gitignore = directory / ".gitignore"
     entries = ["outputs/", ".pixel-asset-cache/", ".env"]
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    missing = [e for e in entries if e not in existing]
+    existing_gitignore = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    missing = [e for e in entries if e not in existing_gitignore]
     if missing:
         with gitignore.open("a", encoding="utf-8") as fh:
-            if existing and not existing.endswith("\n"):
+            if existing_gitignore and not existing_gitignore.endswith("\n"):
                 fh.write("\n")
             fh.write("\n".join(missing) + "\n")
         console.print(f"[green]✓[/green] 追加 .gitignore 条目：{', '.join(missing)}")
 
-    console.print()
-    console.print("下一步：")
-    console.print(
-        f"  1. 设置 API Key 环境变量：[cyan]{API_KEY_ENV_VARS[0]}[/cyan]（切勿写进配置文件）"
-    )
-    console.print("  2. [cyan]pixel-asset doctor[/cyan] 检查环境")
-    console.print("  3. [cyan]pixel-asset plan <request.yaml>[/cyan] 看清楚要生成什么")
+    if interactive_mode:
+        if api_key and typer.confirm("是否立即探测连通性?", default=False):
+            config = _load_config(config_path)
+            good, detail = _probe_provider(config)
+            mark = "[green]✓[/green]" if good else "[red]✗[/red]"
+            console.print(f"{mark} Provider 连通性：{detail}")
+            if not good:
+                raise typer.Exit(EXIT_ERROR)
+        else:
+            console.print("\n下一步运行：[cyan]pixel-asset doctor --probe[/cyan]")
+        console.print("然后运行：[cyan]pixel-asset plan <request.yaml>[/cyan] 看清楚要生成什么")
+    else:
+        console.print()
+        console.print("下一步：")
+        console.print(
+            f"  1. 在项目 .env 或环境变量中设置 [cyan]{API_KEY_ENV_VARS[0]}[/cyan]"
+            "（切勿写进配置文件）"
+        )
+        console.print("  2. [cyan]pixel-asset doctor[/cyan] 检查环境")
+        console.print("  3. [cyan]pixel-asset plan <request.yaml>[/cyan] 看清楚要生成什么")
 
 
 # ---------------------------------------------------------------------------
@@ -250,10 +416,10 @@ def doctor(
         row("配置", False, exc.message)
         config = Config()
 
-    # API Key —— 只报告来自哪个环境变量，绝不回显值
-    key_var = Config.api_key_env_var()
-    if key_var:
-        row("API Key", True, f"已从环境变量 {key_var} 读取（值不显示）")
+    # API Key —— 只报告来源，绝不回显值
+    key_source = config.resolved_api_key_source()
+    if key_source:
+        row("API Key", True, f"来源：{key_source}（值不显示）")
     else:
         row(
             "API Key",
@@ -285,17 +451,8 @@ def doctor(
     )
 
     if probe:
-        try:
-            from .providers import get_provider
-
-            info = get_provider(config).probe()
-            row(
-                "Provider 连通性",
-                bool(info.get("reachable")),
-                json.dumps(info, ensure_ascii=False),
-            )
-        except PixelAssetError as exc:
-            row("Provider 连通性", False, exc.message)
+        good, detail = _probe_provider(config)
+        row("Provider 连通性", good, detail)
 
     console.print(table)
     if not ok:
