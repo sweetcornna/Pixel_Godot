@@ -49,10 +49,12 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
   验过**，四层全部通过（加载 → 纹理衔接 → **图集那一格里装的确实是那块 tile 的像素**
   → 地图逐格 `set_cell`/`get_cell_atlas_coords` 读回）。门槛与"改坏再跑"的实测
   记录见 [`tools/godot-gate/`](tools/godot-gate/)。
-- **Tiled ❌** —— 本机没有 Tiled 也没有 TMX 解析库（`which tiled` 为空、无 `pytmx`）。
-  保证止于"结构符合文档所述、GID 能往回解回原 tile"。**"能打开"本身不是判据**
-  —— `firstgid` 差 1、行列主序搞反、CSV 按列输出，这三种写错法 Tiled 都会正常
-  打开、然后渲染出一张全错的地图。导出说明里如实写了这一句。
+- **Tiled ⚠️** —— 已有 **pytmx 第三方互证**（2026-08-03）：用 Python 生态的
+  TMX 参考实现独立解析我们的 .tmx/.tsx，28 格逐格图集坐标与源地图一致，
+  firstgid/columns/tilecount 对上；两条篡改反例（GID+1、firstgid 偏移）都被
+  独立解码抓出。见 `tests/integration/test_tiled_pytmx.py` —— 它**不引用**我们
+  自己的 GID 函数，独立性是全部意义。
+  仍欠 Tiled **GUI** 真机打开验证 —— pytmx 互证 ≠ 官方渲染器行为。
 
 Sprint 8 总门槛第五条"Godot 与 Tiled 均可打开"因此**只完成了 Godot 那一半，
 继续不打勾**。
@@ -189,7 +191,8 @@ tile 与其它资产有两处不同，照抄示例时容易踩空：
 
 第二条不能省：带边框的 tile 接缝处是"边框接边框"，两边一样暗，**接缝判据对它
 恒判通过**，而它恰恰是模型最常见的失败形态。两条都是 fatal —— 拼不起来等于整套
-不可用。阈值尚未用真实 tile 校准。
+不可用。`tile_border` 阈值已用第一批真实样本修正过一次（2.0→4.0，n=3 仍不算
+校准完成，见[校准记录](docs/threshold-calibration.md)）。
 
 `export` 产出的 contact sheet 会把每块 tile 铺成 3×3：判据只算数值，
 平铺起来像不像、有没有肉眼可见的重复图案，还得人看。

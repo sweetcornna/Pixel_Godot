@@ -2204,6 +2204,12 @@ GID 的正反两个方向都写成了函数（`gid_for` / `tile_id_for_gid`）�
    一格），而 Tiled 是**按图片尺寸自己算**格数的。报一个和它算出来不一样的数只会
    当场对不上，所以取 `columns × rows`。
 
+**2026-08-03 补账**：Tiled 导出获得 **pytmx 第三方互证**（`tests/integration/
+test_tiled_pytmx.py`，实现 Codex、审查独立复核）。此前的往回解是编码器与解码器
+同源 —— 两边一起错就一起判通过；pytmx 是独立实现，28 格逐格互证 + 两条篡改反例
+（先本地确认失败再入库，含基线）都成立，且未发现导出 bug。仍欠 Tiled GUI 真机
+打开验证。
+
 > 8.4 只主张"写出去的 Tiled 文件里，每一格都指向它该指向的 tile"。
 > 对象层、多图层、动画 tile 与 terrain 不在本切。Sprint 8 总门槛继续不打勾
 > —— 总门槛第五条要求"Godot 与 Tiled 均可打开"，而两者都还欠一次真机验证。
@@ -2641,6 +2647,22 @@ LICENSE                             本仓库自有部分
 > 机制已在本机实测确认：plugin 通过根目录 `.mcp.json` 声明 MCP
 > （`context7` 用 `npx`，我们用 HTTP），marketplace 通过
 > `.claude-plugin/marketplace.json` 的 `plugins[].source` 引用其他仓库。
+
+> **范围裁剪（owner 决策，2026-08-03）**：本项目定位收缩为**资产生成与自动化
+> 操作**；"AI 驱动运行中的 Godot 编辑器完成游戏开发"不做完整实现。本节的四条
+> 退出门槛按此重新计价：
+>
+> - ~~一句自然语言 → 运行中的 Godot 里出现能播放的节点~~ —— **不做**。
+>   AI 操作编辑器属于被裁掉的那一半；用户拿到导出物后照
+>   `references/godot-handoff.md` 与 `GODOT-README.md` 手工接入。
+> - 三 plugin 可独立安装 —— 保留（结构已存在）。
+> - LICENSE / NOTICE / UPSTREAM —— 保留（已存在）。
+> - **衔接层四条必设项有真机背书 —— ✅ 已达成**：2026-08-03 用 live gate 产出的
+>   **真实资产**（gpt-image-2 骑士，walk 循环 + attack 一次性）在 Godot 4.7.1
+>   headless 过 `tools/godot-gate/verify.gd` 全部检查（资源逐项核对 + 四条必设项），
+>   GATE-OK。
+>
+> 裁剪不影响资产侧的既有承诺：生成、验证、导出、真机门槛、live gate 全部保留。
 
 #### 10.4 衔接层 —— 这才是本 Sprint 的真正产出
 

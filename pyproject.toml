@@ -33,6 +33,7 @@ dev = [
     "types-jsonschema>=4.26.0.20260518",
     "types-pyyaml>=6.0.12.20260724",
     "scipy-stubs>=1.18.0.1",
+    "pytmx>=3.32",
 ]
 
 [build-system]
