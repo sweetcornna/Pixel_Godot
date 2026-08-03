@@ -1,8 +1,8 @@
 """配置加载与密钥保护。
 
 两条硬要求：
-- 优先级 **环境变量 > 项目级 > 用户级 > 默认值**
-- **API Key 只能来自环境变量。** 配置文件里出现 Key 一律报错，
+- 优先级 **环境变量 > 项目 .env > 项目级 YAML > 用户级 YAML > 默认值**
+- **API Key 只能来自环境变量或项目 .env。** YAML 配置文件里出现 Key 一律报错，
   让"Key 被 commit 进仓库"在结构上不可能发生。
 """
 
@@ -126,3 +126,88 @@ def test_config_model_has_no_api_key_field() -> None:
     """结构性保证：Config 里根本没有放 Key 的地方，就不可能被序列化出去。"""
     assert "api_key" not in Config.model_fields
     assert "sk-" not in repr(Config())
+
+
+def test_dotenv_whitelist_is_loaded_from_parent_and_beats_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = write(tmp_path / "pixel-asset.yaml", "model: yaml-model\nmax_retries: 1\n")
+    write(
+        tmp_path / ".env",
+        "# 项目本地配置\n"
+        'PIXEL_ASSET_MODEL="dotenv-model"\n'
+        "PIXEL_ASSET_MAX_RETRIES='5'\n"
+        "UNRELATED_SETTING=ignored\n",
+    )
+    child = tmp_path / "nested"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    config = load_config(user_config=tmp_path / "none.yaml", project_config=project, env={})
+
+    assert config.model == "dotenv-model"
+    assert config.max_retries == 5
+    assert any("项目级 .env" in source for source in config.sources)
+
+
+def test_real_environment_beats_dotenv_for_config_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = write(tmp_path / "pixel-asset.yaml", "model: yaml-model\n")
+    write(tmp_path / ".env", "PIXEL_ASSET_MODEL=dotenv-model\n")
+    monkeypatch.chdir(tmp_path)
+
+    config = load_config(
+        user_config=tmp_path / "none.yaml",
+        project_config=project,
+        env={"PIXEL_ASSET_MODEL": "environment-model"},
+    )
+
+    assert config.model == "environment-model"
+
+
+def test_api_key_loads_from_dotenv_and_reports_its_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    write(tmp_path / ".env", "PIXEL_ASSET_API_KEY='sk-dotenv-value'\n")
+    child = tmp_path / "nested"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    assert Config.api_key_env_var() == "PIXEL_ASSET_API_KEY"
+    assert Config.api_key_source() == ".env 文件"
+    assert Config.api_key().get_secret_value() == "sk-dotenv-value"
+
+
+def test_real_key_environment_beats_higher_priority_name_in_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(tmp_path / ".env", "PIXEL_ASSET_API_KEY=sk-dotenv-value\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-environment-value")
+
+    assert Config.api_key_env_var() == "OPENAI_API_KEY"
+    assert Config.api_key_source() == "环境变量 OPENAI_API_KEY"
+    assert Config.api_key().get_secret_value() == "sk-environment-value"
+
+
+def test_loaded_config_keeps_its_dotenv_project_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    project = write(project_dir / "pixel-asset.yaml", "model: custom\n")
+    write(project_dir / ".env", "OPENAI_API_KEY=sk-project-value\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    config = load_config(project_config=project, user_config=tmp_path / "none.yaml", env={})
+
+    assert config.require_api_key().get_secret_value() == "sk-project-value"
+    assert config.resolved_api_key_source() == ".env 文件"
