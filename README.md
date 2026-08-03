@@ -25,7 +25,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
 | 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成、Tiled 导出已完成；过渡 tile、Godot terrain 未开工，Godot / Tiled 均欠一次真机验证 |
-| 9 | Skill、MCP、CI 与发布 | 🚧 进行中 —— CI 已上线（ruff/mypy/pytest × 三平台 + 打包），闸门经三类破坏实测；Skill、MCP、PyPI 发布未开工 |
+| 9 | Skill、MCP、CI 与发布 | 🚧 进行中 —— CI、Skill 追平、MCP（6 个高层工具）已完成，各自的闸门都经反例实测；PyPI 发布未开工 |
 
 ### 未达标项
 
@@ -298,6 +298,31 @@ uv run pixel-asset export outputs/grass_field -t tiled
 | `export <asset-dir-or-id> -t godot\|generic-json\|tiled` | 按目录或 `asset_id` 导出 + Contact Sheet | ❌ | ✅ |
 
 命令面按完整业务动作演进，不机械固定数量；MCP 仍保持少量高层语义工具。
+
+### MCP
+
+装了 `mcp` 可选依赖后（`uv sync --extra mcp`）可作为 MCP server 跑：
+
+```bash
+python -m pixel_asset_forge.mcp_server     # stdio
+```
+
+**只暴露 6 个工具**：`create_character` · `create_animation` · `create_asset_pack` ·
+`validate_asset` · `repair_asset` · `export_asset`。
+
+这不是"至少这些"，是**恰好这些**，且有测试钉着（加第 7 个会红）。理由见
+[ADR-005](docs/adr/ADR-005-cli-core-mcp-adapter.md)：工具越多，上下文开销越大、
+选错概率越高，而最关键的是**顺序错误**——像素处理有严格顺序依赖（despill 必须在
+量化前），让模型编排这个顺序等于把确定性流程交给不确定性组件，那会在架构层面
+推翻整个项目的立论。
+
+`init` / `doctor` / `plan` / `import` / `process` 刻意**不**暴露：它们是开发者
+工作流入口，对模型没有语义价值。
+
+工具返回的是**摘要**（asset_id、状态、产物路径、检查项统计）而不是 Manifest 全文
+——MCP 的返回直接进模型上下文，一个带 24×16 地图的 tileset Manifest 有几千个
+tile id。返回体积有明确上界并有测试守着。
+
 `plan`、`process`、`validate`、`export` 等离线入口让调试与迭代尽量不重复调用 API。
 
 `--model` 可在命令行覆盖有效生成模型（`plan` / `create-asset` / `create-asset-pack`），
