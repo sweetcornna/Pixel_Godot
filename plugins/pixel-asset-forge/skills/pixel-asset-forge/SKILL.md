@@ -176,9 +176,13 @@ pixel-asset create-asset-pack combat.yaml                      # 跑完全部动
 ```bash
 pixel-asset plan grass.yaml            # 每块 tile 各一次调用
 pixel-asset create-tileset grass.yaml  # 逐块生成 → 整套统一处理（共享调色板）
+pixel-asset create-map outputs/grass_field --width 24 --height 16 --seed 42
 pixel-asset validate outputs/grass_field
-pixel-asset export   outputs/grass_field
+pixel-asset export   outputs/grass_field -t godot   # 或 -t tiled / -t generic-json
 ```
+
+`create-map` 与邻接推导都**不调用 API**，判据与话术见
+`references/tileset-rules.md`。
 
 写 request 时两处**必须**注意，写错会被直接拒收或产出废图：
 
@@ -193,6 +197,29 @@ pixel-asset export   outputs/grass_field
 
 导出后一定要让用户看 `previews/contact-sheet.png`：它把每块 tile 铺成 3×3，
 判据只算数值，平铺起来像不像只有人能判。
+
+#### 两种"看着像失败、其实是正确答案"的产出
+
+这两条**最容易被误报给用户**，遇到时不要说是 bug：
+
+- **邻接表是对角矩阵**（每块 tile 只能接自己）。草、土、水本来就不能直接挨着，
+  中间需要**过渡 tile**，而这条链目前还产不出那类 tile。这张表如实说出了
+  "想把草和水放一起，你还缺一类 tile"。
+- **地图只有一种材质**。这是上一条的直接后果：地图网格是连通的，每一步都要求
+  两边相容，对角矩阵下整张图必然同一种材质。缺的是过渡 tile，不是更好的求解器。
+  `create-map` 自己会打印这句提示。
+
+#### 导出目标与各自的欠账
+
+| 目标 | 产出 | 真机验证 |
+|---|---|---|
+| `-t godot` | `TileSet` `.tres` + 图集 + `set_cell()` 片段 | ✅ Godot 4.7.1 验过 |
+| `-t tiled` | `.tsx` / `.tsj` + 每张地图的 `.tmx` / `.tmj` | ❌ **未验证** |
+| `-t generic-json` | 图集坐标 + 四方向邻接 + 地图 `rows` | — |
+
+**Tiled 那条必须如实告诉用户没验过。** `firstgid` 差 1、行列主序搞反、CSV 按列
+输出，这三种写错法 Tiled 都会**正常打开**、然后渲染出一张全错的地图 ——
+所以用户回报"打开正常"也不代表这条链验过了。
 
 ---
 
@@ -373,6 +400,7 @@ Key 相关问题一律用 `doctor` 排查。
 |---|---|
 | `references/prompt-rules.md` | Prompt 编译规则与负面约束清单 |
 | `references/animation-rules.md` | 动作节拍、视角差异、anchor sheet、单行条带 |
+| `references/tileset-rules.md` | 地面 tile 的四段链路：写 request、无缝判据、邻接表、地图与导出 |
 | `references/godot-handoff.md` | 导出之后怎么接进 Godot 场景（四条实测出来的必设项） |
 | `docs/PLAN.md` | 完整系统设计 |
 | `docs/adr/` | 关键架构决策及其理由 |
