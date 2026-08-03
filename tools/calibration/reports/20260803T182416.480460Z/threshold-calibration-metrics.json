@@ -1,0 +1,114 @@
+[
+  {
+    "asset": "cal_knight",
+    "key": "cast_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.02120141342756184,
+    "silhouette_variation": 0.08372093023255814
+  },
+  {
+    "asset": "cal_knight",
+    "key": "walk_up",
+    "anchor_drift": 0.5,
+    "height_variation": 0.04336043360433604,
+    "silhouette_variation": 0.12372293560783579
+  },
+  {
+    "asset": "cal_archer",
+    "key": "cast_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.02120141342756184,
+    "silhouette_variation": 0.08372093023255814
+  },
+  {
+    "asset": "cal_archer",
+    "key": "walk_up",
+    "anchor_drift": 0.5,
+    "height_variation": 0.04336043360433604,
+    "silhouette_variation": 0.12372293560783579
+  },
+  {
+    "asset": "cal_mage",
+    "key": "cast_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.02120141342756184,
+    "silhouette_variation": 0.09400444115470022
+  },
+  {
+    "asset": "cal_mage",
+    "key": "walk_up",
+    "anchor_drift": 0.5,
+    "height_variation": 0.04336043360433604,
+    "silhouette_variation": 0.12372293560783579
+  },
+  {
+    "asset": "cal_golem",
+    "key": "cast_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.02120141342756184,
+    "silhouette_variation": 0.08372093023255814
+  },
+  {
+    "asset": "cal_imp",
+    "key": "cast_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.02120141342756184,
+    "silhouette_variation": 0.08372093023255814
+  },
+  {
+    "asset": "cal_slime",
+    "key": "cast_down",
+    "anchor_drift": 0.5,
+    "height_variation": 0.015915119363395226,
+    "silhouette_variation": 0.11223234063499878
+  },
+  {
+    "asset": "cal_fireball",
+    "key": "travel_down",
+    "anchor_drift": 0.45674044265593494,
+    "height_variation": 0.032,
+    "silhouette_variation": 0.1069631983055335
+  },
+  {
+    "asset": "cal_fireball",
+    "key": "impact",
+    "anchor_drift": 0.5,
+    "height_variation": 0.01643835616438356,
+    "silhouette_variation": 0.11818879508825787
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "key": "travel_down",
+    "anchor_drift": 0.45674044265593494,
+    "height_variation": 0.032,
+    "silhouette_variation": 0.1069631983055335
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "key": "impact",
+    "anchor_drift": 0.5,
+    "height_variation": 0.01643835616438356,
+    "silhouette_variation": 0.11818879508825787
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "key": "loop",
+    "anchor_drift": 0.4700944386149004,
+    "height_variation": 0.032520325203252036,
+    "silhouette_variation": 0.08968125337655321
+  },
+  {
+    "asset": "cal_healing_aura",
+    "key": "impact",
+    "anchor_drift": 0.5,
+    "height_variation": 0.015915119363395226,
+    "silhouette_variation": 0.11223234063499878
+  },
+  {
+    "asset": "cal_healing_aura",
+    "key": "loop",
+    "anchor_drift": 0.45674044265593494,
+    "height_variation": 0.032,
+    "silhouette_variation": 0.1069631983055335
+  }
+]

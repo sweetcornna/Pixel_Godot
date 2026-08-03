@@ -1,0 +1,72 @@
+[
+  {
+    "asset": "cal_knight",
+    "contact_sheet": "assets/cal_knight/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_knight/previews/cast_down.gif",
+      "assets/cal_knight/previews/walk_up.gif"
+    ]
+  },
+  {
+    "asset": "cal_archer",
+    "contact_sheet": "assets/cal_archer/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_archer/previews/cast_down.gif",
+      "assets/cal_archer/previews/walk_up.gif"
+    ]
+  },
+  {
+    "asset": "cal_mage",
+    "contact_sheet": "assets/cal_mage/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_mage/previews/cast_down.gif",
+      "assets/cal_mage/previews/walk_up.gif"
+    ]
+  },
+  {
+    "asset": "cal_golem",
+    "contact_sheet": "assets/cal_golem/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_golem/previews/cast_down.gif"
+    ]
+  },
+  {
+    "asset": "cal_imp",
+    "contact_sheet": "assets/cal_imp/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_imp/previews/cast_down.gif"
+    ]
+  },
+  {
+    "asset": "cal_slime",
+    "contact_sheet": "assets/cal_slime/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_slime/previews/cast_down.gif"
+    ]
+  },
+  {
+    "asset": "cal_fireball",
+    "contact_sheet": "assets/cal_fireball/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_fireball/previews/impact.gif",
+      "assets/cal_fireball/previews/travel_down.gif"
+    ]
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "contact_sheet": "assets/cal_lightning_chain/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_lightning_chain/previews/impact.gif",
+      "assets/cal_lightning_chain/previews/loop.gif",
+      "assets/cal_lightning_chain/previews/travel_down.gif"
+    ]
+  },
+  {
+    "asset": "cal_healing_aura",
+    "contact_sheet": "assets/cal_healing_aura/previews/contact-sheet.png",
+    "gifs": [
+      "assets/cal_healing_aura/previews/impact.gif",
+      "assets/cal_healing_aura/previews/loop.gif"
+    ]
+  }
+]
