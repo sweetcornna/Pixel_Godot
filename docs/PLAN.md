@@ -2157,18 +2157,20 @@ tile → 往回解才验得动。合成输入做反例是本仓库的既定做�
 ##### CSV 而不是 base64 + zlib
 
 TMX 的 `<data>` 支持 `csv`、`base64`、`base64+gzip`、`base64+zlib` 四种编码。
-**取 `csv`** —— 理由与 §8.3 拒绝手写 `tile_map_data` 完全一样：本机没有 Tiled
-可验（`which tiled` 为空，也没有 `pytmx`），压缩过的字节流一旦写错，
+**取 `csv`** —— 理由与 §8.3 拒绝手写 `tile_map_data` 完全一样：实现 8.4 当时本机
+没有 Tiled 可验（`which tiled` 为空，也没有 `pytmx`），压缩过的字节流一旦写错，
 肉眼看不出、往回解也只能靠我自己那份解码器自证。CSV 是官方支持的编码，
 写出来的东西**读一眼就知道对不对**，往回解也不依赖任何我自己实现的压缩。
 
-##### 诚实边界：没有真机 Tiled 验证过
+##### 诚实边界：官方加载 + 渲染已补验，GUI 窗口交互未验
 
-和 §8.1 的 Godot TileSet 一样，如实记：**这些文件没有被 Tiled 打开过。**
-本切的保证止于"结构符合文档所述、GID 能往回解回原 tile"，
-不等于"Tiled 一定能正常渲染"。导出说明里也要写这一句。
+8.4 落地当时只能保证"结构符合文档所述、GID 能往回解回原 tile"。2026-08-03
+已用 Tiled 1.11.90 随附的 `tmxrasterizer` 补上官方 libtiled 加载 + 渲染验证：
+它实际跟随 `.tmx` → 外部 `.tsx` → 图集并产出 PNG，逐像素等于独立期望图。
 
-补验路径与 Godot 那条并列，见 `tools/godot-gate/`。
+仍未做的是启动 Tiled GUI 后的窗口、鼠标、菜单、面板与编辑保存交互。就本门槛关心的
+加载与渲染结果而言，和真正打开 GUI 相比只差窗口交互这一层；不把 headless 官方
+渲染说成完整 GUI 测试。补验路径与 Godot 那条并列，见 `tools/tiled-gate/`。
 
 ##### 退出门槛（仅对 8.4 主张）
 
@@ -2207,12 +2209,19 @@ GID 的正反两个方向都写成了函数（`gid_for` / `tile_id_for_gid`）�
 **2026-08-03 补账**：Tiled 导出获得 **pytmx 第三方互证**（`tests/integration/
 test_tiled_pytmx.py`，实现 Codex、审查独立复核）。此前的往回解是编码器与解码器
 同源 —— 两边一起错就一起判通过；pytmx 是独立实现，28 格逐格互证 + 两条篡改反例
-（先本地确认失败再入库，含基线）都成立，且未发现导出 bug。仍欠 Tiled GUI 真机
-打开验证。
+（先本地确认失败再入库，含基线）都成立，且未发现导出 bug。
+
+同日再补 **Tiled 官方渲染器真机门槛**（`tools/tiled-gate/verify.py` 与
+`tests/integration/test_tiled_rasterizer.py`）：期望侧只按源 tile 图与地图逐格
+`tile_id` 合成，不引用项目的 GID 函数；官方侧由 tmxrasterizer/libtiled 解释
+TMX / TSX / 图集。`grass_field` 的 7×4 真实 CLI 导出产物基线 28,672 个 RGBA 像素
+完全一致；GID 全体 `+1` 与 `firstgid 1 -> 0` 两条篡改反例各有 28,672 个差异像素，
+均真实渲染后被判 FAIL。仍欠的只是 Tiled GUI 窗口交互本身，不再欠官方加载与渲染。
 
 > 8.4 只主张"写出去的 Tiled 文件里，每一格都指向它该指向的 tile"。
 > 对象层、多图层、动画 tile 与 terrain 不在本切。Sprint 8 总门槛继续不打勾
-> —— 总门槛第五条要求"Godot 与 Tiled 均可打开"，而两者都还欠一次真机验证。
+> —— 总门槛第五条的 Godot 与 Tiled 官方加载 + 渲染证据均已补齐；若把"打开"
+> 严格限定为人工操作 GUI，Tiled 仍只欠窗口交互本身这一层。
 
 ---
 
