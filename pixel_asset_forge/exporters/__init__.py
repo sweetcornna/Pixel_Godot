@@ -9,10 +9,12 @@ from ..errors import ExportError
 from .base import AnimationView, Exporter, ExportResult, animation_views
 from .generic_json import GenericJsonExporter
 from .godot import GodotExporter
+from .tiled import TiledExporter
 
 EXPORTERS: dict[str, type[Exporter]] = {
     GenericJsonExporter.target: GenericJsonExporter,
     GodotExporter.target: GodotExporter,
+    TiledExporter.target: TiledExporter,
 }
 
 
@@ -21,7 +23,7 @@ def get_exporter(target: str) -> Exporter:
     if cls is None:
         raise ExportError(
             f"未知导出目标：{target}。可选：{', '.join(sorted(EXPORTERS))}。"
-            "（phaser / tiled 排期在 Sprint 7 与 Sprint 8）"
+            "（phaser 尚未排期）"
         )
     return cls()
 
@@ -33,6 +35,7 @@ __all__ = [
     "Exporter",
     "GenericJsonExporter",
     "GodotExporter",
+    "TiledExporter",
     "animation_views",
     "get_exporter",
 ]

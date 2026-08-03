@@ -242,8 +242,9 @@ class GodotExporter(Exporter):
             f"{tres_path.name} 拖到 TileMapLayer 的 Tile Set 属性上。",
             f"图集 {columns}×{rows}，格坐标：{listing}。",
             _FILTER_NOTE,
-            "本 TileSet 尚未在真机 Godot 上验证 —— SpriteFrames 那条链验过，"
-            "这条还没有。首次导入若报错请回报（PLAN §8.1）。",
+            "本 TileSet 已在 Godot 4.7.1 headless 真机验证过（2026-08-02）："
+            "加载、tile_size、每格坐标、图集分格像素、以及地图逐格 set_cell 读回，"
+            "四层全过。重跑见 tools/godot-gate/。",
         ]
         if manifest.tileset.maps:
             notes.append(_tilemap_note(manifest, coords))
