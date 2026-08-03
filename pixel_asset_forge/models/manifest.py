@@ -39,7 +39,17 @@ def _asset_relative_path(value: str) -> str:
             raise ValueError(
                 f"必须是资产目录内的相对路径(不得为绝对路径或包含 `..`):{value!r}"
             )
-    return value
+    # **一律归一成 POSIX 分隔符。** Manifest 是跨平台契约(ADR-001:凭它加上文件
+    # 就能重建全部产物),而各处写路径用的 `str(path.relative_to(root))` 在 Windows
+    # 上给出的是反斜杠 —— 反斜杠在 Linux 上是**合法文件名字符**,那样产出的
+    # Manifest 拿到 Linux 就找不到文件,而且报错会是"文件不存在"这种毫无线索的形态。
+    #
+    # 归一在这里而不是 22 个 `relative_to` 调用点:那 22 处只要漏一处就前功尽弃,
+    # 而这里是所有路径进 Manifest 的唯一收口。读回来的 POSIX 路径在 Windows 上
+    # 照样能用 —— pathlib 接受正斜杠。
+    #
+    # 这个 bug 是 CI 首次在 Windows 上跑全套件时抓到的(PLAN §9.1)。
+    return value.replace("\\", "/")
 
 
 AssetRelativePath = Annotated[str, AfterValidator(_asset_relative_path)]
