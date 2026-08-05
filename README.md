@@ -24,9 +24,24 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
-| 8 | Tileset 与地图 | 🚧 进行中 —— 基础/过渡 tile、像素角落地形、Godot terrain set/peering bits、邻接表、WFC 地图与 Tiled 导出已完成；两引擎官方 headless 路径已真机验证，仍没有可玩示例关卡，Tiled GUI 窗口交互未验 |
+| 8 | Tileset 与地图 | ✅ 完成 —— 基础/过渡 tile、像素角落地形、Godot terrain set/peering bits、邻接表、WFC 地图与 Tiled 导出全部落地；五条总门槛逐条对证（第 4 条的措辞 2026-08-05 由 owner 收窄为「引擎可加载、邻接合法」，理由见 [PLAN §8](docs/PLAN.md)）。第 2 条只主张达成**自动判据层**、第 5 条只主张**官方 headless 加载/渲染口径**；Tiled GUI 窗口交互仍未验，见下「未达标项 3」 |
 | 9 | Skill、MCP、CI 与发布 | ✅ 完成 —— CI 三平台、Skill 防漂移、MCP 6 工具、live gate（真实模型 FAIL→校准→PASS）、发布纵切（twine 双 PASSED + 全新环境装机实证）；六条总退出门槛全部达成 |
 | 10 | Godot 工作站 | ✂️ 范围裁剪（owner 决策 2026-08-03）—— 本项目只做资产生成与自动化；已交付：三 plugin 结构、许可声明、衔接层四条真机背书、`examples/godot-demo/`（真实资产，13 项 VERIFY-OK）；"AI 驱动编辑器开发游戏"不做 |
+
+### Sprint 8 五条总门槛逐条对证
+
+打勾要有账可查，所以逐条列出证据与**主张到哪一层为止**：
+
+| # | 门槛 | 证据 | 主张边界 |
+|---|---|---|---|
+| 1 | Tile 尺寸完全一致 | Manifest、源 tile 与 Godot 的 `tile_size` / `texture_region_size` 三方读回 32×32 | 无保留 |
+| 2 | 基本地面无缝重复 | `tile_seam` / `tile_border` 对同质 base 实跑通过 | **仅自动判据层**；人眼看重复纹理仍靠 contact sheet，不把数值夸大成人工审核 |
+| 3 | 邻接规则可验证 | 从像素推导、随 Manifest 记死、`validate` 重算比对；6×4 地图逐邻接通过 | 无保留 |
+| 4 | 至少一张引擎可加载、邻接合法的示例地图 | `overworld.json` 邻接逐格合法，Godot 4.7.1 headless 逐格 `get_cell_atlas_coords` 读回一致 | 措辞 2026-08-05 由 owner 收窄（原为"可玩"），理由与旧措辞下的"未达成"记录都保留在 [PLAN §8](docs/PLAN.md) |
+| 5 | Godot 与 Tiled 均可打开 | Godot 4.7.1 五层门槛 `GATE-OK`；Tiled 1.11.90 `tmxrasterizer` 逐像素一致 | **仅官方 headless 加载/渲染口径**；两边都没有冒充 GUI 交互测试 |
+
+每条门槛都配有"改坏再跑"的反例实测，记录见 [`tools/godot-gate/`](tools/godot-gate/)
+与 [`tools/tiled-gate/`](tools/tiled-gate/)。
 
 ### 未达标项
 
