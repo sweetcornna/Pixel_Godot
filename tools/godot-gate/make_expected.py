@@ -3,6 +3,19 @@
 **期望值必须来自产物本身**，不能手抄：手抄会把"我以为导出的是什么"验成
 "导出的确实是什么"，而门槛要抓的正是这两者的差。
 
+## 代表 terrain 这条规则为什么在这里重写一遍，而不是 import 生产代码
+
+它与 `exporters/godot.py` 的 `representative_terrain` 是同一条规则，重复本该消掉。
+**试过 import，退回来了**：这个脚本必须能用**裸 `python3`** 跑（下面用法与
+`README.md` 的门槛流程都是这么写的），而 import 生产模块会连带拉进 pydantic 等整套
+依赖，裸 python3 直接 ModuleNotFoundError。门槛能在最朴素的环境跑，本身就是它的价值。
+
+于是保留独立实现，改用**测试**锁住两处一致：`tests/unit/test_godot_gate_expected.py`
+对同一批四角组合逐一比对两边输出。漂移风险是真的 —— 把同票规则从"取首个"改成
+"取末个"，`(grass, grass, dirt, dirt)`（示例里那块过渡 tile 的四角）两边就给出不同
+答案，而门槛会拿着错误的期望去比对、**依然报 GATE-OK**。门槛在自己失效时保持沉默，
+是它能出的最坏故障，所以这条一致性必须有测试守着。
+
 用法：
     python3 tools/godot-gate/make_expected.py <资产目录> > expected.json
 """
@@ -15,8 +28,12 @@ from collections import Counter
 from pathlib import Path
 
 
-def _representative(corners: list[str]) -> str:
-    """与交付契约相同：众数，同票按固定角顺序首个。"""
+def representative_terrain(corners: list[str]) -> str:
+    """四角众数，同票按固定角顺序取首个。
+
+    **必须与 `exporters/godot.py` 的同名函数逐位一致**，由
+    `tests/unit/test_godot_gate_expected.py` 守着。见模块文档说明为什么不 import。
+    """
     counts = Counter(corners)
     largest = max(counts.values())
     return next(corner for corner in corners if counts[corner] == largest)
@@ -49,7 +66,7 @@ def build(asset_dir: Path) -> dict[str, object]:
                 eligible.append(corners)
             terrain_tiles[tile_id] = {
                 "measured_corners": corners,
-                "terrain": None if skipped else _representative(corners),
+                "terrain": None if skipped else representative_terrain(corners),
                 "skipped": skipped,
             }
         names = sorted({corner for corners in eligible for corner in corners})
