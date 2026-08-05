@@ -10,6 +10,8 @@ from .manifest import (
     GridInfo,
     PaletteInfo,
     StaticImageInfo,
+    TilesetTerrainInfo,
+    TileTerrainInfo,
 )
 from .pack import (
     PACK_ASSET_TYPES,
@@ -65,6 +67,8 @@ __all__ = [
     "StaticAssetPack",
     "StaticImageInfo",
     "StyleSpec",
+    "TileTerrainInfo",
+    "TilesetTerrainInfo",
     "ValidationReport",
     "expand_pack",
     "input_fingerprint",

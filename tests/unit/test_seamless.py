@@ -102,6 +102,33 @@ def test_gradient_tile_slips_past_the_border_measurement() -> None:
     assert border_deviation(gradient_tile()) < 1.0
 
 
+def test_transition_axis_and_border_have_measured_discrimination() -> None:
+    """上草下土只豁免垂直轴；水平轴能抓住左右不闭合的斜分界。"""
+    def material(base: tuple[int, int, int], seed: int) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        rgb = np.clip(
+            np.array(base)[None, None, :]
+            + rng.integers(-8, 9, (SIZE, SIZE, 1)),
+            0,
+            255,
+        ).astype(np.uint8)
+        return np.dstack([rgb, np.full((SIZE, SIZE), 255, dtype=np.uint8)])
+
+    grass = material((82, 132, 68), 1)
+    dirt = material((146, 92, 48), 2)
+    valid = np.concatenate([grass[: SIZE // 2], dirt[SIZE // 2 :]], axis=0)
+    slanted = np.empty_like(valid)
+    for x in range(SIZE):
+        boundary = 8 + (16 * x) // (SIZE - 1)
+        slanted[:boundary, x] = grass[:boundary, x]
+        slanted[boundary:, x] = dirt[boundary:, x]
+
+    assert seam_ratio(valid, "horizontal") == pytest.approx(1.08)
+    assert seam_ratio(valid, "vertical") == pytest.approx(7.428305)
+    assert border_deviation(valid) == pytest.approx(0.19828629032258077)
+    assert seam_ratio(slanted, "horizontal") == pytest.approx(3.933333)
+
+
 # -- 失败形态二：带边框 / 暗角 ---------------------------------------------
 
 

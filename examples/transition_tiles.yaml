@@ -1,0 +1,34 @@
+# Sprint 8.5：两块同质 base + 一块从像素核验四角语义的过渡 tile。
+schema_version: "1.0"
+asset_id: transition_tiles
+asset_type: tileset
+description: >-
+  A cohesive top-down grass and dirt terrain family for a temperate forest map,
+  sharing one muted natural palette.
+
+style:
+  perspective: top_down
+  target_size: [32, 32]
+  max_colors: 16
+  shading: two_tone
+  antialiasing: false
+
+tileset:
+  tile_size: [32, 32]
+  tiles:
+    - tile_id: grass_base
+      description: >-
+        Dense short green grass covering the whole square evenly with fine blades.
+      terrain: grass
+    - tile_id: dirt_base
+      description: >-
+        Packed brown forest dirt covering the whole square with fine gravel speckles.
+      terrain: dirt
+    - tile_id: grass_dirt_corner
+      description: >-
+        Grass changing into packed dirt across one soft irregular internal boundary.
+      terrain:
+        corners: [grass, grass, dirt, dirt]
+
+export:
+  targets: [generic-json]

@@ -259,6 +259,10 @@ def compile_tile_prompt(request: AssetRequest, tile: TileSpec) -> CompiledPrompt
     "无边框 / 无暗角 / 不要居中构图"对着 ``border_deviation``，
     "左缘接右缘、上缘接下缘"对着 ``seam_ratio``。光照也必须压平 ——
     请求里的 ``lighting`` 对 tile 会画出一道系统性的明暗梯度，那正是暗角。
+
+    混合角分支的正面约束同样有核验落点：四角材质布局对着
+    ``tile_terrain`` 的逐象限像素重算，外缘角段续接同质 base 对着
+    ``tile_adjacency``。材质边界必须留在 tile 内部，则是为了不把边框误当过渡。
     """
     from ..planning.grid_layout import seed_layout
 
@@ -295,6 +299,41 @@ def compile_tile_prompt(request: AssetRequest, tile: TileSpec) -> CompiledPrompt
             "watermarks, photorealism, soft edges, blur and anti-aliasing."
         ),
     ]
+    corners = tile.terrain_corners
+    if corners is not None and len(set(corners)) > 1:
+        labels = ("top-left", "top-right", "bottom-left", "bottom-right")
+        layout_rule = "Terrain corner layout: " + "; ".join(
+            f"{label} = {terrain}" for label, terrain in zip(labels, corners, strict=True)
+        ) + "."
+        base_descriptions: dict[str, str] = {}
+        for spec in sorted(request.tile_list, key=lambda item: item.tile_id):
+            declared = spec.terrain_corners
+            if declared is not None and len(set(declared)) == 1:
+                # 像素推导也按 tile_id 取同地形的第一块 base；prompt 若选了另一块，
+                # 真实生成所参照的材质与 validate 所比较的像素就会不是同一事实。
+                base_descriptions.setdefault(declared[0], spec.description.strip())
+        reference_rule = "Terrain references:\n" + "\n".join(
+            f"- {terrain}: {' '.join(base_descriptions[terrain].split())}"
+            for terrain in dict.fromkeys(corners)
+        )
+        transition_rules = [
+            layout_rule,
+            reference_rule,
+            (
+                "Transition: keep each named material dominant in its assigned corner. "
+                "Every boundary between materials must run inside the square, never as "
+                "a border, frame or margin along the canvas edge."
+            ),
+            (
+                "Edge matching: each outer-edge segment beside a corner must continue "
+                "seamlessly into the homogeneous base tile for that corner's named "
+                "terrain. Opposite edges are not required to match each other when their "
+                "declared terrains differ."
+            ),
+        ]
+        # 旧的自平铺句要求上下边、左右边互接，对混合角布局会自相矛盾。只替换这一句；
+        # 光照、风格、调色板和否定约束仍逐字复用。
+        blocks[2:4] = [blocks[2], *transition_rules]
     return CompiledPrompt(
         text="\n\n".join(blocks), key_color="", size=layout.size
     )

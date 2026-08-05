@@ -29,6 +29,8 @@ from ..models.manifest import (
     TileAdjacency,
     TileEntry,
     TilesetInfo,
+    TilesetTerrainInfo,
+    TileTerrainInfo,
 )
 from ..models.request import AssetRequest, load_request
 from ..processing.spritesheet import save_png
@@ -38,6 +40,7 @@ from ..providers import ImageProvider, get_provider
 from ..storage import ArtifactStore
 from ..storage.hashes import hash_file
 from ..validation.adjacency import derive_adjacency
+from ..validation.terrain import derive_terrain_corners
 from .common import load_rgb, record_generation, require_source_slot
 
 logger = get_logger("pipeline.tileset")
@@ -150,7 +153,18 @@ def create_tileset(
         )
 
     generated = 0
-    for job in jobs:
+    specs_by_id = {spec.tile_id: spec for spec in request.tile_list}
+    generation_jobs = sorted(
+        jobs,
+        key=lambda job: (
+            bool(
+                (corners := specs_by_id[job.action or ""].terrain_corners) is not None
+                and len(set(corners)) > 1
+            ),
+            job.action or "",
+        ),
+    )
+    for job in generation_jobs:
         if stop_requested is not None and stop_requested.is_set():
             raise PauseRequested(f"{request.asset_id} 停在 {job.id} 之前")
         active_provider = active_provider or get_provider(config)
@@ -176,16 +190,41 @@ def create_tileset(
         max_colors=request.style.max_colors,
     )
 
+    declared_corners = {
+        spec.tile_id: spec.terrain_corners for spec in request.tile_list
+    }
+    terrain_result = None
+    if any(corners is not None for corners in declared_corners.values()):
+        # 请求校验保证每个名字至少有一块同质 base。若同一地形给了多个 base，
+        # 按 tile_id 取第一块，避免请求顺序改变推导结果；阈值尚未真实校准，
+        # 这条确定性选择也会随 measured distances 留在产物里供复核。
+        base_by_terrain: dict[str, np.ndarray] = {}
+        for spec in sorted(request.tile_list, key=lambda item: item.tile_id):
+            corners = spec.terrain_corners
+            if corners is not None and len(set(corners)) == 1:
+                base_by_terrain.setdefault(corners[0], processed.tiles[spec.tile_id])
+        terrain_result = derive_terrain_corners(processed.tiles, base_by_terrain)
+
     tiles_dir = store.frames_of("tiles")
     entries: dict[str, TileEntry] = {}
     for tile_id, image in processed.tiles.items():
         out = save_png(image, tiles_dir / f"{tile_id}.png")
         source_path = store.source_path(tile_id)
+        measured = terrain_result.tiles[tile_id] if terrain_result is not None else None
         entries[tile_id] = TileEntry(
             source_image=str(source_path.relative_to(store.root)),
             image=str(out.relative_to(store.root)),
             source_hash=hash_file(source_path),
             processed_hash=hash_file(out),
+            terrain=(
+                TileTerrainInfo(
+                    declared_corners=declared_corners[tile_id],
+                    measured_corners=measured.corners,
+                    distances=measured.distances,
+                )
+                if measured is not None
+                else None
+            ),
         )
 
     # 邻接推导。**不调用 API** —— 只读刚处理好的 tile，重跑不产生额外计费。
@@ -213,6 +252,14 @@ def create_tileset(
                 calibrated=False,
                 right=adjacency.right,
                 down=adjacency.down,
+            ),
+            terrain=(
+                TilesetTerrainInfo(
+                    distance_max=terrain_result.distance_max,
+                    calibrated=False,
+                )
+                if terrain_result is not None
+                else None
             ),
         ),
         status="processed",

@@ -300,6 +300,7 @@ def test_static_report_explicitly_skips_every_animation_only_check(
         "tile_seam",
         "tile_border",
         "tile_adjacency",
+        "tile_terrain",
         "map_adjacency",
     }
     assert all(check.skip_reason == "static_asset" for check in skipped)

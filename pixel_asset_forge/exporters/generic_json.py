@@ -150,6 +150,29 @@ class GenericJsonExporter(Exporter):
                 },
             }
 
+        terrain = manifest.tileset.terrain
+        if terrain is not None:
+            payload["terrain"] = {
+                "corner_order": [
+                    "top_left", "top_right", "bottom_left", "bottom_right"
+                ],
+                "distance_max": terrain.distance_max,
+                "calibrated": terrain.calibrated,
+                "tiles": {
+                    view.tile_id: {
+                        "declared_corners": (
+                            list(info.declared_corners)
+                            if info.declared_corners is not None
+                            else None
+                        ),
+                        "measured_corners": list(info.measured_corners),
+                        "distances": list(info.distances),
+                    }
+                    for view in views
+                    if (info := manifest.tileset.tiles[view.tile_id].terrain) is not None
+                },
+            }
+
         maps = manifest.tileset.maps
         if maps:
             payload["maps"] = {
@@ -180,8 +203,18 @@ class GenericJsonExporter(Exporter):
                 "adjacency 给出四个方向各自允许的邻居，可直接喂给地图生成器。"
                 f"阈值 seam≤{adjacency.seam_ratio_max}、gap≤{adjacency.edge_color_gap_max}，"
                 + ("已校准。" if adjacency.calibrated else "**未用真实 tile 校准**。")
-                + "只列了基础地面 tile 之间的关系 —— 两种材质判为不相容是正确结果，"
-                "说明中间还缺一类过渡 tile。"
+                + (
+                    "角落地形段已给出过渡 tile 的像素实测语义。"
+                    if terrain is not None
+                    else "只列了基础地面 tile 之间的关系 —— 两种材质判为不相容是"
+                    "正确结果，说明中间还缺一类过渡 tile。"
+                )
+            )
+        if terrain is not None:
+            result.notes.append(
+                "terrain 按 top_left / top_right / bottom_left / bottom_right 给出声明与"
+                f"像素实测；距离阈值 {terrain.distance_max}，"
+                + ("已校准。" if terrain.calibrated else "**未用真实 tile 校准**。")
             )
         if maps:
             listing = "、".join(

@@ -67,6 +67,7 @@ from .metrics import (
 )
 from .mirror_flip import detect_mirror_flips
 from .seamless import measure_seamless
+from .terrain import CORNER_NAMES, derive_terrain_corners
 
 #: 相邻帧差异低于此值即认为"几乎没动"。整组都低于它 → static_animation。
 STATIC_THRESHOLD = 0.01
@@ -446,7 +447,7 @@ def validate_derived(key: str, entry: DerivedAnimation) -> list[Check]:
 _TILESET_APPLICABLE_CHECKS: frozenset[CheckId] = frozenset(
     {
         "artifact_exists", "frame_size", "palette_membership",
-        "tile_seam", "tile_border", "tile_adjacency", "map_adjacency",
+        "tile_seam", "tile_border", "tile_adjacency", "tile_terrain", "map_adjacency",
     }
 )
 
@@ -581,21 +582,82 @@ def validate_tileset(
         )
 
         measured = measure_seamless(image)
-        seam = measured.worst_seam_ratio
-        checks.append(
-            Check.make(
-                "tile_seam",
-                tile_id,
-                CheckResult.PASS if seam <= TILE_SEAM_RATIO_MAX else CheckResult.FAIL,
-                measured=round(seam, 3),
-                threshold=TILE_SEAM_RATIO_MAX,
-                message=(
-                    None
-                    if seam <= TILE_SEAM_RATIO_MAX
-                    else "对边接不上：平铺后每隔一格会有一道可见的突变"
+        declared = tile.terrain.declared_corners if tile.terrain is not None else None
+        transition = declared is not None and len(set(declared)) > 1
+        if transition:
+            # 混合角 tile 只有材质剖面相同的轴才应自接。逐轴推导保留了仍有意义的
+            # seam 闸门，又不会拿上草下土去要求“上边接下边”。
+            assert declared is not None
+            axes = (
+                (
+                    "horizontal",
+                    "水平",
+                    measured.horizontal_seam_ratio,
+                    declared[0] == declared[1] and declared[2] == declared[3],
+                    "top_left == top_right 且 bottom_left == bottom_right",
+                    f"{declared[0]} {'==' if declared[0] == declared[1] else '!='} "
+                    f"{declared[1]}、{declared[2]} "
+                    f"{'==' if declared[2] == declared[3] else '!='} {declared[3]}",
+                ),
+                (
+                    "vertical",
+                    "垂直",
+                    measured.vertical_seam_ratio,
+                    declared[0] == declared[2] and declared[1] == declared[3],
+                    "top_left == bottom_left 且 top_right == bottom_right",
+                    f"{declared[0]} {'==' if declared[0] == declared[2] else '!='} "
+                    f"{declared[2]}、{declared[1]} "
+                    f"{'==' if declared[1] == declared[3] else '!='} {declared[3]}",
                 ),
             )
-        )
+            for axis, axis_label, seam, required, rule, actual_profile in axes:
+                if required:
+                    passed = seam <= TILE_SEAM_RATIO_MAX
+                    checks.append(
+                        Check.make(
+                            "tile_seam",
+                            f"{tile_id}/{axis}",
+                            CheckResult.PASS if passed else CheckResult.FAIL,
+                            measured=round(seam, 3),
+                            threshold=TILE_SEAM_RATIO_MAX,
+                            message=(
+                                None
+                                if passed
+                                else f"{axis_label}对边接不上：平铺后每隔一格会有一道可见的突变"
+                            ),
+                        )
+                    )
+                    continue
+                checks.append(
+                    Check.make(
+                        "tile_seam",
+                        f"{tile_id}/{axis}",
+                        CheckResult.SKIP,
+                        skip_reason="not_applicable",
+                        message=(
+                            f"跳过{axis_label}自接缝：该轴要求 {rule}；"
+                            f"实际为 {actual_profile}，两侧地形剖面不同"
+                        ),
+                    )
+                )
+        else:
+            seam = measured.worst_seam_ratio
+            checks.append(
+                Check.make(
+                    "tile_seam",
+                    tile_id,
+                    CheckResult.PASS if seam <= TILE_SEAM_RATIO_MAX else CheckResult.FAIL,
+                    measured=round(seam, 3),
+                    threshold=TILE_SEAM_RATIO_MAX,
+                    message=(
+                        None
+                        if seam <= TILE_SEAM_RATIO_MAX
+                        else "对边接不上：平铺后每隔一格会有一道可见的突变"
+                    ),
+                )
+            )
+        # 边圈与中心比较对过渡 tile 仍有定义：合法分界在边圈和中心的材质占比相近。
+        # 审计实测健康上草下土仅 0.18～0.21（阈值 4.0），没有豁免依据。
         border = measured.border_deviation
         checks.append(
             Check.make(
@@ -631,6 +693,7 @@ def validate_tileset(
             )
 
     checks.extend(_check_tile_adjacency(entry, usable))
+    checks.extend(_check_tile_terrain(entry, usable))
     checks.extend(_check_maps(root, entry))
     return checks
 
@@ -806,6 +869,105 @@ def _check_tile_adjacency(
                 ),
             )
         )
+    return checks
+
+
+def _check_tile_terrain(
+    entry: TilesetInfo, images: dict[str, np.ndarray]
+) -> list[Check]:
+    """按 Manifest 阈值从当前像素重算角落地形，与声明和旧实测逐角比对。"""
+    if entry.terrain is None:
+        return [
+            Check.make(
+                "tile_terrain",
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="not_applicable",
+                message="这套 tile 的 Manifest 没有角落地形段（8.4 及更早的产物）",
+            )
+        ]
+    if set(images) != set(entry.tiles):
+        missing = sorted(set(entry.tiles) - set(images))
+        return [
+            Check.make(
+                "tile_terrain",
+                "tileset",
+                CheckResult.SKIP,
+                skip_reason="dependency_failed",
+                message=f"这些 tile 缺失或尺寸不符，角落地形无从重算：{missing}",
+            )
+        ]
+
+    base_by_terrain: dict[str, np.ndarray] = {}
+    declared_names: set[str] = set()
+    for tile_id, tile in sorted(entry.tiles.items()):
+        assert tile.terrain is not None
+        declared = tile.terrain.declared_corners
+        if declared is None:
+            continue
+        declared_names.update(declared)
+        if len(set(declared)) == 1:
+            base_by_terrain.setdefault(declared[0], images[tile_id])
+    missing_bases = sorted(declared_names - set(base_by_terrain))
+    if missing_bases or not base_by_terrain:
+        return [
+            Check.make(
+                "tile_terrain",
+                "tileset",
+                CheckResult.FAIL,
+                message=(
+                    f"Manifest 声明的地形缺少同质 base：{missing_bases}"
+                    if missing_bases
+                    else "Manifest 启用了角落地形，却没有任何带声明的同质 base"
+                ),
+            )
+        ]
+
+    fresh = derive_terrain_corners(
+        images,
+        base_by_terrain,
+        distance_max=entry.terrain.distance_max,
+    )
+    checks: list[Check] = []
+    for tile_id, tile in sorted(entry.tiles.items()):
+        assert tile.terrain is not None
+        stored = tile.terrain
+        recomputed = fresh.tiles[tile_id]
+        for index, corner_name in enumerate(CORNER_NAMES):
+            actual = recomputed.corners[index]
+            distance = recomputed.distances[index]
+            declared_corner = (
+                stored.declared_corners[index]
+                if stored.declared_corners is not None
+                else None
+            )
+            table_drift = (
+                stored.measured_corners[index] != actual
+                or abs(stored.distances[index] - distance) > 1e-6
+            )
+            declaration_mismatch = (
+                declared_corner is not None and declared_corner != actual
+            )
+            failed = table_drift or declaration_mismatch
+            reasons: list[str] = []
+            if table_drift:
+                reasons.append(
+                    "Manifest 实测表与当前像素重算不一致"
+                )
+            if declaration_mismatch:
+                reasons.append(
+                    f"声明 {declared_corner}，像素实测 {actual or 'unknown'}"
+                )
+            checks.append(
+                Check.make(
+                    "tile_terrain",
+                    f"{tile_id}/{corner_name}",
+                    CheckResult.FAIL if failed else CheckResult.PASS,
+                    measured=distance,
+                    threshold=entry.terrain.distance_max,
+                    message="；".join(reasons) or None,
+                )
+            )
     return checks
 
 

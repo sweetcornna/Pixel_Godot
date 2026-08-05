@@ -24,7 +24,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
-| 8 | Tileset 与地图 | 🚧 进行中 —— 基础地面 tile、邻接表推导、WFC 地图生成、Tiled 导出已完成；过渡 tile、Godot terrain 未开工，Godot / Tiled 均欠一次真机验证 |
+| 8 | Tileset 与地图 | 🚧 进行中 —— 基础/过渡 tile、像素角落地形标注、邻接表、WFC 地图、Tiled 导出已完成；Godot terrain 未开工；Godot/Tiled 官方加载与渲染已真机验证，Tiled GUI 窗口交互未验 |
 | 9 | Skill、MCP、CI 与发布 | ✅ 完成 —— CI 三平台、Skill 防漂移、MCP 6 工具、live gate（真实模型 FAIL→校准→PASS）、发布纵切（twine 双 PASSED + 全新环境装机实证）；六条总退出门槛全部达成 |
 | 10 | Godot 工作站 | ✂️ 范围裁剪（owner 决策 2026-08-03）—— 本项目只做资产生成与自动化；已交付：三 plugin 结构、许可声明、衔接层四条真机背书、`examples/godot-demo/`（真实资产，13 项 VERIFY-OK）；"AI 驱动编辑器开发游戏"不做 |
 
@@ -192,7 +192,7 @@ uv run pixel-asset create-asset requests/rusty_key.yaml   # 生成 → 处理 �
 （与 `create-character` 同口径）。动画请求会被拒收并指向 `create-character`。
 
 > `requests/rusty_key.yaml` 是你自己写的单资产 request（`init` 会建好 `requests/` 目录）；
-> `examples/` 下目前有角色示例、五份 pack 示例与一份 tileset 示例。
+> `examples/` 下目前有角色示例、五份 pack 示例与两份 tileset 示例。
 
 ### 地面 Tileset
 
@@ -252,8 +252,33 @@ Manifest 只存 `right` / `down` 两个方向（`A 右接 B` 与 `B 右接 A` �
 消费者各写一遍转置。`validate` 的 `tile_adjacency` 会拿当前像素重算比对 ——
 产出之后有人换过 tile 图，它会喊停。
 
-> Godot 的 terrain / peering bits **还没做**：那要求 tileset 里本来就有
-> edge / corner / transition 那几类 tile，眼下一块都没有，硬填只能靠猜。
+#### 过渡 tile 与角落地形
+
+`examples/transition_tiles.yaml` 展示两种声明：`terrain: grass` 表示四角同质；
+`terrain.corners` 固定按 `[top_left, top_right, bottom_left, bottom_right]` 排列。
+每个被引用的地形必须有一块四角同质 base，否则请求直接拒收。
+
+```yaml
+- tile_id: grass_dirt_corner
+  description: Grass changing into dirt across an internal boundary.
+  terrain:
+    corners: [grass, grass, dirt, dirt]
+```
+
+声明不是事实来源。`create-tileset` 会在共享调色板量化之后，把每个象限与各地形
+base 的对应象限比较；距离取逐 RGB 通道与固定联合 RGB 投影上的 Wasserstein-1
+较大值，颜色质量移到相邻色只付小代价，不随共享调色板桶数漂移。12 个合法尺寸/色数
+配置的同材质读数为 `0.816～2.785`，合成样本换错角为 `52.0`，离群最近也有
+`144.152～145.723`；工程阈值 `12.0`，超过就记 `unknown`（JSON 为 `null`），
+不强塞最近地形。阈值与 `calibrated: false` 随 Manifest 记死，`validate` 的
+`tile_terrain` 按产物阈值从当前像素逐角复算。
+
+混合角过渡 tile 按角落剖面逐轴决定自接：水平要求 `tl == tr 且 bl == br`，垂直要求
+`tl == bl 且 tr == br`；只跳过语义不成立的轴。`tile_border` 对所有 tile 保留，
+外缘连接继续由 `tile_adjacency` 重算。角落声明、实测、距离和阈值随 `generic-json` 导出。
+
+> Godot 的 terrain set / peering bits **还没做**。本切只产出了它需要的可信角落表；
+> Godot terrain、Tiled wangset 与 WFC 地形约束都留给后续纵切。
 
 #### 铺一张地图
 

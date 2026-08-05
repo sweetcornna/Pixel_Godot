@@ -207,6 +207,15 @@ def _draw_pose(
 
 
 _TILE_RE = re.compile(r"seamless repeating ground texture", re.IGNORECASE)
+_TILE_MATERIAL_RE = re.compile(r"(?:^|\n\n)Material:\s*(.*?)(?=\n\n)", re.DOTALL)
+_TERRAIN_LAYOUT_RE = re.compile(
+    r"Terrain corner layout:\s*top-left = ([a-z][a-z0-9_]*);\s*"
+    r"top-right = ([a-z][a-z0-9_]*);\s*bottom-left = ([a-z][a-z0-9_]*);\s*"
+    r"bottom-right = ([a-z][a-z0-9_]*)\.",
+)
+_TERRAIN_REFERENCE_RE = re.compile(
+    r"^- ([a-z][a-z0-9_]*): (.+)$", re.MULTILINE
+)
 
 
 def _render_tile(prompt: str, size: tuple[int, int], salt: str) -> bytes:
@@ -237,6 +246,93 @@ def _render_tile(prompt: str, size: tuple[int, int], salt: str) -> bytes:
                 for x in range(bx, min(bx + block, width)):
                     pixels[x, y] = color
 
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _normalise_material(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _base_prompt_from_transition(prompt: str, description: str) -> str | None:
+    """从过渡 prompt 还原同质 base prompt，供跨进程续跑使用。"""
+    blocks = prompt.split("\n\n")
+    by_prefix = {block.split(":", 1)[0]: block for block in blocks if ":" in block}
+    required = ("Set dressing", "Lighting", "Style", "Exclude any border")
+    if len(blocks) < 2 or any(prefix not in by_prefix for prefix in required[:-1]):
+        return None
+    exclusion = next(
+        (block for block in blocks if block.startswith(required[-1])), None
+    )
+    palette = next(
+        (
+            block
+            for block in blocks
+            if block.startswith("Use at most ")
+            or block.startswith("Explicit palette")
+        ),
+        None,
+    )
+    if exclusion is None or palette is None:
+        return None
+    return "\n\n".join(
+        [
+            blocks[0],
+            f"Material: {description}",
+            by_prefix["Set dressing"],
+            (
+                "Tiling: the texture must repeat seamlessly. The content at the left edge "
+                "must continue into the right edge, and the content at the top edge must "
+                "continue into the bottom edge, with no visible join."
+            ),
+            by_prefix["Lighting"],
+            by_prefix["Style"],
+            palette,
+            exclusion,
+        ]
+    )
+
+
+def _render_transition_tile(
+    prompt: str,
+    size: tuple[int, int],
+    materials: dict[str, bytes],
+) -> bytes | None:
+    """按 prompt 的四角声明拼 base 象限；资料不齐就交回旧 Mock 渲染。"""
+    layout = _TERRAIN_LAYOUT_RE.search(prompt)
+    references = {
+        terrain: _normalise_material(description)
+        for terrain, description in _TERRAIN_REFERENCE_RE.findall(prompt)
+    }
+    if layout is None:
+        return None
+    names = layout.groups()
+    if any(name not in references for name in names):
+        return None
+
+    width, height = size
+    mid_x, mid_y = width // 2, height // 2
+    boxes = (
+        (0, 0, mid_x, mid_y),
+        (mid_x, 0, width, mid_y),
+        (0, mid_y, mid_x, height),
+        (mid_x, mid_y, width, height),
+    )
+    canvas = Image.new("RGB", size)
+    for name, box in zip(names, boxes, strict=True):
+        description = references[name]
+        source_bytes = materials.get(description)
+        if source_bytes is None:
+            # 断点若停在 base 之后，新进程里的 Mock 内存缓存是空的。过渡 prompt
+            # 已带齐 base 描述与共同样式，可以还原旧的同质 prompt；仍走同一个
+            # _render_tile，因而不会为了续跑悄悄换一套参照像素。
+            base_prompt = _base_prompt_from_transition(prompt, description)
+            if base_prompt is None:
+                return None
+            source_bytes = _render_tile(base_prompt, size, "")
+        source = Image.open(io.BytesIO(source_bytes)).convert("RGB")
+        canvas.paste(source.crop(box), box[:2])
     buffer = io.BytesIO()
     canvas.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -289,6 +385,7 @@ class MockImageProvider(ImageProvider):
         self.fail_times = fail_times
         self.fail_with = fail_with
         self.calls: list[dict[str, object]] = []
+        self._tile_materials: dict[str, bytes] = {}
 
     def _maybe_fail(self, prompt: str) -> None:
         lowered = prompt.lower()
@@ -306,7 +403,14 @@ class MockImageProvider(ImageProvider):
         self._maybe_fail(prompt)
         self.calls.append({"operation": "generate", "size": size, "model": model})
         request_id = f"mock_gen_{hash_bytes(prompt.encode('utf-8'))[:12]}"
-        return render_mock_image(prompt, size), request_id
+        image = _render_transition_tile(prompt, size, self._tile_materials)
+        if image is None:
+            image = render_mock_image(prompt, size)
+        material = _TILE_MATERIAL_RE.search(prompt) if _TILE_RE.search(prompt) else None
+        if material is not None and _TERRAIN_LAYOUT_RE.search(prompt) is None:
+            # 只缓存，不改变旧 tile 的渲染路径或返回字节。
+            self._tile_materials[_normalise_material(material.group(1))] = image
+        return image, request_id
 
     def _edit(
         self,
