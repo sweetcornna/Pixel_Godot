@@ -170,8 +170,12 @@ class TilesetBuild:
     skipped_terrain_tiles: tuple[str, ...] = ()
 
 
-def _representative_terrain(corners: tuple[str, str, str, str]) -> str:
+def representative_terrain(corners: tuple[str, str, str, str]) -> str:
     """给 Godot 必需的 ``terrain`` 键选一个只来自实测角的代表值。
+
+    **公开的**：`tools/godot-gate/make_expected.py` 生成门槛期望值时要用同一份定义。
+    那边原本抄了一份逐行相同的实现，两处各自漂移时门槛会拿错误的期望比对却依然报
+    GATE-OK —— 相等必须由构造保证，不能各写一遍再指望它们碰巧一致。
 
     Godot 4.7.1 真机对照表明：只有 peering bits、``terrain=-1`` 的 tile 不会被
     ``set_cells_terrain_connect`` 选中。Manifest 没有第五个“中心角”事实，因此取
@@ -233,7 +237,7 @@ def _compile_terrain(
         prefix = f"{col}:{row}/0"
         lines = [
             f"{prefix}/terrain_set = 0",
-            f"{prefix}/terrain = {terrain_index[_representative_terrain(corners)]}",
+            f"{prefix}/terrain = {terrain_index[representative_terrain(corners)]}",
         ]
         lines.extend(
             f"{prefix}/terrains_peering_bit/{key} = {terrain_index[corner]}"
