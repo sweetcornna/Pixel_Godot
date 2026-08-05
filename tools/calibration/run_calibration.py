@@ -42,6 +42,7 @@ from pixel_asset_forge.pipelines import (
     create_character,
 )
 from pixel_asset_forge.pipelines.export import CONTACT_SHEET_NAME
+from pixel_asset_forge.prompts.poses import beats_commanding_size_change
 from pixel_asset_forge.storage import ArtifactStore
 from pixel_asset_forge.validation.metrics import (
     anchor_measurement,
@@ -302,6 +303,73 @@ def budget_rows(matrix: CalibrationMatrix = FULL_MATRIX) -> list[dict[str, Any]]
         }
         for asset in matrix.assets
     ]
+
+
+class ContractConflictError(RuntimeError):
+    """prompt 与阈值互相矛盾。**在花掉第一次调用之前**就该抛。"""
+
+
+def prompt_threshold_conflicts(
+    matrix: CalibrationMatrix = FULL_MATRIX,
+) -> dict[str, dict[str, list[str]]]:
+    """矩阵里"prompt 命令整体缩放、而阈值禁止尺寸变化"的动作。
+
+    2026-08-05 的教训：`loop` 的节拍逐字写着"从最小变到最大",而它的
+    `height_variation` / `silhouette_variation` 阈值恰恰禁止尺寸变化。两份规格
+    从未对账,于是那次 25 次真实调用只换回"样本越线"这一个早就可以静态判定的结论。
+
+    **成对判定,不是只看命令词。** `impact` 同样命令扩张,但它的两项阈值都是豁免
+    (`None`) —— 那是设计如此(爆开消散),不构成矛盾。只有"命令改尺寸"且"阈值管着
+    尺寸"同时成立才算冲突。
+    """
+    conflicts: dict[str, dict[str, list[str]]] = {}
+    for asset in matrix.assets:
+        for sample in asset.actions:
+            action = sample.action
+            if action in conflicts:
+                continue
+            limits = ACTION_THRESHOLDS.get(action)
+            if limits is None:
+                continue
+            # 只有这两项由整体尺寸驱动；anchor_drift 是位置量,与缩放无关。
+            guarded = (
+                limits.height_variation_max is not None
+                or limits.silhouette_variation_max is not None
+            )
+            if not guarded:
+                continue
+            hits = beats_commanding_size_change(action)
+            if hits:
+                conflicts[action] = hits
+    return conflicts
+
+
+def enforce_prompt_threshold_contract(
+    matrix: CalibrationMatrix = FULL_MATRIX,
+    *,
+    emit: Callable[[str], None] = print,
+) -> None:
+    """开跑前自检。有矛盾就抛错,**一次调用都不发**。"""
+    conflicts = prompt_threshold_conflicts(matrix)
+    if not conflicts:
+        emit("prompt 与阈值契约自检：通过（无动作既被命令改尺寸又被尺寸阈值管着）")
+        return
+    lines = [
+        "prompt 与阈值互相矛盾，这样跑下去只会烧掉调用换回一个静态就能得出的结论：",
+    ]
+    for action, hits in sorted(conflicts.items()):
+        limits = ACTION_THRESHOLDS[action]
+        beats = "；".join(f"{name}={words}" for name, words in sorted(hits.items()))
+        lines.append(
+            f"- {action}：节拍命令尺寸变化（{beats}），"
+            f"而阈值 height={limits.height_variation_max} / "
+            f"silhouette={limits.silhouette_variation_max} 正是管尺寸的。"
+        )
+    lines.append(
+        "先改一致再跑：要么把节拍改成尺寸不变、由内部变化区分帧，"
+        "要么把该动作的尺寸阈值改成豁免。**不要靠放宽阈值让越线样本通过。**"
+    )
+    raise ContractConflictError("\n".join(lines))
 
 
 def print_budget(
@@ -826,6 +894,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         enforce_budget(args.max_calls)
     except BudgetExceededError as exc:
+        emit(f"RESULT ERROR（退出码 {EXIT_ERROR}）：{exc}")
+        return EXIT_ERROR
+
+    # 契约自检放在这里：预算已经打印（用户看得到要花多少），但**还没建运行目录、
+    # 也没发出任何一次调用**。矛盾是静态可判定的，没有理由花钱去发现它。
+    try:
+        enforce_prompt_threshold_contract(emit=emit)
+    except ContractConflictError as exc:
         emit(f"RESULT ERROR（退出码 {EXIT_ERROR}）：{exc}")
         return EXIT_ERROR
 
