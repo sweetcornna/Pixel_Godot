@@ -105,6 +105,7 @@ CycleKind = Literal["one_shot", "loop", "gait"]
 
 ExportTarget = Literal["generic-json", "godot", "phaser", "tiled"]
 HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
+TerrainName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
 
 
 class _Base(BaseModel):
@@ -160,11 +161,27 @@ class BackgroundSpec(_Base):
     conflict_hint: str | None = None
 
 
+class TerrainSpec(_Base):
+    """一块 tile 四角的地形，顺序固定为左上、右上、左下、右下。"""
+
+    corners: tuple[TerrainName, TerrainName, TerrainName, TerrainName]
+
+
 class TileSpec(_Base):
     """tileset 里的一块 tile。"""
 
     tile_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
     description: str = Field(min_length=8, max_length=2000)
+    terrain: TerrainName | TerrainSpec | None = None
+
+    @property
+    def terrain_corners(self) -> tuple[str, str, str, str] | None:
+        """把简写统一成 ``[top_left, top_right, bottom_left, bottom_right]``。"""
+        if self.terrain is None:
+            return None
+        if isinstance(self.terrain, str):
+            return (self.terrain,) * 4
+        return self.terrain.corners
 
 
 class TilesetSpec(_Base):
@@ -191,6 +208,23 @@ class TilesetSpec(_Base):
         duplicates = sorted({t for t in ids if ids.count(t) > 1})
         if duplicates:
             raise ValueError(f"tile_id 必须唯一，重复的有：{', '.join(duplicates)}")
+        declared = {
+            terrain
+            for tile in self.tiles
+            for terrain in (tile.terrain_corners or ())
+        }
+        bases = {
+            corners[0]
+            for tile in self.tiles
+            if (corners := tile.terrain_corners) is not None
+            and len(set(corners)) == 1
+        }
+        missing = sorted(declared - bases)
+        if missing:
+            raise ValueError(
+                "每种地形都必须有一块四角同质的 base tile 供像素核验；"
+                f"缺少：{', '.join(missing)}"
+            )
         return self
 
 

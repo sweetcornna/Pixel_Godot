@@ -130,6 +130,7 @@
             "tile_seam",
             "tile_border",
             "tile_adjacency",
+            "tile_terrain",
             "map_adjacency"
           ]
         },

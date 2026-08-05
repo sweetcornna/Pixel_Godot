@@ -29,6 +29,8 @@ from ..schema_registry import check_schema_version, validate_against
 from ..storage.atomic import atomic_write_json
 
 HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
+TerrainName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
+TerrainDistance = Annotated[float, Field(ge=0)]
 
 
 def _asset_relative_path(value: str) -> str:
@@ -203,6 +205,20 @@ class StaticImageInfo(_Base):
     processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
 
 
+class TileTerrainInfo(_Base):
+    """一块 tile 的声明与像素实测角落地形（PLAN §8.5）。"""
+
+    declared_corners: tuple[TerrainName, TerrainName, TerrainName, TerrainName] | None = None
+    measured_corners: tuple[
+        TerrainName | None,
+        TerrainName | None,
+        TerrainName | None,
+        TerrainName | None,
+    ]
+    """``None`` 是 unknown；不用字符串，避免与合法地形名 ``unknown`` 冲突。"""
+    distances: tuple[TerrainDistance, TerrainDistance, TerrainDistance, TerrainDistance]
+
+
 class TileEntry(_Base):
     """tileset 里一块 tile 的原图与成品。"""
 
@@ -210,6 +226,15 @@ class TileEntry(_Base):
     image: AssetRelativePath
     source_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
     processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
+    terrain: TileTerrainInfo | None = None
+    """字段缺席表示请求未声明 terrain，与 8.1/8.2 产物兼容。"""
+
+
+class TilesetTerrainInfo(_Base):
+    """角落地形判定参数；随产物记死，validate 必须按它复算。"""
+
+    distance_max: float = Field(gt=0)
+    calibrated: bool = False
 
 
 class TileAdjacency(_Base):
@@ -284,6 +309,9 @@ class TilesetInfo(_Base):
     adjacency: TileAdjacency | None = None
     """邻接表。8.1 产出的 Manifest 里没有这一项，读的时候必须容许它缺席。"""
 
+    terrain: TilesetTerrainInfo | None = None
+    """角落地形判定参数。8.1/8.2 产物没有这一项，必须容许缺席。"""
+
     maps: dict[str, TileMapEntry] = Field(default_factory=dict)
     """铺好的地图，按名字索引。没跑过 ``create-map`` 就是空的。"""
 
@@ -306,6 +334,19 @@ class TilesetInfo(_Base):
                     f"邻接表 {direction} 漏了这些 tile：{sorted(missing)} —— "
                     "缺一行与'这一行是空的'含义不同，前者是漏算，后者是判定为没有邻居"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _check_terrain_measurements_cover_the_tiles(self) -> TilesetInfo:
+        """启用角落地形后必须整套量完，不能把半张表当成完整事实。"""
+        measured = {tile_id for tile_id, entry in self.tiles.items() if entry.terrain is not None}
+        if self.terrain is None:
+            if measured:
+                raise ValueError("tile 有地形实测，但 tileset 缺少 terrain 判定参数")
+            return self
+        missing = sorted(set(self.tiles) - measured)
+        if missing:
+            raise ValueError(f"terrain 实测漏了这些 tile：{missing}")
         return self
 
     @model_validator(mode="after")

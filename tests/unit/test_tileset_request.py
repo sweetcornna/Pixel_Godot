@@ -83,6 +83,49 @@ def test_duplicate_tile_id_is_rejected() -> None:
         parse_request(data)
 
 
+def test_terrain_shorthand_and_corner_order_are_unambiguous() -> None:
+    data = _tileset_data()
+    data["tileset"]["tiles"][0]["terrain"] = "grass"
+    data["tileset"]["tiles"][1]["terrain"] = "dirt"
+    data["tileset"]["tiles"].append(
+        {
+            "tile_id": "grass_dirt_corner",
+            "description": "Grass above packed dirt with an internal curved boundary.",
+            "terrain": {"corners": ["grass", "grass", "dirt", "dirt"]},
+        }
+    )
+
+    request = parse_request(data)
+    assert request.tile_list[0].terrain_corners == ("grass",) * 4
+    assert request.tile_list[2].terrain_corners == ("grass", "grass", "dirt", "dirt")
+
+
+def test_every_declared_terrain_needs_a_homogeneous_base() -> None:
+    data = _tileset_data()
+    data["tileset"]["tiles"][0]["terrain"] = "grass"
+    data["tileset"]["tiles"][1]["terrain"] = {
+        "corners": ["grass", "grass", "dirt", "dirt"]
+    }
+
+    with pytest.raises(RequestValidationError) as caught:
+        parse_request(data)
+    assert "dirt" in caught.value.format_errors()
+
+
+@pytest.mark.parametrize("terrain", ["G", "a", "grass-dirt", "1grass"])
+def test_terrain_name_uses_the_tile_id_pattern(terrain: str) -> None:
+    data = _tileset_data()
+    data["tileset"]["tiles"][0]["terrain"] = terrain
+    with pytest.raises(RequestValidationError):
+        parse_request(data)
+
+
+def test_omitting_terrain_preserves_the_old_request_shape() -> None:
+    request = parse_request(_tileset_data())
+    assert all(tile.terrain is None for tile in request.tile_list)
+    assert all(tile.terrain_corners is None for tile in request.tile_list)
+
+
 def test_non_tileset_asset_cannot_carry_a_tileset_block() -> None:
     data = _tileset_data()
     data["asset_type"] = "pickup"

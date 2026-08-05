@@ -515,6 +515,9 @@
         "adjacency": {
           "$ref": "#/$defs/tile_adjacency"
         },
+        "terrain": {
+          "$ref": "#/$defs/tileset_terrain"
+        },
         "maps": {
           "type": "object",
           "additionalProperties": {
@@ -544,8 +547,89 @@
         },
         "processed_hash": {
           "$ref": "#/$defs/sha256"
+        },
+        "terrain": {
+          "$ref": "#/$defs/tile_terrain_entry"
         }
       }
+    },
+    "tileset_terrain": {
+      "description": "角落地形像素判定参数。阈值随产物记死；calibrated=false 表示仅有合成样本依据。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distance_max",
+        "calibrated"
+      ],
+      "properties": {
+        "distance_max": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "calibrated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tile_terrain_entry": {
+      "description": "一块 tile 按 [top_left, top_right, bottom_left, bottom_right] 保存的声明、实测与最近距离。null 实测值表示离所有 base 都超过绝对阈值。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "measured_corners",
+        "distances"
+      ],
+      "properties": {
+        "declared_corners": {
+          "$ref": "#/$defs/terrain_corners"
+        },
+        "measured_corners": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            { "$ref": "#/$defs/measured_terrain_name" },
+            { "$ref": "#/$defs/measured_terrain_name" },
+            { "$ref": "#/$defs/measured_terrain_name" },
+            { "$ref": "#/$defs/measured_terrain_name" }
+          ],
+          "items": false
+        },
+        "distances": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            { "type": "number", "minimum": 0 },
+            { "type": "number", "minimum": 0 },
+            { "type": "number", "minimum": 0 },
+            { "type": "number", "minimum": 0 }
+          ],
+          "items": false
+        }
+      }
+    },
+    "terrain_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$"
+    },
+    "measured_terrain_name": {
+      "anyOf": [
+        { "$ref": "#/$defs/terrain_name" },
+        { "type": "null" }
+      ]
+    },
+    "terrain_corners": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        { "$ref": "#/$defs/terrain_name" },
+        { "$ref": "#/$defs/terrain_name" },
+        { "$ref": "#/$defs/terrain_name" },
+        { "$ref": "#/$defs/terrain_name" }
+      ],
+      "items": false
     },
     "tile_adjacency": {
       "description": "哪块 tile 能挨着哪块（PLAN §8.2）。只存 right 与 down —— A 右接 B 与 B 右接 A 是两件事，只有 A 右接 B ⟺ B 左接 A 才是同一件事，所以另两个方向是这两个的转置，现算而不另存。两个阈值随产物记死：不写下来就没法解释这张表是怎么来的。",

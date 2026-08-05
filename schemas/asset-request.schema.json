@@ -151,6 +151,10 @@
       "type": "string",
       "pattern": "^#[0-9A-Fa-f]{6}$"
     },
+    "terrain_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,63}$"
+    },
     "logical_size": {
       "description": "最终逻辑像素尺寸。取值受限于 512×512 单元格可精确下采样的档位（PLAN §2.3）。",
       "enum": [
@@ -199,6 +203,35 @@
                 "type": "string",
                 "minLength": 8,
                 "maxLength": 2000
+              },
+              "terrain": {
+                "description": "可选地形声明。字符串表示四角同质；对象的 corners 顺序固定为 [top_left, top_right, bottom_left, bottom_right]。",
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/terrain_name"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "corners"
+                    ],
+                    "properties": {
+                      "corners": {
+                        "type": "array",
+                        "minItems": 4,
+                        "maxItems": 4,
+                        "prefixItems": [
+                          { "$ref": "#/$defs/terrain_name" },
+                          { "$ref": "#/$defs/terrain_name" },
+                          { "$ref": "#/$defs/terrain_name" },
+                          { "$ref": "#/$defs/terrain_name" }
+                        ],
+                        "items": false
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
