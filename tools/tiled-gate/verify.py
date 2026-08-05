@@ -210,8 +210,13 @@ def _compare(expected: Image.Image, actual_path: Path) -> PixelComparison:
     differing = 0
     first: tuple[int, int] | None = None
     width, height = expected_rgba.size
+    # Pillow 的 load() 标成 PixelAccess | None。实践中不会是 None，但既然进了
+    # mypy 检查范围，就把它判掉而不是压掉 —— 真为 None 时下面会静默按 0 个差异
+    # 通过，那正是这个门槛最不该出现的失败形态。
     expected_pixels = expected_rgba.load()
     actual_pixels = actual.load()
+    if expected_pixels is None or actual_pixels is None:
+        raise GateError("GATE-FAIL 无法读取像素数据（Pillow load() 返回 None）")
     for y in range(height):
         for x in range(width):
             if expected_pixels[x, y] != actual_pixels[x, y]:
