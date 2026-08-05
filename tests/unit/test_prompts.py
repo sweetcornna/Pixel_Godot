@@ -9,8 +9,6 @@ prompt 里明写着 no two cells may be identical，再递重复描述就是自�
 
 from __future__ import annotations
 
-import re
-
 import pytest
 import yaml
 
@@ -27,16 +25,14 @@ from pixel_asset_forge.prompts import (
     numbered_poses,
     pose_sequence,
 )
-from pixel_asset_forge.prompts.poses import POSE_CYCLES
+from pixel_asset_forge.prompts.poses import (
+    POSE_CYCLES,
+    beats_commanding_size_change,
+)
 
 FRAME_COUNTS = (4, 6, 8, 9, 12)
 
-SIZE_CHANGE_COMMANDS = re.compile(
-    r"\b(?:small(?:er|est)?|larg(?:e|er|est)|expand(?:s|ed|ing)?|"
-    r"contract(?:s|ed|ing)?|compact(?:s|ed|ing)?|stretch(?:es|ed|ing)?|"
-    r"elongat(?:e|es|ed|ing)|lengthen(?:s|ed|ing)?|short(?:er|est|en|ens|ened|ening)?)\b",
-    re.IGNORECASE,
-)
+# 判据来自生产模块（校准 harness 的开跑前自检消费同一份），不在测试里另抄一遍。
 
 
 # -- 姿势序列 --------------------------------------------------------------
@@ -55,12 +51,7 @@ def test_every_combination_is_unique_and_complete(action: str, frames: int) -> N
 @pytest.mark.parametrize("action", ("loop", "travel"))
 def test_effect_cycles_never_command_whole_sprite_size_changes(action: str) -> None:
     """循环特效靠内部流动区分帧，不能命令整个 sprite 缩放来制造运动。"""
-    violations = {
-        beat.name: SIZE_CHANGE_COMMANDS.findall(beat.description)
-        for beat in POSE_CYCLES[action].beats
-        if SIZE_CHANGE_COMMANDS.search(beat.description)
-    }
-    assert not violations, violations
+    assert not beats_commanding_size_change(action)
 
 
 def test_walk_is_built_from_two_mirrored_half_cycles() -> None:

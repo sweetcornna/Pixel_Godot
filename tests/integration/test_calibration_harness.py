@@ -173,3 +173,53 @@ def test_mock_pipeline_writes_recomputable_metrics_and_preserves_constants(
     assert manifest["constants"]["unchanged"] is True
     assert manifest["constants"]["sha256_before"] == manifest["constants"]["sha256_after"]
     assert "未修改 `constants.py`" in run.report_path.read_text(encoding="utf-8")
+
+
+# -- 开跑前的 prompt/阈值契约自检 ----------------------------------------
+
+
+def test_the_current_matrix_has_no_prompt_threshold_conflict() -> None:
+    """现有节拍与阈值不矛盾 —— 这条是自检本身的健康基线。"""
+    assert calibration.prompt_threshold_conflicts() == {}
+
+
+def test_a_beat_that_commands_resizing_under_a_size_threshold_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """把 loop 换回 8.5 之前那套"从最小变到最大"的节拍，自检必须拦住。
+
+    2026-08-05 的教训：那次 25 次真实调用只换回"样本越线"这一个**静态就能判定**
+    的结论。矛盾是 loop 的节拍命令整体缩放，而它的 height/silhouette 阈值正是
+    管尺寸的。自检要在**发出第一次调用之前**说出这件事。
+    """
+    from pixel_asset_forge.prompts import poses
+
+    contradictory = poses.PoseCycle(
+        beats=poses._beats(
+            ("SMALL", "the shape is at its smallest and brightest"),
+            ("GROWING", "the shape expands towards its mid size"),
+            ("LARGE", "the shape is at its largest and dimmest"),
+            ("SHRINKING", "the shape contracts back towards its mid size"),
+        )
+    )
+    monkeypatch.setitem(poses.POSE_CYCLES, "loop", contradictory)
+
+    with pytest.raises(calibration.ContractConflictError) as exc:
+        calibration.enforce_prompt_threshold_contract(emit=lambda _message: None)
+    message = str(exc.value)
+    assert "loop" in message
+    # 要指名到具体的拍与命中词，否则用户不知道该改哪一句。
+    assert "SMALLEST" in message.upper()
+    # 且必须明确禁止"靠放宽阈值让它通过"这条歪路。
+    assert "不要靠放宽阈值" in message
+
+
+def test_an_exempt_action_may_command_resizing_without_conflict() -> None:
+    """impact 本就命令扩张，但它两项尺寸阈值都是豁免 —— 设计如此，不算矛盾。
+
+    判据必须成对（命令改尺寸 **且** 阈值管着尺寸）；只看命令词会把正确设计误判成冲突。
+    """
+    from pixel_asset_forge.prompts.poses import beats_commanding_size_change
+
+    assert beats_commanding_size_change("impact")
+    assert "impact" not in calibration.prompt_threshold_conflicts()

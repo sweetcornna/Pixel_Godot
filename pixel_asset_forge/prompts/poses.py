@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -303,6 +304,37 @@ POSE_CYCLES: dict[str, PoseCycle] = {
         ),
     ),
 }
+
+#: 命令**整个 sprite 改变尺寸**的词。
+#:
+#: 定义在生产模块而不是测试里：既要给"节拍不许命令整体缩放"那条单测用，也要给
+#: 校准 harness 的开跑前自检用（花钱之前就能判定 prompt 与阈值有没有互相矛盾）。
+#: 同一份判据留两个副本必然漂移 —— 8.5 的 `pair_seam_ratio` 委托给 `seam_ratio`
+#: 是同一个理由：相等要construct出来，不能各写一遍再指望它们碰巧一致。
+SIZE_CHANGE_COMMANDS = re.compile(
+    r"\b(?:small(?:er|est)?|larg(?:e|er|est)|expand(?:s|ed|ing)?|"
+    r"contract(?:s|ed|ing)?|compact(?:s|ed|ing)?|stretch(?:es|ed|ing)?|"
+    r"elongat(?:e|es|ed|ing)|lengthen(?:s|ed|ing)?|short(?:er|est|en|ens|ened|ening)?)\b",
+    re.IGNORECASE,
+)
+
+
+def beats_commanding_size_change(action: str) -> dict[str, list[str]]:
+    """某个动作的节拍里，命令整体尺寸变化的拍 → 命中的词。
+
+    空字典表示这个动作的节拍不含尺寸命令词。查不到动作时返回空字典 ——
+    自定义动作没有内置节拍，谈不上矛盾。
+    """
+    cycle = POSE_CYCLES.get(action)
+    if cycle is None:
+        return {}
+    hits: dict[str, list[str]] = {}
+    for beat in cycle.beats:
+        found = SIZE_CHANGE_COMMANDS.findall(beat.description)
+        if found:
+            hits[beat.name] = found
+    return hits
+
 
 #: 画的是**特效本身**而不是一具身体的动作。
 #:
