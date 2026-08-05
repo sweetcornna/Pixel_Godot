@@ -38,6 +38,9 @@ PLAN §8 Sprint 6 的退出门槛"用真实 Godot 工程验证，不是理论上
 
 from __future__ import annotations
 
+import colorsys
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..models.manifest import AssetManifest
@@ -56,6 +59,19 @@ from .generic_json import build_atlas, build_tile_atlas
 
 #: Godot 4 的资源格式版本。
 RESOURCE_FORMAT = 3
+
+# Godot 4.7.1 的公开 API 保存后给出的四个 Corners peering bit 键。对应的 Manifest
+# 顺序在 8.5 已固定为 top_left / top_right / bottom_left / bottom_right。
+_TERRAIN_CORNER_KEYS = (
+    "top_left_corner",
+    "top_right_corner",
+    "bottom_left_corner",
+    "bottom_right_corner",
+)
+
+# 实测见 tools/godot-gate/probe_terrain_format.gd：0 是 Corners and Sides，1 才是
+# 只匹配四角的 Corners；2 是 Sides。任务只有四角事实，所以必须写 1。
+_TERRAIN_MODE_CORNERS = 1
 
 
 def _resource_id(prefix: str, index: int) -> str:
@@ -146,12 +162,93 @@ def _handoff_doc(manifest: AssetManifest, lines: list[str]) -> str:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TilesetBuild:
+    """TileSet 文本及未被强行解释的 unknown tile。"""
+
+    text: str
+    skipped_terrain_tiles: tuple[str, ...] = ()
+
+
+def _representative_terrain(corners: tuple[str, str, str, str]) -> str:
+    """给 Godot 必需的 ``terrain`` 键选一个只来自实测角的代表值。
+
+    Godot 4.7.1 真机对照表明：只有 peering bits、``terrain=-1`` 的 tile 不会被
+    ``set_cells_terrain_connect`` 选中。Manifest 没有第五个“中心角”事实，因此取
+    四角众数；同票时按 8.5 固定角顺序取首个，绝不借用声明或发明新地形。
+    """
+    counts = Counter(corners)
+    largest = max(counts.values())
+    return next(corner for corner in corners if counts[corner] == largest)
+
+
+def _terrain_color(index: int) -> str:
+    """给 Godot 编辑器的 terrain 列表一个稳定、可区分的显示色。"""
+    hue = (index * 0.6180339887498949) % 1.0
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.55, 0.85)
+    return f"Color({red:.6f}, {green:.6f}, {blue:.6f}, 1)"
+
+
+def _compile_terrain(
+    manifest: AssetManifest,
+    coords: dict[str, tuple[int, int]],
+) -> tuple[list[str], dict[str, list[str]], tuple[str, ...]]:
+    """把像素实测角编译成 resource 与逐格属性。"""
+    assert manifest.tileset is not None
+    if manifest.tileset.terrain is None:
+        return [], {}, ()
+
+    measured_by_tile: dict[str, tuple[str, str, str, str]] = {}
+    skipped: list[str] = []
+    for tile_id in sorted(coords):
+        terrain = manifest.tileset.tiles[tile_id].terrain
+        assert terrain is not None  # TilesetInfo 已保证启用 terrain 后逐块有实测段。
+        measured = terrain.measured_corners
+        if any(corner is None for corner in measured):
+            skipped.append(tile_id)
+            continue
+        # Peering bits 的唯一事实来源是 measured_corners。declared_corners 即使存在，
+        # 也只属于 validate 的声明核对层，绝不能在这里参与索引或取值。
+        measured_by_tile[tile_id] = measured  # type: ignore[assignment]
+
+    terrain_names = sorted(
+        {corner for corners in measured_by_tile.values() for corner in corners}
+    )
+    terrain_index = {name: index for index, name in enumerate(terrain_names)}
+
+    resource_lines: list[str] = []
+    if terrain_names:
+        resource_lines.append(f"terrain_set_0/mode = {_TERRAIN_MODE_CORNERS}")
+        for index, name in enumerate(terrain_names):
+            resource_lines.extend(
+                (
+                    f'terrain_set_0/terrain_{index}/name = "{name}"',
+                    f"terrain_set_0/terrain_{index}/color = {_terrain_color(index)}",
+                )
+            )
+
+    cell_lines: dict[str, list[str]] = {}
+    for tile_id, corners in measured_by_tile.items():
+        col, row = coords[tile_id]
+        prefix = f"{col}:{row}/0"
+        lines = [
+            f"{prefix}/terrain_set = 0",
+            f"{prefix}/terrain = {terrain_index[_representative_terrain(corners)]}",
+        ]
+        lines.extend(
+            f"{prefix}/terrains_peering_bit/{key} = {terrain_index[corner]}"
+            for key, corner in zip(_TERRAIN_CORNER_KEYS, corners, strict=True)
+        )
+        cell_lines[tile_id] = lines
+    return resource_lines, cell_lines, tuple(skipped)
+
+
 def build_tileset(
     manifest: AssetManifest,
     coords: dict[str, tuple[int, int]],
     texture_path: str,
     tile_size: tuple[int, int],
-) -> str:
+) -> TilesetBuild:
     """生成 Godot 4 的 ``TileSet`` ``.tres`` 文本。
 
     结构与 ``SpriteFrames`` 不同，容易写错的是这两处：
@@ -161,6 +258,9 @@ def build_tileset(
        Godot 认为那一格是空的 —— 图集里明明有图，编辑器里却选不中。
     2. **``tile_size`` 在 ``[resource]`` 段、``texture_region_size`` 在 source 段**，
        两个都要写且必须一致；只写其一时 Godot 会用默认的 16×16 去切图集。
+    3. **terrain 的模式、四角键与 ``terrain`` 自身键均由 Godot 4.7.1 探针生成后
+       重载确认**，不是从格式示例猜的。复现见
+       ``tools/godot-gate/probe_terrain_format.gd``。
 
     ``ext_resource`` 同样用相对路径，理由与 SpriteFrames 那边一致
     （整目录复制进项目也要能加载）。
@@ -169,8 +269,18 @@ def build_tileset(
     source_id = "TileSetAtlasSource_000"
     width, height = tile_size
 
-    cells = "\n".join(f"{col}:{row}/0 = 0" for col, row in sorted(coords.values()))
-    return (
+    terrain_resource, terrain_cells, skipped = _compile_terrain(manifest, coords)
+    cell_blocks: list[str] = []
+    for tile_id, (col, row) in sorted(coords.items(), key=lambda item: item[1]):
+        lines = [f"{col}:{row}/0 = 0"]
+        lines.extend(terrain_cells.get(tile_id, ()))
+        cell_blocks.append("\n".join(lines))
+    cells = "\n".join(cell_blocks)
+    terrain_section = "\n".join(terrain_resource)
+    if terrain_section:
+        terrain_section += "\n"
+
+    text = (
         f'[gd_resource type="TileSet" load_steps=3 format={RESOURCE_FORMAT}]\n\n'
         f'[ext_resource type="Texture2D" path="{texture_path}" id="{atlas_id}"]\n\n'
         f'[sub_resource type="TileSetAtlasSource" id="{source_id}"]\n'
@@ -179,8 +289,10 @@ def build_tileset(
         f"{cells}\n\n"
         f"[resource]\n"
         f"tile_size = Vector2i({width}, {height})\n"
+        f"{terrain_section}"
         f'sources/0 = SubResource("{source_id}")\n'
     )
+    return TilesetBuild(text=text, skipped_terrain_tiles=skipped)
 
 
 def _tilemap_note(manifest: AssetManifest, coords: dict[str, tuple[int, int]]) -> str:
@@ -227,11 +339,11 @@ class GodotExporter(Exporter):
         texture_name = f"{manifest.asset_id}.png"
         result.files.append(save_png(atlas, out_dir / texture_name))
 
-        tres = build_tileset(
+        built = build_tileset(
             manifest, coords, texture_name, manifest.tileset.tile_size
         )
         tres_path = out_dir / f"{manifest.asset_id}_tileset.tres"
-        tres_path.write_text(tres, encoding="utf-8")
+        tres_path.write_text(built.text, encoding="utf-8")
         result.files.append(tres_path)
 
         listing = "、".join(
@@ -242,10 +354,23 @@ class GodotExporter(Exporter):
             f"{tres_path.name} 拖到 TileMapLayer 的 Tile Set 属性上。",
             f"图集 {columns}×{rows}，格坐标：{listing}。",
             _FILTER_NOTE,
-            "本 TileSet 已在 Godot 4.7.1 headless 真机验证过（2026-08-02）："
+            "本 TileSet 已在 Godot 4.7.1 headless 真机验证过（2026-08-05）："
             "加载、tile_size、每格坐标、图集分格像素、以及地图逐格 set_cell 读回，"
-            "四层全过。重跑见 tools/godot-gate/。",
+            "再加 terrain set/逐格 terrain 与 peering bits 读回，五层全过。"
+            "重跑见 tools/godot-gate/。",
         ]
+        if manifest.tileset.terrain is not None:
+            notes.append(
+                "terrain set 使用 Corners 模式；terrain 与四个 peering bits 只由 Manifest "
+                "的 measured_corners 编译，Godot 4.7.1 读回门槛见 tools/godot-gate/。"
+            )
+        if built.skipped_terrain_tiles:
+            notes.append(
+                "这些 tile 的 measured_corners 含 unknown，已整块跳过 terrain 标注，"
+                "仍保留为普通图集格；unknown 没有映射成任何具体地形："
+                + "、".join(built.skipped_terrain_tiles)
+                + "。"
+            )
         if manifest.tileset.maps:
             notes.append(_tilemap_note(manifest, coords))
         result.notes.extend(notes)

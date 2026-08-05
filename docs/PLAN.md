@@ -2387,6 +2387,122 @@ Manifest 与导出 JSON 的过渡角均为声明 = 实测 `[grass, grass, dirt, 
 > 8.5 只主张“每个角是什么地形这张表来自像素、可独立复算”。Godot terrain 导出
 > 仍归 8.6，Sprint 8 总门槛继续不打勾。
 
+#### 8.6 Godot terrain set 与 peering bits · ✅ 已完成
+
+本切只消费 8.5 已落盘的角落事实：Godot 导出新增一个 Corners terrain set，把每格的
+四个 `measured_corners` 编译为四个 peering bits，并在 Godot 4.7.1 headless 中逐项
+读回。不做 Tiled wangset、WFC 地形约束铺图或缺失过渡 tile 的自动补全。
+
+##### 格式事实先由引擎给出
+
+`tools/godot-gate/probe_terrain_format.gd` 完全不读取 Python 导出器：它通过 Godot
+公开 API 创建 terrain set/TileData，让 4.7.1 自己保存 `.tres`，再重载并调用
+`get_terrain_set_mode()`、`get_terrain()`、`get_terrain_peering_bit()` 与
+`set_cells_terrain_connect()`。实测结果：
+
+- `TERRAIN_MODE_MATCH_CORNERS_AND_SIDES / MATCH_CORNERS / MATCH_SIDES` 分别为
+  `0 / 1 / 2`，所以本切写 mode `1`；
+- 四角邻居枚举为右下 `3`、左下 `7`、左上 `11`、右上 `15`，引擎保存出的文本键是
+  `bottom_right_corner`、`bottom_left_corner`、`top_left_corner`、
+  `top_right_corner`；
+- 只设 `terrain_set` 与四角时，tile 重载后四角值正确但 `terrain=-1`，
+  terrain-connect 选格为 `(-1,-1)`；补 `terrain=0` 后选中 `(1,0)`。因此逐格
+  `terrain` 不是可省略的显示字段。
+
+导出器按 `measured_corners` 中实际出现的名称排序建 terrain 索引；
+`declared_corners` 不参与名称、索引、代表 terrain 或 peering bit 的任何一步。四个 bit
+严格按 8.5 固定顺序映射。Godot 还需要一个标量 `terrain`，而 Manifest 没有第五个
+“中心地形”事实：这里取四个实测角的众数，同票按固定角顺序首个。这个值保证属于实测
+集合，不会借声明补一个中心，也不会发明新 terrain。
+
+任一实测角为 `None` 时选择**整块跳过 terrain 标注**：普通图集格仍保留，但不写
+`terrain_set`、`terrain` 或任何 peering bit；导出 notes 与随目录落盘的
+`GODOT-README.md` 明列 tile id 和原因。这样其余已知 tile 仍可导出使用，又没有把
+unknown 偷偷解释成某个具体地形。正常 CLI 链中，声明存在而像素为 unknown 本来就会被
+`tile_terrain` 拦在 export 之前；这个分支仍为直接导出/旧产物提供保守防线。
+
+##### 第五层真机门槛与反例
+
+`make_expected.py` 从 Manifest 读取 measured 四角、从 generic-json 只读取独立的图集
+坐标/地图，`verify_tileset.gd` 在原四层之后新增：terrain set 数量、mode、terrain
+数量与名称；逐格 `terrain_set` / `terrain`；四个 corner peering bit。unknown 格改用
+`is_valid_terrain_peering_bit()` 确认四角无效，避免在 `terrain_set=-1` 时调用 getter
+制造 Godot 引擎错误日志。
+
+mock 真链 `create-tileset → create-map 6×4 → validate → export godot + generic-json`
+得到 3 块 32×32 tile、2 个 terrain；validate 为 `31 pass / 0 fail / 20 skip`。
+Godot 4.7.1 最终输出：
+
+```text
+GATE TileSet 载入成功：3 块 tile，格 (32, 32)
+GATE 地图 6×4 逐格读回一致
+GATE terrain 读回：1 个 set，逐格 terrain/四角 peering bits 已核对
+GATE-OK TileSet 五层全部通过
+```
+
+两个反例均从正常 gate 工程复制，只改变一个被读回的事实：
+
+1. `grass_dirt_corner/top_left_corner` 从 grass 索引 `1` 改成 dirt 索引 `0`，Godot
+   exit 1：`grass_dirt_corner/top_left peering bit 0 ≠ 1（grass）`。
+2. `terrain_set_0/mode` 从 Corners `1` 改成 Corners and Sides `0`。mode 0 是合法值，
+   loader **静默接受并成功加载**；第五层读回后 exit 1：
+   `terrain set 0 mode 0 ≠ 1（Corners）`。这证明“资源能加载”抓不住模式选错。
+
+另把过渡 tile 一个 measured 角改成 `null` 后重导，交付 notes 明示跳过，该格在真机
+读回为 `terrain_set=-1` / `terrain=-1` 且四个 corner bit 均无效，五层 gate 通过。
+完整命令、输出与沙箱 XDG 边界见
+`tools/godot-gate/reports/20260805-terrain.md`。
+
+实现过程中挖出并修掉的问题，按“只跑命令发现不了”排序：
+
+1. **合法的错误 mode 会被 loader 静默接受。** 只以 exit 0/资源非 null 为判据时，
+   Corners and Sides 会被误报成功；必须通过 API 读回 mode 与期望事实比较。
+2. **peering bits 能保存、重载，不代表 terrain 画笔会选中。** 没有逐格 `terrain` 时四角
+   getter 全对，只有实际跑 terrain-connect 才看到 `(-1,-1)`；因此补了实测派生的代表值。
+3. **unknown 格直接读 peering getter 会“报错并返回 -1”。** 首版 gate 因返回值正确而
+   最终 GATE-OK，却留下四条引擎 ERROR；改用 `is_valid_terrain_peering_bit()` 后日志干净。
+4. **正常纵切里 declared 恰好等于 measured，证明不了导出事实来源。** 新测试人工构造
+   declared 全为 `stone`、measured 仍为 grass/dirt 的 Manifest，断言 `.tres` 不出现
+   stone，四个索引仍逐位等于 measured；否则“铁律”只是注释。
+5. **既有地图层的成功打印与 `layer.free()` 缩进在逐行循环内。** Godot 的延迟释放让旧
+   命令仍能通过，输出也看不出重复释放；扩展脚本时修到循环外，使第四层只在整图读完后
+   报告一次并释放一次。
+
+##### 本地门禁实况（2026-08-05）
+
+- 项目规定范围的 ruff：`All checks passed!`。
+- `uv run mypy pixel_asset_forge`：`Success: no issues found in 83 source files`。
+- 正式 `uv run pytest` 在前 23 项后约 90 秒无输出，命中任务书预告的 asyncio
+  `to_thread` 沙箱假挂起；没有失败，也没有删除、跳过或修改测试。
+- 保留全部测试，只通过 `/tmp/pixel-skill-asyncio/sitecustomize.py` 在该进程同步执行
+  `asyncio.to_thread` 后，全量为
+  `1132 passed, 5 skipped in 340.69s (0:05:40)`。相对任务基线 `1129 / 5` 净增本切
+  3 个通过测试，既有 passed 无回退、skip 不增；定向 transition 套件另为
+  `9 passed in 4.47s`。补偿结果证明全部断言通过，但不冒充正常线程池行为证据。
+
+仓库真实 `.git` 在本沙箱只读，无法把 HEAD 从 `main` 切到 `feat/godot-terrain`；本轮
+使用 `/tmp/pixel-skill-git-8.6` 的 Git 元数据镜像记录该分支状态，源码改动仍留在目标
+工作树且没有 commit。本轮期间真实 `main` 又由外部推进到 `debe525`（只改 README 与
+阈值校准文档），没有把那项外部更新冒充本切，也没有回退它。接手时须按指定基线处理
+这个分叉并创建 `feat/godot-terrain`，再提交当前 8.6 改动。
+
+##### Sprint 8 五条总门槛复核
+
+1. **Tile 尺寸一致：达成。** Manifest、三块源 tile 与 Godot 的 `tile_size` /
+   `texture_region_size` 均读回 32×32；既有尺寸测试和五层 gate 同时覆盖。
+2. **基本地面无缝重复：达成自动判据层。** `tile_seam` / `tile_border` 对同质 base
+   实跑通过，contact sheet 仍保留给人工看重复纹理；不把自动数值夸大成人眼审核。
+3. **邻接规则可验证：达成。** adjacency 从像素推导并随 Manifest 固定，validate 会从
+   当前像素重算；本次 6×4 地图逐邻接验证、Godot 逐格读回均通过。
+4. **至少一张可玩示例地图：未达成。** 现有 `overworld.json` 是可复现且邻接合法的
+   tile 数据，也能在引擎 API 中逐格放置，但仓库没有玩家、碰撞、目标或可运行关卡；
+   不能把“生成了一张 6×4 数据地图”改名成“可玩”。
+5. **Godot 与 Tiled 均可打开：达成官方 headless 加载/渲染口径。** Godot 4.7.1
+   五层读取通过；Tiled 1.11.90 的 tmxrasterizer 官方 libtiled 路径逐像素通过。
+   两边都没有冒充 GUI 交互测试，Tiled 窗口交互仍未验证。
+
+所以 Sprint 8 五条**没有全部达成**，总门槛继续不打勾；明确缺口是可玩示例关卡。
+
 ---
 
 ### Sprint 9：Skill、MCP、CI 与发布
