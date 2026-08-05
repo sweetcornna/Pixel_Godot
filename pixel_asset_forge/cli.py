@@ -748,12 +748,24 @@ def create_map_command(
     console.print(table)
 
     if result.single_material:
-        console.print(
-            "\n[yellow]![/yellow] 整张地图只有一种材质。这是[bold]正确结果[/bold]："
-            "这套 tile 的邻接表是对角矩阵（材质之间接不上），而地图网格是连通的，"
-            "\n  于是整张图必然同一种材质。要铺出多材质地图，缺的是[bold]过渡 tile[/bold]，"
-            "不是更好的求解器。"
-        )
+        # 两种成因要分开说。8.5 之前只有第一种，所以旧提示一律说"去补过渡 tile"；
+        # 现在过渡 tile 可用了，仍会因为均匀抽落进平凡解（实测 18% 的 seed），
+        # 那时候让用户去补已经存在的东西就是把人指向错的方向。
+        if result.transition_possible:
+            console.print(
+                "\n[yellow]![/yellow] 整张地图只有一种材质，但这套 tile "
+                "[bold]接得上别的材质[/bold]。"
+                "\n  这一次是塌缩时恰好每格都抽到了同一种 tile —— 换 [bold]--seed[/bold] 再试，"
+                "\n  或在请求里给过渡 tile 设更大的 [bold]weight[/bold]（实测把过渡块权重提到 6"
+                "\n  可把单材质地图的出现率从 18% 压到 2%）。"
+            )
+        else:
+            console.print(
+                "\n[yellow]![/yellow] 整张地图只有一种材质。这是[bold]正确结果[/bold]："
+                "这套 tile 的邻接表是对角矩阵（材质之间接不上），而地图网格是连通的，"
+                "\n  于是整张图必然同一种材质。要铺出多材质地图，缺的是[bold]过渡 tile[/bold]，"
+                "不是更好的求解器，也不是调 weight。"
+            )
     console.print("\n[dim]下一步：validate 查地图里有没有非法接缝。[/dim]")
 
 

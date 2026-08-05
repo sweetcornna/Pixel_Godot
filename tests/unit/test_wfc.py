@@ -126,3 +126,81 @@ def test_right_and_down_must_cover_the_same_tiles() -> None:
     """覆盖的 tile 对不上说明表本身是坏的，猜一个补上只会把错误藏起来。"""
     with pytest.raises(ProcessingError, match="不一致"):
         generate_map({"a": ["a"], "b": ["b"]}, {"a": ["a"]}, width=3, height=3, seed=1)
+
+
+# -- 频率权重（§8.7）------------------------------------------------------
+
+
+def tile_counts(rows):  # type: ignore[no-untyped-def]
+    from collections import Counter
+
+    return Counter(tile for row in rows for tile in row)
+
+
+def test_no_weights_reproduces_the_unweighted_map_cell_for_cell() -> None:
+    """不传权重必须逐格复现旧产物。
+
+    ``random.choices`` 与 ``random.choice`` 消耗随机数的方式不同，所以即使权重
+    全相等，"顺手都走 choices"也会让所有既有 seed 产出另一张地图 —— 那会静默
+    作废"同 seed 同地图"的既有记录。这条测试盯的就是那个诱惑。
+    """
+    plain = generate_map(RIGHT, DOWN, width=9, height=6, seed=31)
+    explicit_none = generate_map(RIGHT, DOWN, width=9, height=6, seed=31, weights=None)
+    empty = generate_map(RIGHT, DOWN, width=9, height=6, seed=31, weights={})
+
+    assert explicit_none.rows == plain.rows
+    assert empty.rows == plain.rows
+
+
+def test_weight_shifts_the_distribution_towards_the_favoured_tile() -> None:
+    """把 dirt 的权重压到很低，它在同一批 seed 上必须明显变少。"""
+    seeds = range(40)
+    plain = sum(
+        tile_counts(generate_map(RIGHT, DOWN, width=8, height=6, seed=s).rows)["dirt"]
+        for s in seeds
+    )
+    starved = sum(
+        tile_counts(
+            generate_map(
+                RIGHT, DOWN, width=8, height=6, seed=s,
+                weights={"dirt": 0.01, "grass": 4.0},
+            ).rows
+        )["dirt"]
+        for s in seeds
+    )
+    assert starved < plain, (starved, plain)
+
+
+def test_weights_cannot_make_an_illegal_seam_legal() -> None:
+    """权重只影响抽哪个，不参与相容性判定 —— water 接不上任何东西，
+
+    给它天大的权重也不能让它和别的 tile 相邻。
+    """
+    for seed in range(12):
+        result = generate_map(
+            RIGHT, DOWN, width=8, height=6, seed=seed,
+            weights={"water": 10_000.0, "grass": 0.001, "dirt": 0.001, "edge": 0.001},
+        )
+        assert illegal_pairs(result.rows, RIGHT, DOWN) == (0, 0)
+
+
+def test_all_zero_weights_fall_back_to_uniform_instead_of_raising() -> None:
+    """全零权重等于没表达偏好，不该让 random.choices 抛 ValueError。"""
+    result = generate_map(
+        RIGHT, DOWN, width=6, height=4, seed=5,
+        weights={tile: 0.0 for tile in RIGHT},
+    )
+    assert illegal_pairs(result.rows, RIGHT, DOWN) == (0, 0)
+
+
+def test_a_weight_for_an_unknown_tile_is_refused() -> None:
+    """静默忽略会让"我调了权重却没反应"变成查不出来的问题。"""
+    with pytest.raises(ProcessingError) as exc:
+        generate_map(RIGHT, DOWN, width=4, height=4, seed=0, weights={"lava": 3.0})
+    assert "lava" in exc.value.message
+
+
+def test_a_negative_weight_is_refused() -> None:
+    with pytest.raises(ProcessingError) as exc:
+        generate_map(RIGHT, DOWN, width=4, height=4, seed=0, weights={"dirt": -1.0})
+    assert "负数" in exc.value.message
