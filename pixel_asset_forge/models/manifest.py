@@ -172,16 +172,16 @@ class GridInfo(_Base):
     rows: int = Field(ge=1, le=3)
 
     cell: tuple[int, int]
-    """**实际**单元格尺寸，不是名义 512×512。"""
+    """原图居中裁成网格整倍数后的**实际**单元格尺寸，不是名义 512×512。"""
 
     requested_size: tuple[int, int] | None = None
     """提交给 API 的尺寸。"""
 
     actual_size: tuple[int, int] | None = None
-    """实际返回图尺寸。
+    """端点实际返回、且保存到 ``source_image`` 的原图尺寸（裁剪前）。
 
-    端点不保证按请求尺寸返回且不报错（Sprint 0 / A-1）。切帧按比例进行，
-    没有这个字段就无法离线复现当初的格线位置。
+    端点不保证按请求尺寸返回且不报错（Sprint 0 / A-1）。离线处理从这张原图
+    确定性地重放居中裁剪与比例切帧；记录裁后尺寸反而会与保存的原图不一致。
     """
 
     @property

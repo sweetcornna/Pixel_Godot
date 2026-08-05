@@ -214,7 +214,7 @@ def test_manifest_records_the_size_snapping(asset_dir: Path) -> None:
     assert grid.actual_size == (1774, 887)
     assert grid.requested_size == (2048, 1024)
     assert grid.snapped is True
-    assert grid.cell == (444, 444)  # 实际格子，不是名义 512
+    assert grid.cell == (443, 443)  # 居中裁成整倍数后的实际格子，不是名义 512
 
 
 def test_manifest_stays_schema_valid(asset_dir: Path) -> None:

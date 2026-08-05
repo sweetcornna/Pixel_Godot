@@ -107,7 +107,7 @@ def test_proportional_boxes_tile_the_image_without_gaps_or_overlap() -> None:
 
 def test_actual_cell_is_recorded_not_the_nominal_512() -> None:
     """Manifest 记录名义 512 的话，process 就无法离线复现切帧。"""
-    assert grid_for_frames(8).actual_cell((1774, 887)) == (444, 444)
+    assert grid_for_frames(8).actual_cell((1774, 887)) == (443, 443)
     assert grid_for_frames(8).actual_cell((1536, 1024)) == (384, 512)
 
 
