@@ -13,14 +13,19 @@ import logging
 import os
 import shutil
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from pixel_asset_forge.config import API_KEY_ENV_VARS, Config, load_config
+from pixel_asset_forge.config import (
+    Config,
+    environment_secrets,
+    load_config,
+    redact_secret_values,
+)
 from pixel_asset_forge.models.request import load_request
 from pixel_asset_forge.models.validation import (
     Check,
@@ -152,12 +157,9 @@ def enforce_budget(max_calls: int, planned_calls: int = PLANNED_CALLS) -> None:
         )
 
 
-def redact_text(text: str, secrets: Iterable[str]) -> str:
-    """输出前删掉环境里的 Key；长 Key 先替换，避免短值破坏长值匹配。"""
-    redacted = text
-    for secret in sorted({value for value in secrets if value}, key=len, reverse=True):
-        redacted = redacted.replace(secret, "[REDACTED]")
-    return redacted
+# 委托给生产模块：calibration 那边原本有一份逐行相同的实现。密钥脱敏不该有第二个
+# 副本 —— 两边漂移的后果是某一侧漏掉一种形态、把 Key 写进日志。
+redact_text = redact_secret_values
 
 
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
@@ -172,8 +174,7 @@ def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
     return value
 
 
-def api_key_values(env: Mapping[str, str]) -> tuple[str, ...]:
-    return tuple(value for name in API_KEY_ENV_VARS if (value := env.get(name, "").strip()))
+api_key_values = environment_secrets
 
 
 def install_log_redaction(secrets: Sequence[str]) -> None:

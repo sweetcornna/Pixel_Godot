@@ -19,7 +19,7 @@ import os
 import shutil
 import sys
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,7 +30,12 @@ import numpy as np
 import yaml
 from PIL import Image
 
-from pixel_asset_forge.config import API_KEY_ENV_VARS, Config, load_config
+from pixel_asset_forge.config import (
+    Config,
+    environment_secrets,
+    load_config,
+    redact_secret_values,
+)
 from pixel_asset_forge.constants import ACTION_DEFAULTS, ACTION_THRESHOLDS, Direction
 from pixel_asset_forge.models.manifest import AssetManifest
 from pixel_asset_forge.models.request import AssetType, Locomotion
@@ -390,15 +395,10 @@ def print_budget(
     )
 
 
-def redact_text(value: str, secrets: Iterable[str]) -> str:
-    redacted = value
-    for secret in sorted({item for item in secrets if item}, key=len, reverse=True):
-        redacted = redacted.replace(secret, "[REDACTED]")
-    return redacted
-
-
-def _environment_secrets(env: Mapping[str, str]) -> tuple[str, ...]:
-    return tuple(value for name in API_KEY_ENV_VARS if (value := env.get(name, "").strip()))
+# 脱敏与"环境里有哪些 Key 值"都委托给生产模块 —— 这是密钥处理，两边各写一份时
+# 某一侧漏掉一种形态就会把 Key 写进日志。见 config.redact_secret_values 的说明。
+redact_text = redact_secret_values
+_environment_secrets = environment_secrets
 
 
 def _install_log_redaction(secrets: Sequence[str]) -> None:
