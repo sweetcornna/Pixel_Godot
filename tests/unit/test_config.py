@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+import pixel_asset_forge.config as config_module
 from pixel_asset_forge.config import Config, load_config
 from pixel_asset_forge.errors import ConfigError, MissingApiKeyError
 
@@ -88,7 +90,10 @@ def test_non_integer_env_value_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_api_key_comes_from_env_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_key_comes_from_env_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert Config.api_key() is None
@@ -106,8 +111,9 @@ def test_project_key_var_wins_over_openai_var(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_missing_key_error_names_the_env_vars_not_the_value(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(MissingApiKeyError) as exc:
@@ -148,6 +154,52 @@ def test_dotenv_whitelist_is_loaded_from_parent_and_beats_yaml(
     assert config.model == "dotenv-model"
     assert config.max_retries == 5
     assert any("项目级 .env" in source for source in config.sources)
+
+
+@pytest.mark.parametrize(
+    ("dotenv_line", "expected_model"),
+    [
+        ("export PIXEL_ASSET_MODEL=export-model\n", "export-model"),
+        ("export   PIXEL_ASSET_MODEL=spaced-export-model\n", "spaced-export-model"),
+        ("export PIXEL_ASSET_MODEL='quoted export model'\n", "quoted export model"),
+    ],
+)
+def test_dotenv_accepts_shell_export_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dotenv_line: str,
+    expected_model: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PIXEL_ASSET_MODEL", raising=False)
+    write(tmp_path / ".env", dotenv_line)
+
+    config = load_config(user_config=tmp_path / "none.yaml", env={})
+
+    assert config.model == expected_model
+    assert "PIXEL_ASSET_MODEL" not in os.environ
+
+
+@pytest.mark.parametrize(
+    ("dotenv_line", "would_be_key"),
+    [("exportkey=1\n", "key"), ("exported_thing=1\n", "ed_thing")],
+)
+def test_dotenv_does_not_strip_export_from_variable_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dotenv_line: str,
+    would_be_key: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write(tmp_path / ".env", dotenv_line)
+    # Extending the whitelist makes a naive removeprefix("export") change public config.
+    monkeypatch.setattr(config_module, "_DOTENV_KEYS", {would_be_key})
+    monkeypatch.setattr(config_module, "_ENV_FIELDS", {would_be_key: "max_retries"})
+
+    config = load_config(user_config=tmp_path / "none.yaml", env={})
+
+    assert config.max_retries == Config().max_retries
+    assert not any("项目级 .env" in source for source in config.sources)
 
 
 def test_real_environment_beats_dotenv_for_config_fields(

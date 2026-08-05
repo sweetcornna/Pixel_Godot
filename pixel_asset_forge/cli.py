@@ -33,8 +33,10 @@ from .config import (
     PROJECT_CONFIG_NAME,
     PROJECT_ENV_NAME,
     Config,
+    _read_dotenv,
     _read_yaml,
     find_project_config,
+    find_project_env,
     load_config,
 )
 from .constants import (
@@ -410,6 +412,14 @@ def doctor(
         found = config_path or find_project_config()
         row("配置来源", True, " → ".join(config.sources))
         row("项目配置", True, str(found) if found else "未找到（使用默认值）", warn=found is None)
+        dotenv_path = find_project_env(found.parent if found is not None else None)
+        if dotenv_path is not None and not _read_dotenv(dotenv_path):
+            row(
+                "项目 .env",
+                True,
+                "文件存在但未匹配白名单；检查变量名和 KEY=value 格式",
+                warn=True,
+            )
         row("provider / model", True, f"{config.provider} / {config.model}")
         row("output_dir", True, str(config.output_dir.resolve()))
         row(

@@ -187,10 +187,15 @@ def test_unknown_provider_lists_the_valid_options() -> None:
     assert "mock" in exc.value.message
 
 
-def test_openai_backend_requires_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_backend_requires_a_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from pixel_asset_forge.errors import MissingApiKeyError
 
     monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # 同 test_full_offline_run_without_an_api_key：Key 还能来自 cwd 向上找到的项目
+    # `.env`，所以"没有 Key"这个前提必须靠换到空目录来保证，不能只清环境变量。
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(MissingApiKeyError):
         build_backend(Config(provider="openai"))
