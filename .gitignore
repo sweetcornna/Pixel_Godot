@@ -19,3 +19,7 @@ tools/live-gate/runs/
 
 # 校准 harness 同一约定：原图/GIF 留本地，量化报告镜像到 reports/ 入库
 tools/calibration/runs/
+
+# 另一个项目（h3/ComfyUI 宣传片）的脚本借放在这里，不属于本仓库；
+# 不入库，也让 `ruff check .` 不去 lint 它（ruff 默认遵守 .gitignore）。
+tools/promo/
