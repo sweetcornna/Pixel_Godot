@@ -185,6 +185,8 @@ def _read_dotenv(path: Path) -> dict[str, str]:
             continue
         key, raw_value = line.split("=", 1)
         key = key.strip()
+        if key.startswith("export") and key[len("export") : len("export") + 1].isspace():
+            key = key[len("export") :].lstrip()
         if key not in _DOTENV_KEYS:
             continue
 

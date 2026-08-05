@@ -116,7 +116,9 @@ export PIXEL_ASSET_API_KEY=...     # 或 OPENAI_API_KEY
 
 有效优先级为：命令行覆盖 > 真实环境变量 > 项目 `.env` > 项目 YAML >
 用户级 YAML > 内置默认值。`.env` 从当前目录向上查找，只加载
-`PIXEL_ASSET_*` 配置白名单与上述两个 Key 变量；YAML 配置或请求文件中仍然
+`PIXEL_ASSET_*` 配置白名单与上述两个 Key 变量。读取时允许变量名前带 shell 风格的
+`export ` 前缀（`export` 后可有多个空格）；`init` 仍写入普通 `KEY=value` 格式。
+YAML 配置或请求文件中仍然
 **绝不允许出现 API Key**。`pixel-asset doctor` 会说明 Key 来自环境变量还是
 `.env` 文件，但永远不打印 Key 本身。
 

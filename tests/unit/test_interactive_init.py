@@ -191,3 +191,12 @@ def test_doctor_reports_dotenv_key_source_without_printing_value(project: Path) 
     assert result.exit_code == EXIT_OK
     assert ".env 文件" in result.stdout
     assert secret not in result.stdout
+
+
+def test_doctor_warns_when_dotenv_has_no_recognized_keys(project: Path) -> None:
+    (project / ".env").write_text("NOT_A_PIXEL_SETTING=unused-test-value\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == EXIT_OK
+    assert "未匹配白名单" in result.stdout

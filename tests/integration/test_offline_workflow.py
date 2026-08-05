@@ -62,6 +62,10 @@ def test_full_offline_run_without_an_api_key(
 ) -> None:
     monkeypatch.delenv("PIXEL_ASSET_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # 只清环境变量不够：`Config.api_key()` 还会从 cwd 逐级向上找项目 `.env`，
+    # 而开发机上 `pixel-asset init` 正好在仓库根写了一份带 Key 的 `.env`。
+    # 不换到空目录，这个测试的前提就是"碰巧没人配过 Key"，CI 绿只是因为 CI 没有 `.env`。
+    monkeypatch.chdir(tmp_path)
     assert Config.api_key() is None
 
     request = load_request(examples_dir / "slime.yaml")
