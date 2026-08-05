@@ -10,13 +10,19 @@ import numpy as np
 import pytest
 
 from pixel_asset_forge.errors import ProcessingError
-from pixel_asset_forge.planning import GridLayout, grid_for_frames
+from pixel_asset_forge.planning import (
+    GridLayout,
+    grid_for_frames,
+    seed_layout,
+    strip_for_frames,
+)
 from pixel_asset_forge.processing import (
     BOTTOM_CENTER,
     align_frames,
     anchor_drift,
     assert_uniform_size,
     block_median_resize,
+    center_crop_to_grid,
     content_anchor,
     content_bounds,
     crop_all,
@@ -47,11 +53,34 @@ def marked_grid(layout: GridLayout, size: tuple[int, int]) -> np.ndarray:
     """每格填一个唯一的灰度值，切帧正确与否一眼可判。"""
     width, height = size
     img = np.zeros((height, width, 4), dtype=np.uint8)
+    cropped_width = (width // layout.cols) * layout.cols
+    cropped_height = (height // layout.rows) * layout.rows
+    left = (width - cropped_width) // 2
+    top = (height - cropped_height) // 2
     for index in range(layout.frames):
-        x0, y0, x1, y1 = layout.cell_box(index, size)
+        x0, y0, x1, y1 = layout.cell_box(index, (cropped_width, cropped_height))
+        x0, x1 = x0 + left, x1 + left
+        y0, y1 = y0 + top, y1 + top
         img[y0:y1, x0:x1, :3] = 10 * (index + 1)
         img[y0:y1, x0:x1, 3] = 255
     return img
+
+
+def legacy_split_grid(image: np.ndarray, layout: GridLayout) -> list[np.ndarray]:
+    """修复前的比例切帧，作为 no-op 与反例测试的明确基线。"""
+    height, width = image.shape[:2]
+    return [
+        np.ascontiguousarray(image[y0:y1, x0:x1])
+        for x0, y0, x1, y1 in layout.boxes((width, height))
+    ]
+
+
+def subject_positions(frames: list[np.ndarray]) -> list[tuple[float, float]]:
+    positions = []
+    for frame in frames:
+        ys, xs = np.nonzero(frame)
+        positions.append((float(xs.mean()), float(ys.mean())))
+    return positions
 
 
 # -- 切帧 -----------------------------------------------------------------
@@ -74,17 +103,123 @@ def test_split_follows_the_actual_size_not_the_requested_one() -> None:
     frames = split_grid(marked_grid(layout, (1774, 887)), layout)
     total = sum(f.shape[0] * f.shape[1] for f in normalize_cell_sizes(frames))
     assert total > 0
-    # 每格尺寸应接近 1774/4 × 887/2，而不是 512×512
-    assert frames[0].shape[1] in (443, 444)
-    assert frames[0].shape[0] in (443, 444)
+    # 居中裁到 1772×886 后，每格精确 443×443，而不是名义 512×512。
+    assert {frame.shape[:2] for frame in frames} == {(443, 443)}
 
 
-def test_normalize_makes_every_frame_identical_in_size() -> None:
-    """尺寸不一致的帧组装成 spritesheet 会整体错位。"""
+def test_normalize_remains_an_identity_safety_net_after_exact_split() -> None:
+    """整倍数裁剪让第二层统一尺寸成为恒等操作，但这层安全网仍保留。"""
     layout = grid_for_frames(6)
     frames = split_grid(marked_grid(layout, (1537, 1025)), layout)
-    assert len({f.shape[:2] for f in frames}) > 1  # 取整让格子差 1px
-    assert len({f.shape[:2] for f in normalize_cell_sizes(frames)}) == 1
+    normalized = normalize_cell_sizes(frames)
+    assert len({f.shape[:2] for f in frames}) == 1
+    assert all(
+        np.array_equal(before, after)
+        for before, after in zip(frames, normalized, strict=True)
+    )
+
+
+def test_normalize_still_corrects_independently_supplied_uneven_frames() -> None:
+    normalized = normalize_cell_sizes([rgba(5, 7), rgba(6, 6)])
+    assert {frame.shape[:2] for frame in normalized} == {(5, 6)}
+
+
+def test_center_crop_distributes_remainders_across_both_sides() -> None:
+    layout = GridLayout(frames=24, cols=6, rows=4)
+    image = np.arange(13 * 15, dtype=np.uint8).reshape(13, 15)
+
+    cropped = center_crop_to_grid(image, layout)
+
+    # Width remainder 3 -> left 1/right 2; height remainder 1 -> top 0/bottom 1.
+    assert np.array_equal(cropped, image[0:12, 1:13])
+
+
+@pytest.mark.parametrize(
+    ("size", "cols", "rows"),
+    [
+        ((1774, 887), 4, 2),
+        ((2103, 748), 6, 1),
+        ((1717, 916), 6, 1),
+        ((1902, 827), 4, 1),
+        ((1537, 1025), 3, 2),
+        ((101, 103), 7, 5),
+    ],
+)
+def test_center_crop_makes_every_grid_line_deviation_exactly_zero(
+    size: tuple[int, int], cols: int, rows: int
+) -> None:
+    width, height = size
+    layout = GridLayout(frames=cols * rows, cols=cols, rows=rows)
+    cropped = center_crop_to_grid(rgba(height, width), layout)
+    cropped_height, cropped_width = cropped.shape[:2]
+
+    deviations = [
+        abs(round(line * cropped_width / cols) - line * cropped_width / cols)
+        for line in range(cols + 1)
+    ] + [
+        abs(round(line * cropped_height / rows) - line * cropped_height / rows)
+        for line in range(rows + 1)
+    ]
+
+    assert max(deviations) == 0
+    assert {frame.shape[:2] for frame in split_grid(rgba(height, width), layout)} == {
+        (cropped_height // rows, cropped_width // cols)
+    }
+
+
+NOMINAL_LAYOUTS = [
+    *(pytest.param(strip_for_frames(frames), id=f"strip-{frames}") for frames in range(1, 7)),
+    *(
+        pytest.param(grid_for_frames(frames), id=f"grid-{frames}")
+        for frames in (4, 6, 8, 9, 12)
+    ),
+    pytest.param(seed_layout(), id="seed"),
+]
+
+
+@pytest.mark.parametrize("layout", NOMINAL_LAYOUTS)
+def test_nominal_sizes_are_byte_identical_to_legacy_split(layout: GridLayout) -> None:
+    width, height = layout.size
+    image = (np.arange(width * height, dtype=np.uint32) % 251).astype(np.uint8)
+    image = image.reshape(height, width)
+
+    cropped = center_crop_to_grid(image, layout)
+    before = legacy_split_grid(image, layout)
+    after = split_grid(image, layout)
+
+    assert cropped is image
+    assert len(before) == len(after)
+    assert all(
+        old.shape == new.shape and old.tobytes() == new.tobytes()
+        for old, new in zip(before, after, strict=True)
+    )
+
+
+def test_center_crop_eliminates_subject_position_error() -> None:
+    """修复前主体位置误差大于零；居中整倍数裁剪后严格归零。"""
+    width, height = 1774, 887
+    layout = grid_for_frames(8)
+    cell_width, cell_height = width // layout.cols, height // layout.rows
+    left = (width - cell_width * layout.cols) // 2
+    top = (height - cell_height * layout.rows) // 2
+    within_x, within_y = 100, 120
+    image = np.zeros((height, width), dtype=np.uint8)
+
+    for index in range(layout.frames):
+        col, row = index % layout.cols, index // layout.cols
+        x = left + col * cell_width + within_x
+        y = top + row * cell_height + within_y
+        image[y : y + 5, x : x + 5] = 255
+
+    expected = (within_x + 2.0, within_y + 2.0)
+    legacy = subject_positions(normalize_cell_sizes(legacy_split_grid(image, layout)))
+    exact = subject_positions(normalize_cell_sizes(split_grid(image, layout)))
+    legacy_error = max(np.hypot(x - expected[0], y - expected[1]) for x, y in legacy)
+    exact_error = max(np.hypot(x - expected[0], y - expected[1]) for x, y in exact)
+
+    assert legacy_error == pytest.approx(2**0.5)
+    assert legacy_error > 0
+    assert exact_error == 0
 
 
 def test_assert_uniform_size_rejects_mismatch() -> None:

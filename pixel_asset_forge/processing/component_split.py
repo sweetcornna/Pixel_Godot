@@ -46,6 +46,7 @@ from scipy.ndimage import find_objects, label
 from ..errors import ProcessingError
 from ..logging_utils import get_logger
 from ..planning.grid_layout import GridLayout
+from .frame_split import split_grid
 
 logger = get_logger("processing.component_split")
 
@@ -260,14 +261,10 @@ def _shared_viewports(
 
 def _slot_frames(rgba: np.ndarray, layout: GridLayout, *, stable: bool) -> list[np.ndarray]:
     """等分切格。``stable=True`` 时共用垂直范围，避免基线抖动。"""
-    height, width = rgba.shape[:2]
-    crops = []
-    for index in range(layout.frames):
-        x0, y0, x1, y1 = layout.cell_box(index, (width, height))
-        crops.append(rgba[y0:y1, x0:x1])
+    crops = split_grid(rgba, layout)
 
     if not stable:
-        return [np.ascontiguousarray(c) for c in crops]
+        return crops
 
     tops, bottoms = [], []
     for crop in crops:

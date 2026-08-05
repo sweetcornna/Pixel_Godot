@@ -85,7 +85,11 @@ class GenerationResult:
 
     @property
     def size_snapped(self) -> bool:
-        """端点是否静默改了尺寸。为 True 时切帧必须按 ``actual_size`` 的比例进行。"""
+        """端点是否静默改了尺寸。
+
+        为 True 时切帧必须按 ``actual_size`` 而非 ``requested_size`` 推格线：先把
+        原图居中裁到行列数的整倍数，再按比例切（见 ``frame_split.split_grid``）。
+        """
         return self.requested_size != self.actual_size
 
     @property

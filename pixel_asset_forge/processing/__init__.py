@@ -32,7 +32,12 @@ from .component_split import (
 )
 from .crop import ContentBox, content_bounds, crop, crop_all, union_bounds
 from .despill import despill, spill_ratio
-from .frame_split import assert_uniform_size, normalize_cell_sizes, split_grid
+from .frame_split import (
+    assert_uniform_size,
+    center_crop_to_grid,
+    normalize_cell_sizes,
+    split_grid,
+)
 from .palette import (
     PaletteResult,
     extract_palette,
@@ -79,6 +84,7 @@ __all__ = [
     "assert_uniform_size",
     "background_mask",
     "block_median_resize",
+    "center_crop_to_grid",
     "cleanup_frames",
     "color_distance",
     "compose_spritesheet",

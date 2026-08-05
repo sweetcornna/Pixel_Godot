@@ -10,6 +10,8 @@
 > 实测端点**不保证按请求尺寸返回**：请求 2048×1024，两次分别返回 1536×1024 与 1774×887，
 > 且不报任何错。因此切帧**必须按比例**（`col/cols × 实际宽度`），
 > 绝不能按 512px 绝对偏移 —— 后者会让每一帧都静默错位。
+> 非整除的实际尺寸会在处理层先居中裁到网格整倍数，再继续按比例切帧；
+> 这是消除格线取整误差的收尾，不是对比例切帧的替代。
 >
 > 请求尺寸从此只承担两个作用：表达期望的长短边比、以及本地合规自检。
 """
@@ -126,12 +128,13 @@ class GridLayout:
         return [self.cell_box(i, size) for i in range(self.frames)]
 
     def actual_cell(self, size: tuple[int, int]) -> tuple[int, int]:
-        """实际图上的单元格尺寸。写入 ``manifest.animations[*].grid.cell``。
+        """居中裁成网格整倍数后的实际单元格尺寸。写入 manifest。
 
-        记录的必须是**实际**值而非名义 512 —— 否则 ``process`` 无法离线复现切帧。
+        记录的必须是**实际**值而非名义 512。源图原尺寸另存于 ``actual_size``；
+        ``process`` 从原图重放相同的确定性居中裁剪后，会得到这里记录的精确格子。
         """
         width, height = size
-        return (round(width / self.cols), round(height / self.rows))
+        return (width // self.cols, height // self.rows)
 
     def describe(self) -> str:
         return (

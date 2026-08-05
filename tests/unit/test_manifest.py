@@ -196,7 +196,7 @@ def test_grid_records_actual_size_not_the_nominal_one(tmp_path: Path) -> None:
         animations={
             "walk_down": GeneratedAnimation(
                 fps=10, loop=True,
-                grid=GridInfo(cols=4, rows=2, cell=(444, 444),
+                grid=GridInfo(cols=4, rows=2, cell=(443, 443),
                               requested_size=(2048, 1024), actual_size=(1774, 887)),
                 frames=["frames/walk_down/00.png"],
             )
@@ -205,7 +205,7 @@ def test_grid_records_actual_size_not_the_nominal_one(tmp_path: Path) -> None:
     loaded = AssetManifest.load(manifest.save(tmp_path / "m.json"))
     grid = loaded.animations["walk_down"].grid
     assert grid.actual_size == (1774, 887)
-    assert grid.cell == (444, 444)
+    assert grid.cell == (443, 443)
     assert grid.snapped is True
 
 
