@@ -11,6 +11,7 @@ API Key 只从环境变量或项目级 ``.env`` 读，**永远不从 YAML 配置
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
@@ -31,6 +32,30 @@ USER_CONFIG_PATH = Path.home() / ".config" / "pixel-asset" / "config.yaml"
 
 #: 按序探测，第一个非空的胜出。
 API_KEY_ENV_VARS = ("PIXEL_ASSET_API_KEY", "OPENAI_API_KEY")
+
+
+def environment_secrets(env: Mapping[str, str]) -> tuple[str, ...]:
+    """环境里所有非空的 API Key **实际值**。
+
+    与 :func:`..errors.redact` 分工不同：那边按**模式**猜疑似密钥，覆盖面广但会漏
+    掉长得不像密钥的值；这边拿到的是确切值，可以精确替换。两者互补，都要有。
+    """
+    return tuple(value for name in API_KEY_ENV_VARS if (value := env.get(name, "").strip()))
+
+
+def redact_secret_values(text: str, secrets: Iterable[str]) -> str:
+    """把文本里出现的 Key 实际值换成 ``[REDACTED]``。
+
+    **长的先替换**：短值可能是长值的子串，先换短的会把长值切碎、留下残片。
+
+    放在生产模块而不是各门槛脚本里：live-gate 与 calibration 原本各写了一份逐行
+    相同的实现，而这是**密钥脱敏** —— 两边漂移的后果是某一侧漏掉一种形态、把 Key
+    写进日志。这种代码不该有第二个副本。
+    """
+    redacted = text
+    for secret in sorted({value for value in secrets if value}, key=len, reverse=True):
+        redacted = redacted.replace(secret, "[REDACTED]")
+    return redacted
 
 ENV_PREFIX = "PIXEL_ASSET_"
 
