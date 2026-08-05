@@ -30,10 +30,17 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --all-extras --group dev
+      # 用 `.` 而不是列目录：显式清单漏过东西 —— `tools/` 下 4 个入库脚本
+      # （run_calibration / make_expected / run_live_gate / verify）长期不在检查
+      # 范围内，本地跑宽范围才发现 run_calibration.py 里有个 I001，CI 是绿的。
+      # ruff 默认遵守 .gitignore，所以借放的 tools/promo/ 不会被扫（那也不入库）。
       - name: ruff
-        run: uv run ruff check pixel_asset_forge tests
+        run: uv run ruff check .
+      # mypy 不遵守 .gitignore，所以不能直接给 `tools`：借放的 tools/promo/ 会带来
+      # 上千个无关错误。用 git ls-files 只列**入库**的工具脚本，将来新增自动纳入，
+      # 不必再维护一份会遗漏的清单。
       - name: mypy
-        run: uv run mypy pixel_asset_forge
+        run: uv run mypy pixel_asset_forge $(git ls-files 'tools/**/*.py')
 
   test:
     name: pytest · ${{ matrix.os }} · py${{ matrix.python }}

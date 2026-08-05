@@ -636,7 +636,7 @@ def build_recommendation_report(
     by_action: Mapping[str, Any] = aggregates["by_action"]
     for action, group in by_action.items():
         for raw_metric in METRIC_NAMES:
-            metric: MetricName = raw_metric  # type: ignore[assignment]
+            metric: MetricName = raw_metric
             summary = group[metric]
             current = _threshold_for_metric(action, metric)
             current_text = "豁免" if current is None else str(current)
