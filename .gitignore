@@ -20,6 +20,20 @@ tools/live-gate/runs/
 # 校准 harness 同一约定：原图/GIF 留本地，量化报告镜像到 reports/ 入库
 tools/calibration/runs/
 
+# Godot gate 同样只跟踪脚本与量化记录；导出图集、导入缓存和反例副本留本地。
+# README 的跑法把产物直接拷进本目录再让 Godot 导入，所以除 runs/ 外，
+# Godot 自己生成的 .uid / .import / .godot 与拷进来的图集也一并挡掉 ——
+# 否则照文档跑一遍就会在 git status 里留下一串未跟踪文件。
+tools/godot-gate/runs/
+tools/godot-gate/.godot/
+tools/godot-gate/tiles/
+tools/godot-gate/*.uid
+tools/godot-gate/*.import
+tools/godot-gate/*.tres
+tools/godot-gate/*.png
+tools/godot-gate/expected.json
+tools/godot-gate/GODOT-README.md
+
 # 另一个项目（h3/ComfyUI 宣传片）的脚本借放在这里，不属于本仓库；
 # 不入库，也让 `ruff check .` 不去 lint 它（ruff 默认遵守 .gitignore）。
 tools/promo/

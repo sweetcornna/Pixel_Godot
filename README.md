@@ -24,7 +24,7 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 | 5 | 验证引擎与 Repair Planner · `validate`/`repair` | ⚠️ 见下 |
 | 6 | MVP：四方向 × idle/walk · Godot 导出 · Contact Sheet | ⚠️ 见下 |
 | 7 | 道具、特效与批量任务 · 五种资产包 | ✅ 完成 —— 静态三种 + 动画 `spell_bundle` / `combat_bundle`，五条总退出门槛按 pack 类型逐格复核 |
-| 8 | Tileset 与地图 | 🚧 进行中 —— 基础/过渡 tile、像素角落地形标注、邻接表、WFC 地图、Tiled 导出已完成；Godot terrain 未开工；Godot/Tiled 官方加载与渲染已真机验证，Tiled GUI 窗口交互未验 |
+| 8 | Tileset 与地图 | 🚧 进行中 —— 基础/过渡 tile、像素角落地形、Godot terrain set/peering bits、邻接表、WFC 地图与 Tiled 导出已完成；两引擎官方 headless 路径已真机验证，仍没有可玩示例关卡，Tiled GUI 窗口交互未验 |
 | 9 | Skill、MCP、CI 与发布 | ✅ 完成 —— CI 三平台、Skill 防漂移、MCP 6 工具、live gate（真实模型 FAIL→校准→PASS）、发布纵切（twine 双 PASSED + 全新环境装机实证）；六条总退出门槛全部达成 |
 | 10 | Godot 工作站 | ✂️ 范围裁剪（owner 决策 2026-08-03）—— 本项目只做资产生成与自动化；已交付：三 plugin 结构、许可声明、衔接层四条真机背书、`examples/godot-demo/`（真实资产，13 项 VERIFY-OK）；"AI 驱动编辑器开发游戏"不做 |
 
@@ -61,9 +61,10 @@ AI 只生成视觉原料，一切需要精确性的操作（切帧、抠图、�
 **3. Tiled 已完成官方加载 + 渲染真机验证；仍未验证 GUI 窗口交互本身。**
 
 - **Godot ✅** —— `SpriteFrames`（角色动画）2026-07-29 在 Godot 4.3 验过；
-  Sprint 8 的 `TileSet` `.tres` 与地图已于 **2026-08-02 在 Godot 4.7.1 headless
-  验过**，四层全部通过（加载 → 纹理衔接 → **图集那一格里装的确实是那块 tile 的像素**
-  → 地图逐格 `set_cell`/`get_cell_atlas_coords` 读回）。门槛与"改坏再跑"的实测
+  Sprint 8 的 `TileSet` `.tres`、地图与 terrain 已于 **2026-08-05 在 Godot 4.7.1
+  headless 验过**，五层全部通过（加载 → 纹理衔接 → **图集那一格里装的确实是那块
+  tile 的像素** → 地图逐格读回 → terrain set/mode/名称与逐格 peering bits 读回）。
+  门槛与"改坏再跑"的实测
   记录见 [`tools/godot-gate/`](tools/godot-gate/)。
 - **Tiled 官方加载 + 渲染 ✅** —— 2026-08-03 在 Tiled 1.11.90 随附的
   `tmxrasterizer` 上实跑：官方 libtiled 跟随 `.tmx` → 外部 `.tsx` → 图集加载并渲染，
@@ -290,8 +291,18 @@ base 的对应象限比较；距离取逐 RGB 通道与固定联合 RGB 投影�
 `tl == bl 且 tr == br`；只跳过语义不成立的轴。`tile_border` 对所有 tile 保留，
 外缘连接继续由 `tile_adjacency` 重算。角落声明、实测、距离和阈值随 `generic-json` 导出。
 
-> Godot 的 terrain set / peering bits **还没做**。本切只产出了它需要的可信角落表；
-> Godot terrain、Tiled wangset 与 WFC 地形约束都留给后续纵切。
+Godot 导出会把这张表编译成 Corners 模式的 terrain set：terrain 名称、每格代表
+`terrain` 与四个 peering bits 都只消费 `measured_corners`，不读取人工声明来填值。
+`declared_corners` 与实测故意冲突的集成测试会锁住这条边界。任一实测角为 unknown 时，
+整块 tile 仍保留为普通图集格，但不写任何 terrain 标注，并在 `GODOT-README.md` 明示
+原因；不会把 `null` 偷偷映射成 dirt、grass 或别的具体地形。
+
+Godot 4.7.1 真机探针确认 Corners mode 是 `1`，四角键为
+`top_left_corner` / `top_right_corner` / `bottom_left_corner` /
+`bottom_right_corner`；还确认只写 peering bits、不写逐格 `terrain` 时，
+terrain-connect 选不到 tile。因此导出器会写一个由实测四角众数决定的代表 terrain，
+同票按固定角顺序首个，保证它仍来自像素事实。格式探针、五层读回和两个改坏反例见
+[`tools/godot-gate/`](tools/godot-gate/)。Tiled wangset 与 WFC 地形约束铺图仍不在本切。
 
 #### 铺一张地图
 

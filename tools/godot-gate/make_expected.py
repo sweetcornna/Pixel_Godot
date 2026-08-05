@@ -11,7 +11,15 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
+
+
+def _representative(corners: list[str]) -> str:
+    """与交付契约相同：众数，同票按固定角顺序首个。"""
+    counts = Counter(corners)
+    largest = max(counts.values())
+    return next(corner for corner in corners if counts[corner] == largest)
 
 
 def build(asset_dir: Path) -> dict[str, object]:
@@ -30,6 +38,29 @@ def build(asset_dir: Path) -> dict[str, object]:
     # 有多张地图时取名字最小的那张 —— 门槛只需要一张，但要定死是哪一张。
     rows = maps[sorted(maps)[0]]["rows"] if maps else []
 
+    expected_terrain: dict[str, object] | None = None
+    if tileset.get("terrain") is not None:
+        terrain_tiles: dict[str, dict[str, object]] = {}
+        eligible: list[list[str]] = []
+        for tile_id, tile in sorted(tileset["tiles"].items()):
+            corners = tile["terrain"]["measured_corners"]
+            skipped = any(corner is None for corner in corners)
+            if not skipped:
+                eligible.append(corners)
+            terrain_tiles[tile_id] = {
+                "measured_corners": corners,
+                "terrain": None if skipped else _representative(corners),
+                "skipped": skipped,
+            }
+        names = sorted({corner for corners in eligible for corner in corners})
+        expected_terrain = {
+            "sets_count": 1 if names else 0,
+            # Godot 4.7.1 TERRAIN_MODE_MATCH_CORNERS，探针见 probe_terrain_format.gd。
+            "mode": 1,
+            "names": names,
+            "tiles": terrain_tiles,
+        }
+
     return {
         "asset_id": manifest["asset_id"],
         "tile_w": width,
@@ -40,6 +71,7 @@ def build(asset_dir: Path) -> dict[str, object]:
             for tile_id, entry in payload["tiles"].items()
         },
         "rows": rows,
+        "terrain": expected_terrain,
     }
 
 

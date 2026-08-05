@@ -6,11 +6,12 @@ extends SceneTree
 # 而「能加载」也证明不了「每一格指向它该指向的 tile」—— 图集坐标写反、
 # 少写 `列:行/0 = 0` 那一行，.tres 照样能加载，只是编辑器里选不中或选错格。
 #
-# 所以这里验三层：
+# 所以这里验五层：
 #   A. 资源本身 —— 加载成 TileSet、tile_size、每个格坐标真的存在
 #   B. 纹理衔接 —— ext_resource 指向的 png 真的在（整目录复制的前提）
-#   C. 地图往回读 —— 把 generic-json 里的地图逐格 set_cell 进 TileMapLayer，
-#      再 get_cell_atlas_coords 读回来比对。这一层才真正验到"格坐标是对的"。
+#   C. 图集像素 —— 每格区域与原 tile png 逐字节一致
+#   D. 地图往回读 —— set_cell 后再 get_cell_atlas_coords 逐格比对
+#   E. terrain —— set 数量/mode/名称，以及每格 terrain 与四个 peering bit
 #
 # expected.json 由 tools/godot-gate/make_expected.py 从 Manifest + 导出物生成。
 
@@ -131,12 +132,77 @@ func _initialize() -> void:
 			print("GATE 地图 %d×%d 逐格读回一致" % [rows[0].size(), rows.size()])
 		layer.free()
 
+	# -- E. terrain set 与逐格 peering bits ----------------------------------
+	var expected_terrain: Variant = expected.get("terrain")
+	if expected_terrain == null:
+		if tileset.get_terrain_sets_count() != 0:
+			failures.append("Manifest 没有 terrain，TileSet 却有 %d 个 terrain set" % tileset.get_terrain_sets_count())
+		print("GATE terrain：Manifest 未启用，本层确认 TileSet 没有擅自添加")
+	else:
+		var terrain_expected: Dictionary = expected_terrain
+		var want_sets: int = int(terrain_expected["sets_count"])
+		var terrain_names: Array = terrain_expected["names"]
+		if tileset.get_terrain_sets_count() != want_sets:
+			failures.append("terrain set 数量 %d ≠ %d" % [tileset.get_terrain_sets_count(), want_sets])
+		if want_sets > 0 and tileset.get_terrain_sets_count() > 0:
+			var want_mode: int = int(terrain_expected["mode"])
+			var got_mode: int = tileset.get_terrain_set_mode(0)
+			if got_mode != want_mode:
+				failures.append("terrain set 0 mode %d ≠ %d（Corners）" % [got_mode, want_mode])
+
+			if tileset.get_terrains_count(0) != terrain_names.size():
+				failures.append("terrain 数量 %d ≠ %d" % [tileset.get_terrains_count(0), terrain_names.size()])
+			for terrain_index in min(tileset.get_terrains_count(0), terrain_names.size()):
+				var got_name: String = tileset.get_terrain_name(0, terrain_index)
+				if got_name != terrain_names[terrain_index]:
+					failures.append("terrain %d 名称 %s ≠ %s" % [terrain_index, got_name, terrain_names[terrain_index]])
+
+		var terrain_tiles: Dictionary = terrain_expected["tiles"]
+		var corner_bits := [
+			["top_left", TileSet.CELL_NEIGHBOR_TOP_LEFT_CORNER],
+			["top_right", TileSet.CELL_NEIGHBOR_TOP_RIGHT_CORNER],
+			["bottom_left", TileSet.CELL_NEIGHBOR_BOTTOM_LEFT_CORNER],
+			["bottom_right", TileSet.CELL_NEIGHBOR_BOTTOM_RIGHT_CORNER],
+		]
+		for tile_id in terrain_tiles.keys():
+			var xy: Array = coords[tile_id]
+			var cell := Vector2i(int(xy[0]), int(xy[1]))
+			var tile_data: TileData = source.get_tile_data(cell, 0)
+			var tile_expected: Dictionary = terrain_tiles[tile_id]
+			if bool(tile_expected["skipped"]):
+				if tile_data.get_terrain_set() != -1 or tile_data.get_terrain() != -1:
+					failures.append("%s 含 unknown，却读到 terrain_set=%d terrain=%d" % [
+						tile_id, tile_data.get_terrain_set(), tile_data.get_terrain()])
+				for corner in corner_bits:
+					# terrain_set=-1 时直接 get 会由 Godot 打一条“invalid peering bit”错误；
+					# is_valid 才是确认整格没标注、且不制造假错误日志的公开 API。
+					if tile_data.is_valid_terrain_peering_bit(corner[1]):
+						failures.append("%s 含 unknown，%s peering bit 却仍有效" % [tile_id, corner[0]])
+				continue
+
+			if tile_data.get_terrain_set() != 0:
+				failures.append("%s terrain_set %d ≠ 0" % [tile_id, tile_data.get_terrain_set()])
+			var want_terrain: int = terrain_names.find(tile_expected["terrain"])
+			if tile_data.get_terrain() != want_terrain:
+				failures.append("%s terrain %d ≠ %d（%s）" % [
+					tile_id, tile_data.get_terrain(), want_terrain, tile_expected["terrain"]])
+
+			var measured: Array = tile_expected["measured_corners"]
+			for corner_index in corner_bits.size():
+				var corner: Array = corner_bits[corner_index]
+				var want_bit: int = terrain_names.find(measured[corner_index])
+				var got_bit: int = tile_data.get_terrain_peering_bit(corner[1])
+				if got_bit != want_bit:
+					failures.append("%s/%s peering bit %d ≠ %d（%s）" % [
+						tile_id, corner[0], got_bit, want_bit, measured[corner_index]])
+		print("GATE terrain 读回：%d 个 set，逐格 terrain/四角 peering bits 已核对" % want_sets)
+
 	_report(failures)
 
 
 func _report(failures: Array) -> void:
 	if failures.is_empty():
-		print("GATE-OK TileSet 四层全部通过")
+		print("GATE-OK TileSet 五层全部通过")
 		quit(0)
 	else:
 		for f in failures:

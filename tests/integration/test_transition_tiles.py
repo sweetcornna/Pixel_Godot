@@ -14,6 +14,8 @@ from typer.testing import CliRunner
 
 from pixel_asset_forge.cli import EXIT_OK, app
 from pixel_asset_forge.config import Config
+from pixel_asset_forge.exporters import get_exporter
+from pixel_asset_forge.exporters.godot import build_tileset
 from pixel_asset_forge.models.manifest import AssetManifest
 from pixel_asset_forge.models.request import parse_request
 from pixel_asset_forge.models.validation import CheckResult
@@ -144,6 +146,93 @@ def test_transition_tiles_complete_the_offline_vertical_slice(
 
     # 推导、复算、导出都只读像素；整条后半链没有新增 provider 调用。
     assert store.generation_log_path.read_bytes() == log_before
+
+
+def test_godot_terrain_set_and_peering_bits_complete_the_export_slice(
+    transition_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    request_path, config_path, store = transition_env
+    create(request_path, config_path)
+    assert validate(store, config_path).exit_code == EXIT_OK
+
+    exported = runner.invoke(
+        app,
+        ["export", str(store.root), "-t", "godot", "--config", str(config_path)],
+    )
+    assert exported.exit_code == EXIT_OK, exported.stdout
+    text = (store.exports / "godot" / f"{ASSET_ID}_tileset.tres").read_text(
+        encoding="utf-8"
+    )
+
+    # Godot 4.7.1 探针读回：1 是只需要四角的 Corners 模式。
+    assert "terrain_set_0/mode = 1" in text
+    assert 'terrain_set_0/terrain_0/name = "dirt"' in text
+    assert 'terrain_set_0/terrain_1/name = "grass"' in text
+
+    # 图集按 tile_id 排序：dirt_base=(0,0)，grass_base=(1,0)，transition=(0,1)。
+    prefix = "0:1/0"
+    assert f"{prefix}/terrain_set = 0" in text
+    assert f"{prefix}/terrain = 1" in text
+    assert f"{prefix}/terrains_peering_bit/top_left_corner = 1" in text
+    assert f"{prefix}/terrains_peering_bit/top_right_corner = 1" in text
+    assert f"{prefix}/terrains_peering_bit/bottom_left_corner = 0" in text
+    assert f"{prefix}/terrains_peering_bit/bottom_right_corner = 0" in text
+
+
+def test_godot_peering_bits_use_measured_corners_not_declared_corners(
+    transition_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    request_path, config_path, store = transition_env
+    create(request_path, config_path)
+    manifest = AssetManifest.load(store.manifest_path)
+    raw = manifest.model_dump(mode="json")
+    transition = raw["tileset"]["tiles"]["grass_dirt_corner"]["terrain"]
+    transition["declared_corners"] = ["stone", "stone", "stone", "stone"]
+    mismatched = AssetManifest.model_validate(raw)
+
+    built = build_tileset(
+        mismatched,
+        {"dirt_base": (0, 0), "grass_base": (1, 0), "grass_dirt_corner": (0, 1)},
+        f"{ASSET_ID}.png",
+        (32, 32),
+    )
+
+    assert "stone" not in built.text
+    assert 'terrain_set_0/terrain_0/name = "dirt"' in built.text
+    assert 'terrain_set_0/terrain_1/name = "grass"' in built.text
+    assert "0:1/0/terrains_peering_bit/top_left_corner = 1" in built.text
+    assert "0:1/0/terrains_peering_bit/top_right_corner = 1" in built.text
+    assert "0:1/0/terrains_peering_bit/bottom_left_corner = 0" in built.text
+    assert "0:1/0/terrains_peering_bit/bottom_right_corner = 0" in built.text
+
+
+def test_godot_skips_the_whole_terrain_annotation_when_one_corner_is_unknown(
+    transition_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    request_path, config_path, store = transition_env
+    create(request_path, config_path)
+    manifest = AssetManifest.load(store.manifest_path)
+    raw = manifest.model_dump(mode="json")
+    transition = raw["tileset"]["tiles"]["grass_dirt_corner"]["terrain"]
+    transition["measured_corners"][0] = None
+    unknown = AssetManifest.model_validate(raw)
+
+    out = store.exports / "godot-unknown"
+    result = get_exporter("godot").export(unknown, store.root, out)
+    text = (out / f"{ASSET_ID}_tileset.tres").read_text(encoding="utf-8")
+
+    # 普通图集格保留，但整格没有 terrain_set / terrain / peering bit；不能把 None
+    # 偷偷映射为 dirt(0)、grass(1) 或 Godot 的 empty(-1) 角后继续声称它已标注。
+    assert "0:1/0 = 0" in text
+    assert "0:1/0/terrain_set" not in text
+    assert "0:1/0/terrain =" not in text
+    assert "0:1/0/terrains_peering_bit" not in text
+    assert any(
+        "measured_corners 含 unknown" in note and "grass_dirt_corner" in note
+        for note in result.notes
+    )
+    handoff = (out / "GODOT-README.md").read_text(encoding="utf-8")
+    assert "grass_dirt_corner" in handoff and "unknown" in handoff
 
 
 def test_slanted_transition_is_caught_by_the_required_horizontal_seam(
