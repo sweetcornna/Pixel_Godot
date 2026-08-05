@@ -550,6 +550,11 @@
         },
         "terrain": {
           "$ref": "#/$defs/tile_terrain_entry"
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "description": "地图生成的频率权重。只影响 WFC 塌缩时抽哪个候选，不参与相容性判定。缺席即 1.0（等权）。"
         }
       }
     },
@@ -588,10 +593,18 @@
           "minItems": 4,
           "maxItems": 4,
           "prefixItems": [
-            { "$ref": "#/$defs/measured_terrain_name" },
-            { "$ref": "#/$defs/measured_terrain_name" },
-            { "$ref": "#/$defs/measured_terrain_name" },
-            { "$ref": "#/$defs/measured_terrain_name" }
+            {
+              "$ref": "#/$defs/measured_terrain_name"
+            },
+            {
+              "$ref": "#/$defs/measured_terrain_name"
+            },
+            {
+              "$ref": "#/$defs/measured_terrain_name"
+            },
+            {
+              "$ref": "#/$defs/measured_terrain_name"
+            }
           ],
           "items": false
         },
@@ -600,10 +613,22 @@
           "minItems": 4,
           "maxItems": 4,
           "prefixItems": [
-            { "type": "number", "minimum": 0 },
-            { "type": "number", "minimum": 0 },
-            { "type": "number", "minimum": 0 },
-            { "type": "number", "minimum": 0 }
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
           ],
           "items": false
         }
@@ -615,8 +640,12 @@
     },
     "measured_terrain_name": {
       "anyOf": [
-        { "$ref": "#/$defs/terrain_name" },
-        { "type": "null" }
+        {
+          "$ref": "#/$defs/terrain_name"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "terrain_corners": {
@@ -624,10 +653,18 @@
       "minItems": 4,
       "maxItems": 4,
       "prefixItems": [
-        { "$ref": "#/$defs/terrain_name" },
-        { "$ref": "#/$defs/terrain_name" },
-        { "$ref": "#/$defs/terrain_name" },
-        { "$ref": "#/$defs/terrain_name" }
+        {
+          "$ref": "#/$defs/terrain_name"
+        },
+        {
+          "$ref": "#/$defs/terrain_name"
+        },
+        {
+          "$ref": "#/$defs/terrain_name"
+        },
+        {
+          "$ref": "#/$defs/terrain_name"
+        }
       ],
       "items": false
     },

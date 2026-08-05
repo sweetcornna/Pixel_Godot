@@ -406,3 +406,65 @@ def test_mock_transition_generation_survives_a_fresh_provider_instance(
 
     assert np.array_equal(transition[:512, :512], grass[:512, :512])
     assert np.array_equal(transition[512:, 512:], dirt[512:, 512:])
+
+def test_tile_weight_travels_from_request_through_manifest_into_map_generation(
+    transition_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """权重必须走完请求 → Manifest → create-map 这条链（PLAN §8.7）。
+
+    create-map 读的是 Manifest 而不是请求，所以权重不写进 Manifest 就等于地图
+    生成拿不到它 —— 那种断链会表现成"我调了 weight 却没反应"，很难查。
+    """
+    request_path, config_path, store = transition_env
+    data = yaml.safe_load(request_path.read_text(encoding="utf-8"))
+    for tile in data["tileset"]["tiles"]:
+        # 抬高过渡块、压低两块 base：单材质地图的出现率应当被压下去。
+        tile["weight"] = 8.0 if tile["tile_id"] == "grass_dirt_corner" else 0.25
+    request_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    create(request_path, config_path)
+
+    manifest = AssetManifest.load(store.manifest_path)
+    assert manifest.tileset is not None
+    weights = {
+        tile_id: entry.weight for tile_id, entry in manifest.tileset.tiles.items()
+    }
+    assert weights == {"grass_base": 0.25, "dirt_base": 0.25, "grass_dirt_corner": 8.0}
+
+    result = runner.invoke(
+        app,
+        ["create-map", str(store.root), "--width", "8", "--height", "6",
+         "--seed", "3", "--config", str(config_path)],
+    )
+    assert result.exit_code == EXIT_OK, result.stdout
+    used = manifest.__class__.load(store.manifest_path).tileset.maps["overworld"]  # type: ignore[union-attr]
+    assert "grass_dirt_corner" in used.tiles_used
+
+
+def test_single_material_advice_distinguishes_seed_luck_from_missing_tiles(
+    transition_env: tuple[Path, Path, ArtifactStore],
+) -> None:
+    """这套 tile 接得上别的材质，所以单材质时不能再叫用户去补过渡 tile。
+
+    8.5 之前只有"对角矩阵"一种成因，旧提示一律说"缺过渡 tile"。现在过渡块可用了，
+    仍会因为均匀抽落进平凡解 —— 那时把人指向补已经存在的东西就是指错方向。
+    """
+    request_path, config_path, store = transition_env
+    # 示例请求给过渡块设了 weight，那正是为了避免单材质结果。这条测试要的恰好是
+    # 单材质那一刻，所以自己把权重清成等权 —— 不依赖示例的默认值，否则示例一调
+    # 参数这条测试就会莫名失败（本次真的发生过）。
+    data = yaml.safe_load(request_path.read_text(encoding="utf-8"))
+    for tile in data["tileset"]["tiles"]:
+        tile["weight"] = 1.0
+    request_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    create(request_path, config_path)
+    # 等权下 seed 1 在这套 tile 上实测铺出全草（见 §8.7 的调查记录）。
+    result = runner.invoke(
+        app,
+        ["create-map", str(store.root), "--width", "6", "--height", "4",
+         "--seed", "1", "--config", str(config_path)],
+    )
+    assert result.exit_code == EXIT_OK, result.stdout
+    compact = "".join(result.stdout.split())
+    assert "接得上别的材质" in compact
+    assert "对角矩阵" not in compact
+    assert "weight" in compact

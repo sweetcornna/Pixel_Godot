@@ -220,7 +220,12 @@ class TileTerrainInfo(_Base):
 
 
 class TileEntry(_Base):
-    """tileset 里一块 tile 的原图与成品。"""
+    """tileset 里一块 tile 的原图与成品。
+
+    ``weight`` 必须随产物记下来：``create-map`` 读的是 Manifest 而不是请求，
+    不记就等于地图生成拿不到这个意图（同 8.2 记阈值、8.5 记 terrain 的理由 ——
+    判定用的输入不写下来，以后就没法解释旧产物是怎么来的）。
+    """
 
     source_image: AssetRelativePath
     image: AssetRelativePath
@@ -228,6 +233,10 @@ class TileEntry(_Base):
     processed_hash: str = Field(pattern=r"^[0-9A-Fa-f]{64}$")
     terrain: TileTerrainInfo | None = None
     """字段缺席表示请求未声明 terrain，与 8.1/8.2 产物兼容。"""
+
+    weight: float = Field(default=1.0, ge=0.0)
+    """地图生成的频率权重。默认 1.0 —— 8.6 及更早的产物没有这个字段，
+    读进来即等权，与旧行为逐位一致。"""
 
 
 class TilesetTerrainInfo(_Base):

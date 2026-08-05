@@ -36,13 +36,22 @@ class TileMapResult:
     seed: int
     tiles_used: list[str]
 
+    transition_possible: bool = True
+    """这套 tile 的邻接表在结构上**是否允许**材质变化。
+
+    判据取自邻接表本身（有没有哪个 tile 的邻居集合含别的 tile），
+    **不是**看这张地图实际用了几种 —— 后者会把"这次恰好抽成单色"与
+    "这套 tile 永远只能单色"混为一谈，而这两种情况该给用户的建议正好相反。
+    """
+
     @property
     def single_material(self) -> bool:
         """整张地图只有一种 tile。
 
-        对眼下这套基础地面 tile 这**是正确结果**：邻接表是对角矩阵，而网格连通 ——
-        每一步都要求两边相容，于是整张图必然同一种材质。要铺出多材质地图，
-        缺的是过渡 tile，不是更好的求解器（PLAN §8.3）。
+        单材质有两种成因，必须分开：邻接表本身是对角矩阵（材质之间接不上，
+        网格连通 → 必然同一种材质，PLAN §8.3），或者接得上但塌缩时恰好每格
+        都抽到了同一种（8.5 过渡 tile 落地后实测 18% 的 seed 会这样，§8.7）。
+        前者要补过渡 tile，后者换 seed 或调 weight —— 用 ``transition_possible`` 区分。
         """
         return len(self.tiles_used) == 1
 
@@ -85,8 +94,20 @@ def create_map(
             "它是 8.1 时代的产物，重跑 `create-tileset` 补上（不调用 API）"
         )
 
+    # 频率权重来自 Manifest（create-tileset 时从请求写进去的），不是这里另给一份 ——
+    # 两处各存一份就会漂移。全部等权时传 None，让求解器走旧路径逐位复现老产物。
+    weights = {
+        tile_id: entry.weight for tile_id, entry in manifest.tileset.tiles.items()
+    }
+    weighted = weights if any(value != 1.0 for value in weights.values()) else None
+
     tile_map = generate_map(
-        adjacency.right, adjacency.down, width=width, height=height, seed=seed
+        adjacency.right,
+        adjacency.down,
+        width=width,
+        height=height,
+        seed=seed,
+        weights=weighted,
     )
 
     store.maps.mkdir(parents=True, exist_ok=True)
@@ -108,6 +129,14 @@ def create_map(
         "地图 %s：%d×%d，用到 %d 种 tile（seed=%d）",
         name, tile_map.width, tile_map.height, len(tile_map.tiles_used), seed,
     )
+    # 结构上能不能换材质：任一方向上存在"邻居不是自己"的 tile 即可。
+    transition_possible = any(
+        neighbour != tile_id
+        for table in (adjacency.right, adjacency.down)
+        for tile_id, neighbours in table.items()
+        for neighbour in neighbours
+    )
+
     return TileMapResult(
         asset_id=manifest.asset_id,
         name=name,
@@ -116,4 +145,5 @@ def create_map(
         height=tile_map.height,
         seed=tile_map.seed,
         tiles_used=tile_map.tiles_used,
+        transition_possible=transition_possible,
     )

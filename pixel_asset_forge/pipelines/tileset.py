@@ -206,6 +206,7 @@ def create_tileset(
         terrain_result = derive_terrain_corners(processed.tiles, base_by_terrain)
 
     tiles_dir = store.frames_of("tiles")
+    spec_by_id = {spec.tile_id: spec for spec in request.tile_list}
     entries: dict[str, TileEntry] = {}
     for tile_id, image in processed.tiles.items():
         out = save_png(image, tiles_dir / f"{tile_id}.png")
@@ -216,6 +217,7 @@ def create_tileset(
             image=str(out.relative_to(store.root)),
             source_hash=hash_file(source_path),
             processed_hash=hash_file(out),
+            weight=spec_by_id[tile_id].weight,
             terrain=(
                 TileTerrainInfo(
                     declared_corners=declared_corners[tile_id],

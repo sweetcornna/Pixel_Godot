@@ -50,7 +50,12 @@
     "locomotion": {
       "description": "角色怎么移动。决定行走/待机用哪套姿势节拍。省略时从 description 推断（slime→legless、ghost→floating、wolf→quadruped，其余 biped）。",
       "type": "string",
-      "enum": ["biped", "legless", "floating", "quadruped"]
+      "enum": [
+        "biped",
+        "legless",
+        "floating",
+        "quadruped"
+      ]
     },
     "style": {
       "$ref": "#/$defs/style"
@@ -132,8 +137,16 @@
         ],
         "not": {
           "anyOf": [
-            { "required": ["animations"] },
-            { "required": ["background"] }
+            {
+              "required": [
+                "animations"
+              ]
+            },
+            {
+              "required": [
+                "background"
+              ]
+            }
           ]
         }
       },
@@ -222,16 +235,29 @@
                         "minItems": 4,
                         "maxItems": 4,
                         "prefixItems": [
-                          { "$ref": "#/$defs/terrain_name" },
-                          { "$ref": "#/$defs/terrain_name" },
-                          { "$ref": "#/$defs/terrain_name" },
-                          { "$ref": "#/$defs/terrain_name" }
+                          {
+                            "$ref": "#/$defs/terrain_name"
+                          },
+                          {
+                            "$ref": "#/$defs/terrain_name"
+                          },
+                          {
+                            "$ref": "#/$defs/terrain_name"
+                          },
+                          {
+                            "$ref": "#/$defs/terrain_name"
+                          }
                         ],
                         "items": false
                       }
                     }
                   }
                 ]
+              },
+              "weight": {
+                "type": "number",
+                "minimum": 0,
+                "description": "地图生成的频率权重。只影响 WFC 塌缩时抽哪个候选，不参与相容性判定。缺席即 1.0（等权）。"
               }
             }
           }

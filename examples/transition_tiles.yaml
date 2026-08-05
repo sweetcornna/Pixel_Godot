@@ -29,6 +29,10 @@ tileset:
         Grass changing into packed dirt across one soft irregular internal boundary.
       terrain:
         corners: [grass, grass, dirt, dirt]
+      # 过渡块权重调高：均匀抽时 18% 的 seed 会铺出完全单材质的地图（过渡块可用
+      # 却一次没用），提到 6.0 后降到 2%。权重只影响抽哪个候选，不会让非法接缝
+      # 变合法，也改不了过渡带的宽度（那由邻接表结构决定）。详见 PLAN §8.7。
+      weight: 6.0
 
 export:
   targets: [generic-json]

@@ -174,6 +174,17 @@ class TileSpec(_Base):
     description: str = Field(min_length=8, max_length=2000)
     terrain: TerrainName | TerrainSpec | None = None
 
+    weight: float = Field(default=1.0, ge=0.0)
+    """地图生成时的频率权重（PLAN §8.7）。
+
+    **只影响 WFC 塌缩时抽哪个候选，不参与相容性判定** —— 任何权重都不会让一条
+    非法接缝变合法。默认 1.0，即所有 tile 等权，此时逐位保持旧行为。
+
+    存在的理由：均匀抽会大量落进平凡解。实测 60 个 seed 的 8×6 地图有 18% 完全
+    单材质（过渡块可用却一次没用），把过渡块权重提到 6.0 后降到 2%。
+    但它**改不了过渡带的宽度**（受邻接表结构决定），那要靠加更多过渡块。
+    """
+
     @property
     def terrain_corners(self) -> tuple[str, str, str, str] | None:
         """把简写统一成 ``[top_left, top_right, bottom_left, bottom_right]``。"""

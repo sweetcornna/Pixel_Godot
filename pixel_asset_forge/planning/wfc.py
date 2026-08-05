@@ -7,6 +7,22 @@
 WFC 恰好只吃这一样东西，而且它涵盖了朴素规则法 —— 把每格候选集初始化成全集、
 按约束收敛，正是规则能做的事的超集。
 
+## 频率权重：唯一的意图输入，而且它只做一件事
+
+塌缩时在候选里**均匀**抽会大量落进平凡解：8.5 的过渡 tile 落地后实测 60 个 seed
+的 8×6 地图，仍有 **18% 完全单材质** —— 过渡块明明可用，求解器一次都没用它。
+原因是 `grass_base` 自己就满足所有约束，均匀抽让这种"什么都不发生"的解和其他解
+等概率。权重把这一步换成按权重抽（``random.choices``），压低平凡解的出现率。
+
+**权重只影响"抽哪个"，不影响"能不能抽"。** 相容性判定仍然只由邻接表决定，
+权重为任何正值都不会让一条非法接缝变合法。因此它无法凭空造出邻接表里没有的
+可能性 —— 同一实测里过渡 tile 占比上限恒为 16.7%，正好是 8×6 的一整行，
+因为 `grass → 过渡 → dirt` 是一条**垂直**链，过渡带只能是一条水平线。
+**权重减少的是平凡解，不是让过渡带变宽**；后者要靠给 tileset 加更多过渡块。
+
+权重必须由人声明（``TileSpec.weight``），不从邻接表结构反推：按上面的理由，
+权重就是"意图"，而从结构反推等于凭空发明用户没表达过的意图。
+
 **撞上矛盾时绝不交货。** 不留空格、不"就近挑一个"填上：换 seed 重试，
 重试用尽就抛错。默默填格会让下游那条合法性检查在真实产物上静默失效 ——
 检查还在跑、还在报通过，只是它查的东西已经被绕过去了。
@@ -71,10 +87,14 @@ class _Solver:
         width: int,
         height: int,
         rng: random.Random,
+        weights: dict[str, float] | None = None,
     ) -> None:
         self.tiles = tiles
         self.width, self.height = width, height
         self.rng = rng
+        #: ``tile_id`` → 频率权重。缺席的 tile 记 1.0，于是不传权重时逐格的抽样
+        #: 分布与均匀抽完全一致（见 :meth:`_collapse` 里为什么这仍不是同一次抽样）。
+        self.weights = weights or {}
         # 四个方向的允许集：(dx, dy) → {tile: 那个方向上允许的邻居}
         self.allowed: dict[tuple[int, int], dict[str, set[str]]] = {
             (1, 0): {key: set(value) for key, value in right.items()},
@@ -126,6 +146,24 @@ class _Solver:
                     candidates.append((x, y))
         return self.rng.choice(candidates) if candidates else None
 
+    def _collapse(self, domain: set[str]) -> str:
+        """从一格的候选集里抽定一个 tile。
+
+        **排序后再抽**：集合的迭代顺序不保证稳定，不排序就谈不上"同 seed 同结果"。
+
+        **没有权重时走 ``choice`` 而不是等权 ``choices``。** 两者消耗随机数的方式
+        不同，即使权重全相等，换成 ``choices`` 也会让所有既有 seed 产出另一张地图 ——
+        那会静默作废"同 seed 同地图"的既有记录与产物。所以不传权重时逐位保持旧行为。
+        """
+        options = sorted(domain)
+        if not self.weights:
+            return self.rng.choice(options)
+        weights = [self.weights.get(option, 1.0) for option in options]
+        if not any(weights):
+            # 全零权重等于没表达偏好；退回均匀抽，而不是让 choices 抛错。
+            return self.rng.choice(options)
+        return self.rng.choices(options, weights=weights, k=1)[0]
+
     def run(self) -> list[list[str]] | None:
         """求解。撞上矛盾返回 ``None``，不返回半成品。"""
         for y in range(self.height):
@@ -135,8 +173,7 @@ class _Solver:
 
         while (cell := self._lowest_entropy()) is not None:
             x, y = cell
-            # 排序后再抽：集合的迭代顺序不保证稳定，不排序就谈不上"同 seed 同结果"。
-            self.domains[y][x] = {self.rng.choice(sorted(self.domains[y][x]))}
+            self.domains[y][x] = {self._collapse(self.domains[y][x])}
             if not self._propagate(cell):
                 return None
 
@@ -152,10 +189,15 @@ def generate_map(
     width: int,
     height: int,
     seed: int,
+    weights: dict[str, float] | None = None,
 ) -> TileMap:
     """按邻接表铺一张 ``width × height`` 的地图。
 
-    同 ``seed`` + 同邻接表 + 同尺寸 → 同一张地图，逐格相等。
+    同 ``seed`` + 同邻接表 + 同尺寸（+ 同权重）→ 同一张地图，逐格相等。
+
+    ``weights`` 是 ``tile_id`` → 频率权重，缺席的 tile 记 1.0。它**只影响塌缩时
+    抽哪个候选**，不参与相容性判定 —— 任何正权重都不会让一条非法接缝变合法。
+    不传权重时逐位保持旧行为（理由见 :meth:`_Solver._collapse`）。
 
     撞上矛盾会换 seed 重试至多 :data:`MAX_RESTARTS` 次；仍然不行就抛错 ——
     **不交半成品**。
@@ -168,9 +210,21 @@ def generate_map(
     if sorted(down) != tiles:
         raise ProcessingError("邻接表的 right 与 down 覆盖的 tile 不一致")
 
+    if weights:
+        unknown = sorted(set(weights) - set(tiles))
+        if unknown:
+            # 静默忽略会让"我调了权重却没反应"变成一个查不出来的问题。
+            raise ProcessingError(
+                f"权重里有邻接表中不存在的 tile：{unknown}。"
+                f"这套 tileset 的 tile 是：{tiles}"
+            )
+        bad = sorted(key for key, value in weights.items() if value < 0)
+        if bad:
+            raise ProcessingError(f"频率权重不能是负数：{bad}")
+
     for attempt in range(MAX_RESTARTS):
         rng = random.Random(f"{seed}:{attempt}")
-        rows = _Solver(tiles, right, down, width, height, rng).run()
+        rows = _Solver(tiles, right, down, width, height, rng, weights).run()
         if rows is not None:
             return TileMap(rows=tuple(tuple(row) for row in rows), seed=seed)
 
