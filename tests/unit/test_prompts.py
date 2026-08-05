@@ -9,6 +9,8 @@ prompt 里明写着 no two cells may be identical，再递重复描述就是自�
 
 from __future__ import annotations
 
+import re
+
 import pytest
 import yaml
 
@@ -29,6 +31,13 @@ from pixel_asset_forge.prompts.poses import POSE_CYCLES
 
 FRAME_COUNTS = (4, 6, 8, 9, 12)
 
+SIZE_CHANGE_COMMANDS = re.compile(
+    r"\b(?:small(?:er|est)?|larg(?:e|er|est)|expand(?:s|ed|ing)?|"
+    r"contract(?:s|ed|ing)?|compact(?:s|ed|ing)?|stretch(?:es|ed|ing)?|"
+    r"elongat(?:e|es|ed|ing)|lengthen(?:s|ed|ing)?|short(?:er|est|en|ens|ened|ening)?)\b",
+    re.IGNORECASE,
+)
+
 
 # -- 姿势序列 --------------------------------------------------------------
 
@@ -41,6 +50,17 @@ def test_every_combination_is_unique_and_complete(action: str, frames: int) -> N
     assert len(seq) == frames
     assert len(set(seq)) == frames, f"{action} {frames} 帧出现重复描述"
     assert all(s.strip() for s in seq)
+
+
+@pytest.mark.parametrize("action", ("loop", "travel"))
+def test_effect_cycles_never_command_whole_sprite_size_changes(action: str) -> None:
+    """循环特效靠内部流动区分帧，不能命令整个 sprite 缩放来制造运动。"""
+    violations = {
+        beat.name: SIZE_CHANGE_COMMANDS.findall(beat.description)
+        for beat in POSE_CYCLES[action].beats
+        if SIZE_CHANGE_COMMANDS.search(beat.description)
+    }
+    assert not violations, violations
 
 
 def test_walk_is_built_from_two_mirrored_half_cycles() -> None:
@@ -331,6 +351,66 @@ def test_directionless_animation_compiles(examples_dir) -> None:
         layout=grid_for_frames(6), key_color="#FF00FF",
     ).text
     assert "fixed angle" in prompt
+
+
+@pytest.mark.parametrize(
+    ("action", "direction", "frames"),
+    (("loop", None, 4), ("travel", "right", 4), ("impact", None, 6)),
+)
+def test_effect_identity_is_stated_once_and_cells_stay_one_line(
+    examples_dir, action, direction, frames
+) -> None:
+    """特效身份提升为公共块只说一次；每格描述必须仍是**一行**。
+
+    这两条要一起验，因为它们是同一次返工的两面：把身份逐格重复进 beats 会同时
+    (a) 把区分各格的十几个词埋进重复前缀，(b) 让描述跨行、破坏
+    ``Cell N (row R, column C): ...`` 每格一行的契约。
+
+    只数 ``startswith("Cell ")`` 抓不住 (b) —— 跨行时首行照样以 Cell 开头，
+    行数照样等于 frames，测试照样绿，而多出来的续行在清单结构里是游离的。
+    所以这里改成核对**姿势块内的每一行都是一条 Cell 记录**。
+    """
+    fireball = load_request(examples_dir / "fireball.yaml")
+    subject = " ".join(fireball.description.split())
+    prompt = compile_animation_prompt(
+        fireball,
+        action=action,
+        direction=direction,
+        frames=frames,
+        layout=grid_for_frames(frames),
+        key_color="#FF00FF",
+    ).text
+
+    # 身份只说一次：请求描述在整份 prompt 里恰好出现一次。
+    assert prompt.count(subject) == 1
+    assert f"The effect in every cell is the same one: {subject}" in prompt
+    # 轮廓不变量也只说一次，且明确禁止整体缩放。
+    assert prompt.count("keeps the same overall footprint") == 1
+
+    lines = prompt.splitlines()
+    first = next(i for i, line in enumerate(lines) if line.startswith("Cell 1 "))
+    block = lines[first : first + frames]
+    assert len(block) == frames
+    # 每格一行：这 frames 行必须**全部**是 Cell 记录，中间不许夹续行。
+    assert all(line.startswith(f"Cell {i + 1} ") for i, line in enumerate(block))
+    # 且紧随其后不再有第 frames+1 条 Cell 记录。
+    assert not lines[first + frames].startswith("Cell ")
+    assert "{effect}" not in prompt
+
+    # 角色动作不该被塞进特效前言。
+    knight_prompt = compile_animation_prompt(
+        load_request(examples_dir / "knight.yaml"),
+        action="walk",
+        direction="down",
+        frames=4,
+        layout=grid_for_frames(4),
+        key_color="#FF00FF",
+    ).text
+    assert "The effect in every cell" not in knight_prompt
+    # 而"Identity constraints"块在两种动作里都必须还在 —— 早先把局部变量取名
+    # identity 曾把它静默顶替掉，生成的 prompt 里整块消失。
+    assert "Identity constraints" in prompt
+    assert "Identity constraints" in knight_prompt
 
 
 def test_prompt_size_matches_the_layout(knight) -> None:

@@ -17,7 +17,13 @@ from ..constants import Direction
 from ..models.request import AssetRequest, TileSpec
 from ..planning.grid_layout import GridLayout
 from .negative_rules import negative_block
-from .poses import FRONTAL_DIRECTIONS, PoseCycle, cycle_from_beats, numbered_poses
+from .poses import (
+    EFFECT_ACTIONS,
+    FRONTAL_DIRECTIONS,
+    PoseCycle,
+    cycle_from_beats,
+    numbered_poses,
+)
 
 #: prompt 里要求的边距。**判定按 8%**（PLAN §2.3.2）。
 #:
@@ -479,8 +485,32 @@ def compile_animation_prompt(
         "one side it falls to that side in every cell that shows the fall."
     )
 
+    # 特效动作要额外说两件**对所有格子都成立**的事，所以提升成一个块只说一次：
+    #
+    # 1. **这个特效是什么。** 实测发现动画 prompt 里原本一次都没有出现过请求的
+    #    description —— 模型根本不知道自己在画什么，于是"闪电链"被画成一个泛化的
+    #    放射状星爆，"链"的语义从未进入画面。
+    # 2. **整体轮廓范围与像素量在各格间保持不变。** 旧节拍逐字写着"从最小变到最大"，
+    #    模型精确照做，而 loop/travel 的阈值恰恰禁止整体尺寸变化 —— 两份规格从未对账。
+    #    像素动画的通行原则是"总像素质量在各帧间大致恒定"，运动应来自内部结构与亮度。
+    #
+    # 这两句**不能逐格重复**：区分各格的只有节拍里那十几个词，重复的公共前缀会把它们
+    # 埋掉，而且描述一旦跨行就破坏了 `Cell N (row R, column C): ...` 每格一行的契约。
+    # 变量名不能叫 identity —— 那个名字在本函数里已经绑着"Identity constraints"块，
+    # 复用会把它静默顶替掉，生成的 prompt 里整块消失（本次实际发生过）。
+    effect_preamble = ""
+    if action in EFFECT_ACTIONS:
+        effect_subject = " ".join(request.description.split())
+        effect_preamble = (
+            f"The effect in every cell is the same one: {effect_subject}\n"
+            "Across all cells it keeps the same overall footprint and the same amount of "
+            "lit pixels — the motion comes from light and detail moving INSIDE it, "
+            "never from the whole sprite becoming bigger or smaller.\n\n"
+        )
+
     poses = (
-        f"The {frames} cells must show these DIFFERENT poses. "
+        effect_preamble
+        + f"The {frames} cells must show these DIFFERENT poses. "
         "This is an animation, not a set of standing portraits — "
         "the body must visibly change between cells:\n"
         + numbered_poses(

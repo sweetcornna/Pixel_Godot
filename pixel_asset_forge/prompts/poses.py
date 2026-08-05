@@ -270,13 +270,14 @@ POSE_CYCLES: dict[str, PoseCycle] = {
     ),
     "travel": PoseCycle(
         beats=_beats(
-            ("COMPACT", "the projectile core is compact and bright, "
-                        "the trailing wisps short"),
-            ("STRETCH", "the core stretches along the direction of travel "
-                        "and the wisps lengthen"),
-            ("EXTENDED", "the core is at its most elongated, "
-                         "the trailing wisps at full length"),
-            ("SETTLE", "the core contracts back towards compact and the wisps shorten"),
+            ("LEADING-CHARGE", "brightness gathers at the leading edge "
+                               "and the inner wake dims"),
+            ("CORE-FLOW", "a bright current crosses the core toward the leading edge "
+                          "while interior filaments flicker behind it"),
+            ("TRAIL-SHED", "rear-edge pixels dissolve into sparse motes "
+                           "while the leading edge holds the highlight"),
+            ("RECIRCULATE", "the remaining inner motes fade and a fresh bright current "
+                            "re-forms along the centreline"),
         ),
     ),
     "impact": PoseCycle(
@@ -291,13 +292,24 @@ POSE_CYCLES: dict[str, PoseCycle] = {
     ),
     "loop": PoseCycle(
         beats=_beats(
-            ("SMALL", "the shape is at its smallest and brightest"),
-            ("GROWING", "the shape expands towards its mid size"),
-            ("LARGE", "the shape is at its largest and dimmest"),
-            ("SHRINKING", "the shape contracts back towards its mid size"),
+            ("DIAGONAL-GATHER", "the brightest inner energy threads gather along one "
+                                "diagonal and the rim stays subdued"),
+            ("CROSS-FLOW", "the bright inner threads reroute across the centre "
+                           "and the previous diagonal dims"),
+            ("RIM-CIRCUIT", "highlights circulate around the rim "
+                            "while the centre becomes subdued"),
+            ("RETURN-FLOW", "the rim highlights fade behind inward-flowing threads "
+                            "that restore the opening pattern"),
         ),
     ),
 }
+
+#: 画的是**特效本身**而不是一具身体的动作。
+#:
+#: 定义在 ``POSE_CYCLES`` 紧邻处，改节拍时一眼就能看到要不要同步改这里；
+#: 分散到别的模块去写会各自漂移。compiler 用它决定要不要提升"特效身份 + 轮廓
+#: 范围不变"那个公共块 —— 对角色动作说这两句没有意义。
+EFFECT_ACTIONS: frozenset[str] = frozenset({"travel", "impact", "loop"})
 
 
 #: 正面与背面：镜头看到的是角色的正面或背面，看不到侧向的起伏。
@@ -426,6 +438,11 @@ def pose_sequence(
 
     ``cycle`` 显式给出时用它（自定义动作走这条路），否则查内置模板。
     两者都没有就报错而不是退回泛泛描述。
+
+    **节拍只写"这一格与别格有什么不同"。** 特效是什么、以及"整体轮廓范围不变"
+    这类**对所有格子都成立**的话，由 compiler 提升成独立块只说一次 —— 逐格重复
+    会把真正区分各格的那十几个词埋进噪声，也会让每格描述跨行、破坏
+    ``Cell N (row R, column C): ...`` 每格一行的格式契约。
     """
     if cycle is None:
         cycle = cycle_for(action, locomotion)
