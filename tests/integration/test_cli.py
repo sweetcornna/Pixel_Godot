@@ -570,3 +570,54 @@ def test_import_rejects_an_unknown_intent(
 
     result = runner.invoke(app, ["import", str(request), str(art), "--as", "guess"])
     assert result.exit_code == EXIT_ERROR
+
+
+def test_the_readme_quickstart_sequence_actually_runs(
+    isolated_env: Path, examples_dir: Path
+) -> None:
+    """照 README「快速开始」的命令与参数逐条跑一遍，全链必须走通。
+
+    既有 CLI 测试都从 Python API 调 pipeline（`approve_seed(...)` /
+    `create_animation(...)`），或者只断言命令名出现在 `--help` 里 —— 那挡不住
+    **参数改名、产物换位置** 这类会让文档失效而测试全绿的变化。
+    实测过：照文档敲第一次就没敲对（`--approve-seed` 是 `create-animation` 的
+    标志，不是独立的 `approve-seed` 命令）。这条测试守的就是那份承诺。
+
+    这里只跑文档里的**离线部分**：`init` 要交互、`doctor --probe` 要联网，
+    两者各有自己的测试。provider 用 mock，不花钱。
+    """
+    request = isolated_env / "knight.yaml"
+    request.write_bytes((examples_dir / "knight.yaml").read_bytes())
+    config = isolated_env / "mock.yaml"
+    config.write_text(
+        "provider: mock\nmodel: mock-image\noutput_dir: outputs\ncache_dir: cache\n"
+        "max_concurrency: 1\n",
+        encoding="utf-8",
+    )
+    conf = ["--config", str(config)]
+
+    assert runner.invoke(app, ["doctor", *conf]).exit_code == EXIT_OK
+    assert runner.invoke(app, ["plan", str(request), *conf]).exit_code == EXIT_OK
+
+    created = runner.invoke(app, ["create-character", str(request), *conf])
+    assert created.exit_code == EXIT_OK, created.stdout
+    asset_dir = isolated_env / "outputs" / "knight_01"
+    # 文档明写这里停在人工闸门，让人先看这张图 —— 它必须真的在那儿。
+    assert (asset_dir / "seed-pixel.png").exists()
+
+    animated = runner.invoke(
+        app,
+        ["create-animation", "--asset", "knight_01", "--action", "walk",
+         "--direction", "down", "--approve-seed", *conf],
+    )
+    assert animated.exit_code == EXIT_OK, animated.stdout
+
+    for command in ("process", "validate", "export"):
+        result = runner.invoke(app, [command, str(asset_dir), *conf])
+        assert result.exit_code == EXIT_OK, (command, result.stdout)
+
+    # README 承诺 export 给出「Godot + Generic JSON + Contact Sheet」三样。
+    # contact sheet 落在 previews/ 而不是 exports/ —— 这个位置也一起钉住。
+    assert (asset_dir / "exports" / "godot" / "knight_01_frames.tres").exists()
+    assert (asset_dir / "exports" / "generic-json" / "knight_01.json").exists()
+    assert (asset_dir / "previews" / "contact-sheet.png").exists()
