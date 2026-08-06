@@ -268,9 +268,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "perspective",
-        "target_size",
-        "max_colors"
+        "perspective"
       ],
       "properties": {
         "perspective": {
@@ -343,8 +341,30 @@
           "items": {
             "$ref": "#/$defs/hex_color"
           }
+        },
+        "style_preset": {
+          "type": "string",
+          "description": "命名风格档位。只填空缺 —— 显式写出的 style 字段一律优先。"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "not": {
+              "required": [
+                "style_preset"
+              ]
+            }
+          },
+          "then": {
+            "required": [
+              "target_size",
+              "max_colors"
+            ]
+          },
+          "$comment": "档位负责补齐这两个字段；不给档位时它们仍是必填 —— 二者缺一就没有尺寸与色数可用。"
+        }
+      ]
     },
     "background": {
       "description": "背景与透明化策略。gpt-image-2 不支持透明背景，故默认走色键（ADR-004）。",

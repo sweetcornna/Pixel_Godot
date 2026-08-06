@@ -33,6 +33,7 @@ from ..constants import (
     DEFAULT_KEY_COLOR,
     DIRECTIONS,
     LOGICAL_SIZES,
+    STYLE_PRESETS,
     Direction,
 )
 from ..errors import RequestValidationError
@@ -125,6 +126,43 @@ class StyleSpec(_Base):
     palette_preset: str | None = None
     palette_colors: tuple[HexColor, ...] | None = None
     """显式锁定的共享色板。pack 展开时写入；数量不得超过 ``max_colors``。"""
+
+    style_preset: str | None = None
+    """命名风格档位（见 :data:`..constants.STYLE_PRESETS`）。
+
+    一组 style 字段得配套才成风格，而 ``target_size`` / ``max_colors`` /
+    ``shading`` / ``outline`` 此前只能逐个猜。档位把"某种商用资产长什么样"
+    固化成可复用的一行，数值有实测标定。
+
+    **只填空缺**：请求里显式写了的字段一律优先，档位绝不覆盖。
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_preset(cls, data: Any) -> Any:
+        """在校验**之前**用档位补齐缺席字段。
+
+        用 ``mode="before"`` 而不是 after：``target_size`` / ``max_colors`` 是必填的，
+        after 阶段它们已经因缺席而报错了。在 before 阶段补，字段类型一个都不用动
+        （改成 Optional 会波及全仓库按非空使用的地方）。
+
+        判据是"键在不在原始输入里"，不是"值等不等于默认值" —— 后者分不清
+        "没写"和"写了一个恰好等于默认的值"。
+        """
+        if not isinstance(data, dict):
+            return data
+        name = data.get("style_preset")
+        if name is None:
+            return data
+        preset = STYLE_PRESETS.get(name)
+        if preset is None:
+            raise ValueError(
+                f"未知风格档位 {name!r}。可选：{sorted(STYLE_PRESETS)}"
+            )
+        merged = dict(data)
+        for key, value in preset.items():
+            merged.setdefault(key, value)
+        return merged
 
     @field_validator("target_size")
     @classmethod
