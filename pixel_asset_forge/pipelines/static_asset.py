@@ -287,6 +287,15 @@ def create_static_asset(
             cell=(image.shape[1], image.shape[0]),
         )
         final_size = request.style.target_size
+        # 恒留 1px 边距。**这条把主体最长边锁死在 (边长-2)/边长 以下** ——
+        # 24px 画布上是 0.917，实测 6 张真实产出正好落在 0.83 ~ 0.92（顶到上限）。
+        #
+        # 参照实测（Kenney Pixel Platformer 的 27 张独立精灵，商用 CC0）：
+        # 最长边中位 0.96、90 分位 1.00，**21/27 张主体直接顶到画布边缘**。
+        # 也就是说这个内缩让我们画不出参照资产那种铺满构图。
+        #
+        # 拆掉它是独立的一次改动，别顺手做：会改掉每一个既有静态资产的产出，
+        # 要有真实生成证据才谈得上。此处只记下代价，不动行为。
         inner_size = (max(1, final_size[0] - 2), max(1, final_size[1] - 2))
         processed = process_grid(
             image,

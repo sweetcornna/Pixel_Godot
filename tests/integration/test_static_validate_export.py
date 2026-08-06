@@ -22,6 +22,7 @@ from pixel_asset_forge.models.validation import (
     ValidationReport,
 )
 from pixel_asset_forge.pipelines.export import run_export
+from pixel_asset_forge.pipelines.process import run_process
 from pixel_asset_forge.pipelines.static_asset import (
     create_static_asset,
     validate_and_export_static_asset,
@@ -302,9 +303,52 @@ def test_static_report_explicitly_skips_every_animation_only_check(
         "tile_adjacency",
         "tile_terrain",
         "map_adjacency",
+        # content_bounds 不是"动画专属"，它对静态图完全适用 —— 跳过的理由不同：
+        # 静态链自己恒留 1px 边距，这一项**红不起来**（见 engine 里的实测注释）。
+        "content_bounds",
     }
-    assert all(check.skip_reason == "static_asset" for check in skipped)
+    # 两种跳过必须分得开。混成一个理由，用户会以为 content_bounds 和
+    # tile_seam 一样"设计上就不该查"，而实际上它该查、只是查不出来。
+    by_id = {check.id: check for check in skipped}
+    assert by_id["content_bounds"].skip_reason == "guaranteed_by_construction"
+    assert all(
+        check.skip_reason == "static_asset"
+        for check in skipped
+        if check.id != "content_bounds"
+    )
     assert report.summary()["skipped"] == len(skipped)
+
+
+def test_content_bounds_cannot_fail_on_the_static_path(
+    static_store: ArtifactStore,
+) -> None:
+    """把"它红不起来"这句话钉成事实，而不是留在注释里。
+
+    做法是喂最极端的反例：原图整张涂成不透明实心，主体铺满、四边全部顶到画布
+    外沿。如果 content_bounds 在成品端还有一点判别力，这里必红。
+
+    它没红 —— 因为静态链在放回画布前先缩到 ``边长 - 2`` 再居中，产出包围盒恒为
+    (1,1)-(边长-2,边长-2)。同一趟里 ``cell_overflow`` 判 FAIL：真正的裁切信号在
+    **原图**上，那里顶不顶边由模型决定，检查才有内容。
+
+    这个测试同时是把关的：哪天有人把 content_bounds 改回 PASS/FAIL，它会红，
+    并指向"你得先证明它能失败"。
+    """
+    source = static_store.source_path("static")
+    canvas = np.array(Image.open(static_store.frames / "static.png")).shape[0]
+    Image.fromarray(np.full((256, 256, 3), (200, 40, 40), dtype=np.uint8)).save(source)
+    run_process(static_store.root)
+
+    frame = np.array(Image.open(static_store.frames / "static.png").convert("RGBA"))
+    ys, xs = np.where(frame[..., 3] > 128)
+    # 铺满的原图进去，出来仍恒留 1px —— 边距是我们加的，不是模型给的。
+    assert (xs.min(), ys.min(), xs.max(), ys.max()) == (1, 1, canvas - 2, canvas - 2)
+
+    checks = {check.id: check for check in validate_asset(static_store.root).checks}
+    assert checks["content_bounds"].result is CheckResult.SKIP
+    assert checks["content_bounds"].skip_reason == "guaranteed_by_construction"
+    # 真正有判别力的那一条必须逮住它，否则这次跳过就是净损失。
+    assert checks["cell_overflow"].result is CheckResult.FAIL
 
 
 def test_static_manifest_without_image_records_dependency_skips(

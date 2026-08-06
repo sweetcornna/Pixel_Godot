@@ -57,7 +57,6 @@ from .beat_signature import BeatSignature, check_beat_signature
 from .frame_order import UNDETECTABLE_MESSAGE, measure_frame_order
 from .metrics import (
     anchor_measurement,
-    content_box,
     exact_duplicates,
     height_variation,
     is_blank,
@@ -1167,18 +1166,32 @@ def validate_static_image(
         )
     )
 
-    box = content_box(frame)
-    touches_edge = box is not None and (
-        box[0] <= 0 or box[1] <= 0 or box[2] >= frame.shape[1] or box[3] >= frame.shape[0]
-    )
+    # content_bounds 在静态路径上**红不起来**，所以不能报 PASS。
+    #
+    # 静态链自己把画布留了边：`_process_static` 与 `static_asset` 都按
+    # ``inner = 目标边长 - 2`` 缩放，再 ``place_on_canvas(..., anchor=CENTER)``
+    # 居中放回，主体四周因此恒有 ≥1px 留白。检查再去问"主体碰到边缘了吗"，
+    # 问的是我们自己刚做完的那步算术，答案只能是"没有"。
+    #
+    # 实测（2026-08-06）：把原图整张涂成不透明实心 —— 最极端的"该接触边缘"
+    # 情形 —— 产出包围盒仍是 (1,1)-(22,22)，content_bounds 照样 PASS。
+    # 同一趟里 ``cell_overflow`` 正确判 FAIL：真正的裁切信号在**原图**上，
+    # 那里主体是否顶边由模型决定，不由我们决定，所以那个检查是有内容的。
+    #
+    # 一个永远绿的检查比没有更糟：它把"裁切已在成品端验过"写进了报告，
+    # 而实际上没有，还顺带把 passed 计数灌了水。改判 SKIP 并说明理由，
+    # 检查项仍在报告里可见，但不再冒充覆盖。
+    #
+    # **不能改成"留白 ≤1px 即 FAIL"**：真实产出里蘑菇的四边留白正好是
+    # 1/1/1/1（它是张合格的图），那条规则会直接把它误杀。留白是我们加的，
+    # 拿它反推裁切在静态路径上无解。
     checks.append(
         Check.make(
             "content_bounds",
             target,
-            CheckResult.FAIL if touches_edge or box is None else CheckResult.PASS,
-            measured=bool(touches_edge),
-            threshold=False,
-            message="主体接触画布边缘，可能已被裁切" if touches_edge else None,
+            CheckResult.SKIP,
+            skip_reason="guaranteed_by_construction",
+            message="静态链恒留 1px 边距，成品端查不出裁切；真实判据见 cell_overflow",
         )
     )
 

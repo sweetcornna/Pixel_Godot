@@ -188,7 +188,7 @@
           "maxLength": 500
         },
         "skip_reason": {
-          "description": "跳过原因，例如 derived 方向不参与轮廓校验，或 death 动作不做几何检查。",
+          "description": "跳过原因，例如 derived 方向不参与轮廓校验，或 death 动作不做几何检查。guaranteed_by_construction 表示检查本身有意义，但流水线把结论定死了，它红不起来。",
           "enum": [
             "derived_animation",
             "action_exempt",
@@ -196,7 +196,8 @@
             "non_looping_animation",
             "not_applicable",
             "dependency_failed",
-            "static_asset"
+            "static_asset",
+            "guaranteed_by_construction"
           ]
         }
       }
