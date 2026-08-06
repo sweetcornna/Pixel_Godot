@@ -132,6 +132,37 @@ def _base_options(request: AssetRequest | None, manifest: AssetManifest | None) 
     return options
 
 
+def _overridden_by_manifest(
+    request: AssetRequest | None, manifest: AssetManifest | None
+) -> list[str]:
+    """列出请求里改了、但 Manifest 会盖掉的画布/调色板字段。
+
+    `_base_options` 与 `_process_static` 都让 Manifest 赢，这是为幂等性刻意选的
+    （ADR-004：重跑必须复现同一份产出，不能因为请求被人改过就悄悄换一套参数）。
+    但"赢"和"不吭声"是两回事：改完 `request.yaml` 再 `process`，产出一模一样、
+    一句提示都没有，看上去就像改动生效了而结果恰好没变。
+
+    实测（2026-08-06）：把 `max_colors` 从 6 改成 2 重跑，产出仍是 6 色；
+    连改 Manifest 的 `palette.max_colors` 也不动 —— 静态资产吸附的是
+    `palette.colors` 那份**具体色表**，色数上限只在色表为空时才轮得到。
+    所以这里比的是"请求要什么"和"Manifest 存了什么"，不是去改谁赢。
+    """
+    if request is None or manifest is None:
+        return []
+    drift: list[str] = []
+    if request.style.target_size != (manifest.canvas.width, manifest.canvas.height):
+        drift.append(
+            f"target_size 请求 {list(request.style.target_size)}，"
+            f"Manifest {[manifest.canvas.width, manifest.canvas.height]}"
+        )
+    if request.style.max_colors != manifest.palette.max_colors:
+        drift.append(
+            f"max_colors 请求 {request.style.max_colors}，"
+            f"Manifest {manifest.palette.max_colors}"
+        )
+    return drift
+
+
 def _threshold_for(key: str, manifest: AssetManifest | None) -> float | None:
     """取这张原图**自己**的既有阈值；没有就返回 None（自动求解）。
 
@@ -501,6 +532,12 @@ def run_process(asset_dir: str | Path, *, only: str | None = None) -> list[dict[
 
     request = load_request(store.request_path) if store.request_path.exists() else None
     manifest = AssetManifest.load(store.manifest_path) if store.manifest_path.exists() else None
+    for drift in _overridden_by_manifest(request, manifest):
+        logger.warning(
+            "%s —— Manifest 优先，本次重跑不会采用请求里的新值。"
+            "要按新参数出图请重新生成资产。",
+            drift,
+        )
     if (manifest is not None and manifest.static_image is not None) or _has_static_job(store):
         return _process_static(store, request, manifest, only=only)
     base = _base_options(request, manifest)

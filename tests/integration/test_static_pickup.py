@@ -233,6 +233,54 @@ def test_generating_resume_rejects_uncached_provider_result(
     assert next(iter(persisted)).status is JobStatus.GENERATING
 
 
+def test_process_warns_that_request_palette_edits_are_ignored(
+    request_file: Path, config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    """改 request.yaml 的画布/色数再 `process`，产出不变 —— 但必须说出来。
+
+    Manifest 优先是为幂等性刻意选的，问题从来不是"谁赢"，而是**输了的一方
+    连个响都没有**：改完重跑，产出一模一样、零提示，与"改动生效但恰好没影响"
+    在终端上完全同形。真实排查过一次（2026-08-06）：把 `max_colors` 从 6 改成
+    2 重跑仍出 6 色，只能靠读源码才知道是被 Manifest 盖了。
+    """
+    created = create_static_asset(request_file, config)
+    store = ArtifactStore.for_asset(config.output_dir, "health_potion")
+    before = created.image_path.read_bytes()
+
+    edited = store.request_path.read_text(encoding="utf-8")
+    # 10 而不是更小：这份 fixture 带 9 色显式 palette_colors，`max_colors` 低于它
+    # 请求当场就非法了 —— 那样测的是校验器，不是这里要测的"改动被静默吞掉"。
+    edited = edited.replace("max_colors: 12", "max_colors: 10")
+    edited = edited.replace("target_size: [32, 32]", "target_size: [16, 16]")
+    assert "max_colors: 10" in edited and "[16, 16]" in edited, "改写没命中，测试会假绿"
+    store.request_path.write_text(edited, encoding="utf-8")
+
+    with caplog.at_level("WARNING"):
+        run_process(store.root)
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    # 两项各自都要报 —— 只报一项等于另一项仍然静默。
+    assert "max_colors 请求 10，Manifest 12" in messages
+    assert "target_size 请求 [16, 16]，Manifest [32, 32]" in messages
+    assert "Manifest 优先" in messages
+    # 警告归警告，产出仍必须逐字节不变：这条警告不许附带任何行为改变。
+    assert created.image_path.read_bytes() == before
+
+
+def test_process_stays_quiet_when_request_matches_manifest(
+    request_file: Path, config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    """没改就不许报 —— 否则警告会退化成每次都响的背景噪音，等于没有。"""
+    create_static_asset(request_file, config)
+    store = ArtifactStore.for_asset(config.output_dir, "health_potion")
+
+    with caplog.at_level("WARNING"):
+        run_process(store.root)
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Manifest 优先" not in messages
+
+
 def load_pack_data(path: Path) -> dict:
     import yaml
 
