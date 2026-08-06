@@ -92,7 +92,15 @@ SkipReason = Literal[
     "not_applicable",
     "dependency_failed",
     "static_asset",
+    "guaranteed_by_construction",
 ]
+"""``guaranteed_by_construction`` 与 ``not_applicable`` 不是一回事，别合并。
+
+- ``not_applicable`` —— 这个检查对该目标**没有意义**（静态图查不了循环闭合）。
+- ``guaranteed_by_construction`` —— 检查有意义，但**流水线自己把结论定死了**，
+  它红不起来，因此那句 PASS 不携带任何信息。用户该做的事不同：前者不必再管，
+  后者要知道"这一项其实没人在查"，并去看真正有判别力的那个检查。
+"""
 
 
 class Severity(StrEnum):
