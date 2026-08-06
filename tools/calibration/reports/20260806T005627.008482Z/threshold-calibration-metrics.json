@@ -1,0 +1,114 @@
+[
+  {
+    "asset": "cal_knight",
+    "key": "cast_down",
+    "anchor_drift": 0.44537495241720393,
+    "height_variation": 0.15441176470588233,
+    "silhouette_variation": 0.1541639767591995
+  },
+  {
+    "asset": "cal_knight",
+    "key": "walk_up",
+    "anchor_drift": 0.4922164566345444,
+    "height_variation": 0.02099737532808399,
+    "silhouette_variation": 0.02453201519520344
+  },
+  {
+    "asset": "cal_archer",
+    "key": "cast_down",
+    "anchor_drift": 0.37336561743341434,
+    "height_variation": 0.053475935828877004,
+    "silhouette_variation": 0.0917203767972236
+  },
+  {
+    "asset": "cal_archer",
+    "key": "walk_up",
+    "anchor_drift": 0.49511400651465465,
+    "height_variation": 0.020969855832241154,
+    "silhouette_variation": 0.057862065037872314
+  },
+  {
+    "asset": "cal_mage",
+    "key": "cast_down",
+    "anchor_drift": 0.4380165289256226,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.02481389578163772
+  },
+  {
+    "asset": "cal_mage",
+    "key": "walk_up",
+    "anchor_drift": 0.4951682772409214,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.0540247613489516
+  },
+  {
+    "asset": "cal_golem",
+    "key": "cast_down",
+    "anchor_drift": 0.44785807009952094,
+    "height_variation": 0.21730382293762576,
+    "silhouette_variation": 0.26148409893992935
+  },
+  {
+    "asset": "cal_imp",
+    "key": "cast_down",
+    "anchor_drift": 0.492529880478088,
+    "height_variation": 0.055900621118012424,
+    "silhouette_variation": 0.0869123252858958
+  },
+  {
+    "asset": "cal_slime",
+    "key": "cast_down",
+    "anchor_drift": 0.37899073120494364,
+    "height_variation": 0.4736842105263158,
+    "silhouette_variation": 0.41535530308376256
+  },
+  {
+    "asset": "cal_fireball",
+    "key": "travel_down",
+    "anchor_drift": 0.2198357548957688,
+    "height_variation": 0.0,
+    "silhouette_variation": 0.008233058898036731
+  },
+  {
+    "asset": "cal_fireball",
+    "key": "impact",
+    "anchor_drift": 0.3954372623574116,
+    "height_variation": 0.4352331606217617,
+    "silhouette_variation": 1.4088050314465408
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "key": "travel_down",
+    "anchor_drift": 0.4712643678160937,
+    "height_variation": 0.03162055335968379,
+    "silhouette_variation": 0.15339233038348082
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "key": "impact",
+    "anchor_drift": 1.0,
+    "height_variation": 0.7058823529411764,
+    "silhouette_variation": 1.715492957746479
+  },
+  {
+    "asset": "cal_lightning_chain",
+    "key": "loop",
+    "anchor_drift": 0.3726708074534173,
+    "height_variation": 0.048,
+    "silhouette_variation": 0.07724493080141616
+  },
+  {
+    "asset": "cal_healing_aura",
+    "key": "impact",
+    "anchor_drift": 0.18753781004234682,
+    "height_variation": 0.23214285714285715,
+    "silhouette_variation": 0.8412657576537175
+  },
+  {
+    "asset": "cal_healing_aura",
+    "key": "loop",
+    "anchor_drift": 0.13842173350582243,
+    "height_variation": 0.0967741935483871,
+    "silhouette_variation": 0.043106180665610144
+  }
+]

@@ -712,3 +712,76 @@ def test_every_locomotion_produces_unique_poses(locomotion, direction, frames) -
     """
     poses = pose_sequence("walk", frames, direction, None, locomotion)
     assert len(set(poses)) == len(poses) == frames
+
+
+# -- 特效不是角色（2026-08-06 live 实测教训）-----------------------------
+
+
+@pytest.mark.parametrize(
+    ("action", "direction"),
+    (("travel", "down"), ("impact", None), ("loop", None)),
+)
+def test_effect_prompts_never_ask_for_a_body(examples_dir, action, direction) -> None:
+    """特效 prompt 不许出现"同一个角色/脸/头发/脚"这类身体措辞。
+
+    动画编译链是所有动画资产共用的，而它原本**只在否定块**按 asset_type 分支
+    （`negative_block(character=...)`），正面块无条件按角色写。于是特效 prompt 里
+    "character" 出现 18 次，还有 face / hair / feet，朝向块更是逐字要求
+    **"两只眼睛可见、鼻子对着镜头"**。
+
+    2026-08-06 live 实测后果：火球被画成一个**有腿有眼的火焰生物**，而请求明写
+    "No character, ground or shadow"。模型没错 —— 它同时满足了两套互相矛盾的指令。
+    指标完全掩盖了这件事（travel height 0.0316、silhouette 0.1534，都远低于阈值）：
+    那个"生物"四帧之间确实很稳定。**稳定地画错，方差判据看不见。**
+    """
+    fireball = load_request(examples_dir / "fireball.yaml")
+    prompt = compile_animation_prompt(
+        fireball,
+        action=action,
+        direction=direction,
+        frames=4,
+        layout=grid_for_frames(4),
+        key_color="#FF00FF",
+    ).text
+
+    # 逐行查，且排除三类正常命中：请求描述原文（它自己写着 "No character"）、
+    # 我们主动写的否定句、以及相机块里"相机角度不旋转 character"那句通用说明。
+    subject = " ".join(fireball.description.split())
+    offenders = []
+    for line in prompt.splitlines():
+        low = line.lower()
+        if subject in line or low.startswith("camera:"):
+            continue
+        if "no face" in low or "not a creature" in low or "NOT a creature" in line:
+            continue
+        if any(word in low for word in ("character", "same face and hair", "hair")):
+            offenders.append(line)
+    assert not offenders, offenders
+
+
+def test_effect_orientation_does_not_demand_eyes_or_a_nose(examples_dir) -> None:
+    """朝向块对特效只说方向，不说五官 —— 否则就是 prompt 在要求火球长眼睛。"""
+    fireball = load_request(examples_dir / "fireball.yaml")
+    prompt = compile_animation_prompt(
+        fireball, action="travel", direction="down", frames=4,
+        layout=grid_for_frames(4), key_color="#FF00FF",
+    ).text
+
+    assert "Effect orientation" in prompt
+    assert "both eyes visible" not in prompt
+    assert "the nose pointing straight at the camera" not in prompt
+    assert "shoulders square to the viewer" not in prompt
+
+
+def test_character_prompts_keep_every_body_constraint(knight) -> None:
+    """反向守卫：给特效松绑不能连角色的约束一起松掉。"""
+    prompt = compile_animation_prompt(
+        knight, action="walk", direction="down", frames=4,
+        layout=grid_for_frames(4), key_color="#FF00FF",
+    ).text
+
+    assert "the same character as the reference image, same face and hair" in prompt
+    assert "both eyes visible" in prompt
+    assert "the feet of every pose must rest on the same horizontal baseline" in prompt
+    assert "Body orientation" in prompt
+    assert "Effect orientation" not in prompt

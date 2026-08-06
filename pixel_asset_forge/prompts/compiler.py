@@ -162,13 +162,43 @@ def _custom_cycle(request: AssetRequest, action: str) -> PoseCycle | None:
     return None
 
 
-def _orientation_block(direction: Direction | None, perspective: str) -> str:
+#: 特效的"朝向"只有方向，没有脸。
+#:
+#: `_FACING` 那套逐条写着"两只眼睛可见""鼻子对着镜头""不露出耳朵或脸颊" ——
+#: 那是角色转身的说法。特效走同一条编译链时会拿到同一段文字，等于**prompt 在
+#: 直接要求火球长出眼睛和鼻子**（2026-08-06 live 实测：火球被画成有腿有眼的生物）。
+_EFFECT_FACING = {
+    "down": "travelling towards the bottom of the cell, its leading edge pointing down",
+    "up": "travelling towards the top of the cell, its leading edge pointing up",
+    "left": "travelling towards the left of the cell, its leading edge pointing left",
+    "right": "travelling towards the right of the cell, its leading edge pointing right",
+}
+
+
+def _orientation_block(
+    direction: Direction | None, perspective: str, *, is_character: bool = True
+) -> str:
     """相机俯角与角色转身分开说，且转身单独成段。
 
     合成一句 "... , {facing}, {perspective}." 时朝向被埋在逗号中间，
     模型把它当修饰语而不是硬约束。拆成独立一段、并明说"相机角度不改变朝向"
     之后才压得住那个多余的 45° 转身。
     """
+    if not is_character:
+        facing = (
+            _EFFECT_FACING[direction]
+            if direction
+            else "seen from one fixed angle throughout"
+        )
+        return (
+            f"Camera: {_PERSPECTIVE[perspective]}.\n\n"
+            "Effect orientation — this is a hard requirement, it applies to every "
+            "single cell and overrides any default framing:\n"
+            f"the effect is {facing}.\n"
+            "The camera angle described above must not rotate it away from this "
+            "orientation."
+        )
+
     facing = _FACING[direction] if direction else "seen from one fixed angle throughout"
     return (
         f"Camera: {_PERSPECTIVE[perspective]}.\n\n"
@@ -394,14 +424,40 @@ def compile_animation_prompt(
     style = request.style
     cycle = _custom_cycle(request, action)
 
-    identity = (
-        "Identity constraints — these must be IDENTICAL in every single cell:\n"
-        "- the same character as the reference image, same face and hair\n"
-        "- the same outfit, same armour, same colours\n"
-        "- the same weapon or held item, in the same hand\n"
-        "- the same body proportions and the same overall size\n"
-        "- the same body orientation, exactly the one stated above"
-    )
+    # 主体该叫什么。**动画 prompt 原本通篇写死 "character"**，而这条编译链是所有
+    # 动画资产共用的 —— 特效走同一条路，于是 projectile/spell 的 prompt 里
+    # "character" 出现 18 次，还有 face / hair / feet / eyes。
+    #
+    # 2026-08-06 live 实测的后果：火球被画成一个**有腿有眼的火焰生物**，而请求
+    # 明写 "No character, ground or shadow"。模型没错 —— 它同时满足了"这是特效"
+    # 和"同一个角色、同样的脸和头发、两只眼睛可见"两套指令。
+    #
+    # 此前只有否定块按 asset_type 分支（negative_block(character=...)）：
+    # **否定块知道这不是角色，正面块不知道**，两边自相矛盾。
+    #
+    # 规则本身一条不改 —— 它们对特效同样成立（"只用模板真有的部件、不许凭空加四肢"
+    # 正是为史莱姆长腿加的，对火球一样管用）。改的只是称呼。
+    is_character = request.asset_type == "character"
+
+    if is_character:
+        identity = (
+            "Identity constraints — these must be IDENTICAL in every single cell:\n"
+            "- the same character as the reference image, same face and hair\n"
+            "- the same outfit, same armour, same colours\n"
+            "- the same weapon or held item, in the same hand\n"
+            "- the same body proportions and the same overall size\n"
+            "- the same body orientation, exactly the one stated above"
+        )
+    else:
+        identity = (
+            "Identity constraints — these must be IDENTICAL in every single cell:\n"
+            "- the same effect as the reference image, same palette and same "
+            "internal structure\n"
+            "- it is an effect, NOT a creature: no face, no eyes, no mouth, no head, "
+            "no limbs, no arms, no legs, no feet, no torso, no clothing\n"
+            "- the same overall size\n"
+            "- the same orientation, exactly the one stated above"
+        )
 
     if layout.rows == 1:
         layout_rules = (
@@ -409,7 +465,8 @@ def compile_animation_prompt(
             f"exactly {layout.cols} equally sized cells in ONE horizontal row, "
             f"read left to right.\n"
             f"Draw exactly {frames} poses, one per cell. "
-            f"They are consecutive frames of one continuous cycle of one character, "
+            f"They are consecutive frames of one continuous cycle of one "
+            f"{'character' if is_character else 'effect'}, "
             f"not {frames} separate drawings: cell 2 continues the motion started in "
             f"cell 1, cell 3 continues cell 2, and the last cell loops back to the first."
         )
@@ -419,7 +476,8 @@ def compile_animation_prompt(
             f"a {layout.cols} columns x {layout.rows} rows grid of {layout.capacity} "
             f"equally sized cells, read left to right then top to bottom.\n"
             f"Draw exactly {frames} poses, one per cell. "
-            f"They are consecutive frames of one continuous cycle of one character, "
+            f"They are consecutive frames of one continuous cycle of one "
+            f"{'character' if is_character else 'effect'}, "
             f"not {frames} separate drawings: each cell continues the motion of the "
             f"previous one, the last cell loops back to the first, and the second row "
             f"continues straight on from the end of the first row — the two rows are "
@@ -432,16 +490,48 @@ def compile_animation_prompt(
         "a cell boundary\n"
         f"- leave at least {PROMPT_MARGIN_PERCENT}% empty background margin on all four "
         "sides of every pose\n"
-        "- the full body must be visible in every cell\n"
-        "- the feet of every pose must rest on the same horizontal baseline\n"
-        "- every character must be drawn at exactly the same size\n"
-        "- no cell may be empty and no two cells may be identical"
+        + (
+            "- the full body must be visible in every cell\n"
+            "- the feet of every pose must rest on the same horizontal baseline\n"
+            "- every character must be drawn at exactly the same size\n"
+            if is_character
+            # 特效没有"全身"也没有"脚"。照搬这两条正是模型给火球画出腿的由来之一。
+            else "- the whole effect must be visible in every cell\n"
+            "- every cell's effect must be centred on the same point\n"
+            "- the effect must be drawn at exactly the same size in every cell\n"
+        )
+        + "- no cell may be empty and no two cells may be identical"
     )
 
     # 摇摆的真正来源：模型把每个格子当独立立绘画，于是同一个正面走路里
     # 有的格子身体略偏左、有的略偏右，播放起来角色左右晃。
     # 光说"朝向正对镜头"不够 —— 必须点名禁止"格子之间"的朝向变化。
-    continuity = (
+    if not is_character:
+        # 特效版：保住"帧间连续、朝向锁定、不许凭空加部件"这些真正有效的约束，
+        # 但不提四肢 / 武器 / 左右手 —— 那些概念特效没有，照搬正是模型给火球
+        # 画出腿和眼睛的由来（2026-08-06 live 实测）。
+        continuity = (
+            "Frame-to-frame continuity — the single most common failure here:\n"
+            "- this is ONE effect animating, not a creature: never give it a face, "
+            "eyes, a mouth, limbs, hands or feet, in any cell\n"
+            "- the effect's orientation is LOCKED across all cells; do not mirror, "
+            "flip or rotate it between cells\n"
+            "- the effect stays centred on the same point in every cell; it must not "
+            "drift sideways from cell to cell\n"
+            "- use ONLY the shapes the effect in the template actually has. Inventing "
+            "a body part it does not have is the worst failure possible: it turns the "
+            "sequence into a creature instead of an effect\n"
+            "\n"
+            "What is LOCKED is the orientation and the footprint, NOT the motion:\n"
+            "- the difference between neighbouring cells must be obvious at a glance "
+            "when the cells are seen side by side\n"
+            "- express it with the interior — where the bright energy sits, how the "
+            "filaments run, which parts fade — not by scaling the whole sprite\n"
+            "- do not draw a row of near-identical shapes with only tiny differences — "
+            "that is the single most common way this comes out wrong"
+        )
+    else:
+        continuity = (
         "Frame-to-frame continuity — the single most common failure here:\n"
         "- the body orientation is LOCKED across all cells: if the character faces "
         "the camera in one cell it faces the camera in every cell, at exactly the "
@@ -483,7 +573,7 @@ def compile_animation_prompt(
         "and right swap places partway through the sequence: if the weapon is in the "
         "right hand it is in the right hand in every cell, if the character falls to "
         "one side it falls to that side in every cell that shows the fall."
-    )
+      )
 
     # 特效动作要额外说两件**对所有格子都成立**的事，所以提升成一个块只说一次：
     #
@@ -520,16 +610,28 @@ def compile_animation_prompt(
 
     text = "\n\n".join(
         [
-            f"Pixel art {action} animation sprite sheet for the SAME character "
-            "as the reference image.",
+            f"Pixel art {action} animation sprite sheet for the SAME "
+            f"{'character' if is_character else 'effect'} as the reference image.",
             # 参考 agent-sprite-forge 的 character anchor sheet 措辞：告诉模型
             # 底图不是空白，而是一张已经摆好位置与大小的模板，它只需改姿势。
-            "The image you are editing is a template: every cell already contains the "
-            "exact same accepted character, at the correct size, with its feet on the "
-            "correct ground line. Change ONLY the pose in each cell. Keep each cell's "
-            "character size, body-root position, foot-contact line and padding exactly "
-            "as the template has them. Never zoom or resize a pose to fill its cell.",
-            _orientation_block(direction, style.perspective),
+            (
+                "The image you are editing is a template: every cell already contains "
+                "the exact same accepted character, at the correct size, with its feet "
+                "on the correct ground line. Change ONLY the pose in each cell. Keep "
+                "each cell's character size, body-root position, foot-contact line and "
+                "padding exactly as the template has them. Never zoom or resize a pose "
+                "to fill its cell."
+                if is_character
+                # 特效没有脚,也没有"地面接触线"。照搬这句正是模型给火球画腿的由来。
+                else "The image you are editing is a template: every cell already "
+                "contains the exact same accepted effect, at the correct size, centred "
+                "on the correct point. Change ONLY what happens inside it in each cell. "
+                "Keep each cell's effect size, centre position and padding exactly as "
+                "the template has them. Never zoom or resize it to fill its cell."
+            ),
+            _orientation_block(
+                direction, style.perspective, is_character=is_character
+            ),
             layout_rules,
             poses,
             identity,

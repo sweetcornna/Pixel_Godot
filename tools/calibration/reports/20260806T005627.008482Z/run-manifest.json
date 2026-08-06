@@ -1,0 +1,167 @@
+{
+  "schema_version": "1.0",
+  "generated_at_utc": "2026-08-06T00:56:27.008500Z",
+  "provider": "openai",
+  "model": "gpt-image-2",
+  "cache_enabled": false,
+  "matrix": {
+    "asset_count": 9,
+    "sample_count": 16,
+    "assets": [
+      {
+        "asset": "cal_knight",
+        "label": "骑士",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "cast_down",
+            "calls": 1
+          },
+          {
+            "key": "walk_up",
+            "calls": 1
+          }
+        ],
+        "calls": 3
+      },
+      {
+        "asset": "cal_archer",
+        "label": "弓手",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "cast_down",
+            "calls": 1
+          },
+          {
+            "key": "walk_up",
+            "calls": 1
+          }
+        ],
+        "calls": 3
+      },
+      {
+        "asset": "cal_mage",
+        "label": "法师",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "cast_down",
+            "calls": 1
+          },
+          {
+            "key": "walk_up",
+            "calls": 1
+          }
+        ],
+        "calls": 3
+      },
+      {
+        "asset": "cal_golem",
+        "label": "石魔",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "cast_down",
+            "calls": 1
+          }
+        ],
+        "calls": 2
+      },
+      {
+        "asset": "cal_imp",
+        "label": "小恶魔",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "cast_down",
+            "calls": 1
+          }
+        ],
+        "calls": 2
+      },
+      {
+        "asset": "cal_slime",
+        "label": "史莱姆",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "cast_down",
+            "calls": 1
+          }
+        ],
+        "calls": 2
+      },
+      {
+        "asset": "cal_fireball",
+        "label": "火球",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "travel_down",
+            "calls": 1
+          },
+          {
+            "key": "impact",
+            "calls": 1
+          }
+        ],
+        "calls": 3
+      },
+      {
+        "asset": "cal_lightning_chain",
+        "label": "闪电链",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "travel_down",
+            "calls": 1
+          },
+          {
+            "key": "impact",
+            "calls": 1
+          },
+          {
+            "key": "loop",
+            "calls": 1
+          }
+        ],
+        "calls": 4
+      },
+      {
+        "asset": "cal_healing_aura",
+        "label": "治疗光环",
+        "seed_calls": 1,
+        "actions": [
+          {
+            "key": "impact",
+            "calls": 1
+          },
+          {
+            "key": "loop",
+            "calls": 1
+          }
+        ],
+        "calls": 3
+      }
+    ]
+  },
+  "budget": {
+    "max_calls": 25,
+    "planned_calls": 25,
+    "completed_calls": 25,
+    "reconciled": true
+  },
+  "constants": {
+    "path": "pixel_asset_forge/constants.py",
+    "sha256_before": "672f804a35794e96d1cb9ad8aadf57579e43e2990a96568896ae2b3096bf2aa0",
+    "sha256_after": "672f804a35794e96d1cb9ad8aadf57579e43e2990a96568896ae2b3096bf2aa0",
+    "unchanged": true
+  },
+  "outputs": {
+    "raw_metrics": "threshold-calibration-metrics.json",
+    "aggregates": "threshold-calibration-aggregates.json",
+    "recommendation_report": "threshold-recommendations.md",
+    "preview_paths": "preview-paths.json"
+  }
+}
