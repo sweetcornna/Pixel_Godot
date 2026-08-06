@@ -117,3 +117,79 @@ def test_malformed_yaml_is_a_request_error(tmp_path: Path) -> None:
     path.write_text("asset_id: [unclosed\n", encoding="utf-8")
     with pytest.raises(RequestValidationError):
         load_request(path)
+
+
+# -- 命名风格档位（对标 Kenney CC0 实测分布）-----------------------------
+
+
+def test_style_preset_fills_in_the_missing_fields() -> None:
+    """档位把一组配套的 style 字段固化成一行 —— 此前只能逐个猜。"""
+    from pixel_asset_forge.models.request import StyleSpec
+
+    style = StyleSpec(perspective="side_view", style_preset="chunky_icon")
+
+    assert style.target_size == (24, 24)
+    assert style.max_colors == 6
+    assert style.shading == "flat"
+    assert style.outline == "single_pixel_dark"
+
+
+def test_explicit_values_always_beat_the_preset() -> None:
+    """档位**只填空缺**。反过来会让"我明明写了却没生效"变成查不出来的问题。"""
+    from pixel_asset_forge.models.request import StyleSpec
+
+    style = StyleSpec(
+        perspective="side_view", style_preset="chunky_icon",
+        max_colors=16, shading="three_tone",
+    )
+
+    assert style.max_colors == 16
+    assert style.shading == "three_tone"
+    assert style.target_size == (24, 24)  # 没写的那项仍由档位补
+
+
+def test_a_request_without_a_preset_keeps_the_old_behaviour() -> None:
+    """不给档位时一个字节都不该变。"""
+    from pixel_asset_forge.models.request import StyleSpec
+
+    style = StyleSpec(perspective="side_view", target_size=(64, 64), max_colors=32)
+
+    assert style.target_size == (64, 64)
+    assert style.max_colors == 32
+    assert style.shading == "two_tone"
+    assert style.style_preset is None
+
+
+def test_an_unknown_preset_is_refused_with_the_valid_names() -> None:
+    """静默忽略会让"我换了档位却没反应"查不出来。"""
+    from pydantic import ValidationError
+
+    from pixel_asset_forge.models.request import StyleSpec
+
+    with pytest.raises(ValidationError) as exc:
+        StyleSpec(perspective="side_view", style_preset="not_a_preset")
+    assert "chunky_icon" in str(exc.value)
+
+
+def test_the_schema_requires_size_and_colors_only_without_a_preset() -> None:
+    """schema 跑在 pydantic 之前，它也必须认这条 —— 否则档位在对外契约那层就被拒了。"""
+    from pixel_asset_forge.errors import RequestValidationError
+    from pixel_asset_forge.schema_registry import validate_against
+
+    base = {
+        "schema_version": "1.0", "asset_id": "t", "asset_type": "character",
+        "description": "a test subject long enough",
+        "export": {"targets": ["generic-json"]},
+        "animations": [{"name": "idle", "frames": 4, "fps": 8, "loop": True}],
+    }
+    # 有档位：两个字段可省
+    validate_against(
+        "asset-request",
+        {**base, "style": {"perspective": "side_view", "style_preset": "chunky_icon"}},
+        what="t",
+    )
+    # 无档位：仍然必填
+    with pytest.raises(RequestValidationError):
+        validate_against(
+            "asset-request", {**base, "style": {"perspective": "side_view"}}, what="t"
+        )
