@@ -7,13 +7,21 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 from PIL import Image
 from typer.testing import CliRunner
 
 from pixel_asset_forge.cli import EXIT_OK, EXIT_VALIDATION_FAILED, app
 from pixel_asset_forge.config import Config
+from pixel_asset_forge.errors import ProcessingError
+from pixel_asset_forge.models.job import JobStatus
 from pixel_asset_forge.models.manifest import AssetManifest
 from pixel_asset_forge.pipelines import approve_seed, create_animation, create_character
+from pixel_asset_forge.pipelines.static_asset import (
+    create_static_asset,
+    validate_and_export_static_asset,
+)
+from pixel_asset_forge.pipelines.validation import run_validation
 from pixel_asset_forge.repair import RepairAction, execute_plan, plan_repairs, rounds_used
 from pixel_asset_forge.storage import ArtifactStore
 from pixel_asset_forge.validation import validate_asset
@@ -42,6 +50,49 @@ def asset(config: Config, tmp_path: Path, examples_dir: Path) -> ArtifactStore:
     approve_seed(store.root)
     create_animation(store.root, action="walk", direction="down", config=config)
     return store
+
+
+def _static_request(asset_id: str) -> dict[str, object]:
+    return {
+        "schema_version": "1.1",
+        "asset_id": asset_id,
+        "asset_type": "prop",
+        "description": "A clearly readable isolated wooden crate for a fantasy game inventory.",
+        "style": {
+            "perspective": "top_down_3_4",
+            "target_size": [32, 32],
+            "max_colors": 12,
+            "outline": "single_pixel_dark",
+            "shading": "two_tone",
+            "antialiasing": False,
+            "lighting": "fixed_top_left",
+        },
+        "background": {
+            "mode": "chroma_key",
+            "color": "#FF00FF",
+            "fallback_colors": ["#00FF00", "#00FFFF"],
+        },
+        "export": {"targets": ["generic-json"]},
+    }
+
+
+@pytest.fixture
+def static_asset(config: Config, tmp_path: Path) -> ArtifactStore:
+    """一个走完生成 → 处理 → 验证 → 导出的静态资产（无动作网格）。"""
+    request_path = tmp_path / "wooden_crate.yaml"
+    request_path.write_text(
+        yaml.safe_dump(_static_request("wooden_crate"), sort_keys=False), encoding="utf-8"
+    )
+    create_static_asset(request_path, config)
+    store = ArtifactStore.for_asset(config.output_dir, "wooden_crate")
+    validate_and_export_static_asset(store.root, targets=["generic-json"])
+    return store
+
+
+def _job_status(store: ArtifactStore, key: str) -> JobStatus:
+    table = store.load_job_table()
+    assert table is not None
+    return next(job for job in table if job.key == key).status
 
 
 # -- 正常产出 --------------------------------------------------------------
@@ -202,6 +253,118 @@ def test_repair_budget_is_enforced(asset: ArtifactStore, config: Config) -> None
         execute_plan(asset.root, exhausted, config, allow_api=False)
 
 
+# -- 修复之后还得能验证 ------------------------------------------------------
+
+
+def _inject_local_defect(store: ArtifactStore, key: str) -> None:
+    """透明像素带 RGB —— 本地可修，触发 REPROCESS 那条边。"""
+    for path in sorted(store.frames_of(key).glob("*.png")):
+        arr = np.array(Image.open(path).convert("RGBA"))
+        arr[0, 0, :3] = (7, 7, 7)
+        Image.fromarray(arr, "RGBA").save(path)
+
+
+def test_local_repair_leaves_the_job_where_validate_can_pick_it_up(
+    asset: ArtifactStore, config: Config
+) -> None:
+    """修复的下一步是重新验证 —— 这条环必须真的闭合。
+
+    ``run_process`` 只跑像素，不碰任务表；修复推进到 ``processing`` 之后没人把它
+    送到 ``processed``，任务就卡在那里。而 ``validate`` 只收 processed /
+    validating / validated / validation_failed —— 实测报"没有可验证任务，当前状态：
+    approved, planned, processing"，正是 repair 自己打印的下一步做不到。
+    """
+    _inject_local_defect(asset, "walk_down")
+    report = run_validation(asset.root)
+    assert report.passed is False
+    assert _job_status(asset, "walk_down") is JobStatus.VALIDATION_FAILED
+
+    execute_plan(asset.root, plan_repairs(report), config, allow_api=False)
+    assert _job_status(asset, "walk_down") is JobStatus.PROCESSED
+
+    assert run_validation(asset.root).passed is True
+    assert _job_status(asset, "walk_down") is JobStatus.VALIDATED
+
+
+def test_local_repair_marks_the_job_failed_when_the_source_is_gone(
+    asset: ArtifactStore, config: Config
+) -> None:
+    """原图没了就离线补不回来 —— 状态得如实说，不能停在 ``processing`` 装作在跑。"""
+    _inject_local_defect(asset, "walk_down")
+    plan = plan_repairs(run_validation(asset.root))
+    asset.source_path("walk_down").unlink()
+
+    outcomes = execute_plan(asset.root, plan, config, allow_api=False)
+    assert outcomes[0].performed is False
+    assert "无法离线重跑" in outcomes[0].detail
+    assert _job_status(asset, "walk_down") is JobStatus.FAILED
+
+
+# -- 静态资产不是动作网格 ----------------------------------------------------
+
+
+def _blank_static_image(store: ArtifactStore) -> None:
+    Image.fromarray(np.zeros((32, 32, 4), dtype=np.uint8), "RGBA").save(store.frames / "static.png")
+
+
+def test_static_repair_withholds_regeneration_and_names_the_right_thing(
+    static_asset: ArtifactStore, config: Config
+) -> None:
+    _blank_static_image(static_asset)
+    plan = plan_repairs(run_validation(static_asset.root))
+    assert [(s.target, s.action) for s in plan.steps] == [
+        ("static", RepairAction.REGENERATE_GRID)
+    ]
+
+    outcomes = execute_plan(static_asset.root, plan, config, allow_api=False)
+    assert outcomes[0].performed is False
+    assert "静态原图" in outcomes[0].detail, "静态资产没有动作网格，别照着动画的措辞说"
+    assert "--allow-api" in outcomes[0].detail
+
+
+def test_static_repair_regenerates_through_the_static_pipeline(
+    static_asset: ArtifactStore, config: Config
+) -> None:
+    """静态任务的 ID 恰好等于按动画拼出来的 ID，于是它一直被当动作网格修。
+
+    实测旧行为：任务被推到 ``generating``（"有一次调用在飞"的意思），
+    ``create_animation`` 随后抛 input_fingerprint 冲突，``repair-log.json``
+    连写都没写到 —— 而"所有修复操作有日志"是 Sprint 5 的退出门槛。
+    """
+    _blank_static_image(static_asset)
+    plan = plan_repairs(run_validation(static_asset.root))
+
+    outcomes = execute_plan(static_asset.root, plan, config, allow_api=True)
+
+    assert outcomes[0].performed is True
+    assert _job_status(static_asset, "static") is JobStatus.PROCESSED
+    log = json.loads((static_asset.root / "repair-log.json").read_text(encoding="utf-8"))
+    assert log[0]["outcomes"][0]["target"] == "static"
+    # 修完照样得能验证、能导出 —— 与动画走同一条环。
+    assert run_validation(static_asset.root).passed is True
+    assert validate_and_export_static_asset(
+        static_asset.root, targets=["generic-json"]
+    ).passed is True
+
+
+def test_static_repair_refuses_when_the_asset_dir_is_not_under_output_dir(
+    static_asset: ArtifactStore, config: Config, tmp_path: Path
+) -> None:
+    """重生成按 ``config.output_dir`` 定位资产 —— 对不上就会修到另一个目录去。"""
+    _blank_static_image(static_asset)
+    plan = plan_repairs(run_validation(static_asset.root))
+    elsewhere = Config(
+        provider=config.provider,
+        model=config.model,
+        output_dir=tmp_path / "another-outputs",
+        cache_dir=config.cache_dir,
+        max_repair_rounds=config.max_repair_rounds,
+    )
+
+    with pytest.raises(ProcessingError, match="output_dir"):
+        execute_plan(static_asset.root, plan, elsewhere, allow_api=True)
+
+
 # -- CLI ------------------------------------------------------------------
 
 
@@ -251,3 +414,23 @@ def test_cli_repair_defaults_to_offline_only(
     result = runner.invoke(app, ["repair", str(asset.root)])
     assert result.exit_code == EXIT_OK
     assert "跳过" in result.stdout
+
+
+def test_cli_repair_then_validate_is_a_closed_loop(
+    asset: ArtifactStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """repair 打印的下一步是"修复后请重新 validate 确认" —— 照它敲必须真能跑通。"""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pixel-asset.yaml").write_text(
+        f"provider: mock\nmodel: mock-image\noutput_dir: {asset.root.parent}\n",
+        encoding="utf-8",
+    )
+    _inject_local_defect(asset, "walk_down")
+
+    assert runner.invoke(app, ["validate", str(asset.root)]).exit_code == EXIT_VALIDATION_FAILED
+    repaired = runner.invoke(app, ["repair", str(asset.root)])
+    assert repaired.exit_code == EXIT_OK
+    assert "重新 validate" in repaired.stdout
+
+    revalidated = runner.invoke(app, ["validate", str(asset.root)])
+    assert revalidated.exit_code == EXIT_OK, revalidated.stdout

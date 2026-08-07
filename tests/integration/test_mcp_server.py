@@ -248,6 +248,34 @@ def test_create_animation_actually_runs(project: Path) -> None:
     assert len(frames) == result["frames"]
 
 
+def test_repair_asset_survives_an_actual_repair(project: Path) -> None:
+    """真修一次 —— `repair_asset` 修完还要再验一遍，而那一步以前必崩。
+
+    工具的返回里带着"修完之后过没过"，靠的是 `execute_plan` 后面那次
+    `_run_validation`。本地修复把任务留在 `processing` 时，那次验证直接抛
+    "没有可验证任务" —— 修是修了，工具却报错收场。
+    下面那条只覆盖"没有可修的东西"，照不出这条路径。
+    """
+    import numpy as np
+
+    mcp_server.create_character("knight.yaml", config_arg(project))
+    asset_dir = str(project / "outputs" / "knight_01")
+    mcp_server.create_animation(
+        asset_dir, action="walk", direction="down",
+        config_path=config_arg(project), approve_seed=True,
+    )
+    for path in sorted((Path(asset_dir) / "frames" / "walk_down").glob("*.png")):
+        arr = np.array(Image.open(path).convert("RGBA"))
+        arr[0, 0, :3] = (7, 7, 7)  # 透明却带 RGB —— 本地可修
+        Image.fromarray(arr, "RGBA").save(path)
+    assert mcp_server.validate_asset(asset_dir, config_arg(project))["passed"] is False
+
+    result = mcp_server.repair_asset(asset_dir, config_arg(project))
+
+    assert result["repaired"] is True
+    assert result["passed"] is True, "修完那次验证要能跑得起来，并且真的修好了"
+
+
 def test_repair_asset_runs_and_reports_honestly(project: Path) -> None:
     """没有可修的东西时要如实说'没有'，而不是假装修过。"""
     from pixel_asset_forge.config import load_config
