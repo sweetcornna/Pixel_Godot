@@ -1496,8 +1496,10 @@ def repair(
             outcome.detail,
         )
     console.print(table)
+    # 轮次要**跑完之后再数**：只看不修的一次不消耗预算，跑之前那句
+    # "第 N/M 轮"就是句会落空的预告（见 repair.rounds_used）。
     console.print(
-        f"\n[dim]第 {plan.rounds_used + 1}/{plan.max_rounds} 轮。"
+        f"\n[dim]已用 {repair_rounds_used(asset_dir)}/{plan.max_rounds} 轮。"
         f"修复后请重新 validate 确认。[/dim]"
     )
 

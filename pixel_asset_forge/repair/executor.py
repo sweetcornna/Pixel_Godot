@@ -14,7 +14,7 @@ from typing import Any
 
 from ..config import Config
 from ..constants import split_animation_key
-from ..errors import ProcessingError, RepairLimitExceededError
+from ..errors import ProcessingError, RepairLimitExceededError, redact
 from ..logging_utils import get_logger
 from ..models.job import Job, JobEvent, JobKind, JobStatus, JobTable
 from ..models.request import load_request
@@ -78,18 +78,30 @@ def execute_plan(
         )
 
     outcomes: list[RepairOutcome] = []
-    for step in plan.steps:
-        if step.action is RepairAction.REPROCESS:
-            outcomes.append(_reprocess(store, step))
-        elif step.action is RepairAction.REGENERATE_GRID:
-            outcomes.append(_regenerate(store, step, config, allow_api=allow_api))
-        else:
-            outcomes.append(
-                RepairOutcome(step, False, "需要人工介入，未自动执行")
-            )
-
-    _write_log(store, plan, outcomes)
+    try:
+        for step in plan.steps:
+            try:
+                outcomes.append(_execute_step(store, step, config, allow_api=allow_api))
+            except Exception as exc:
+                # 抛出去之前先把这一步记下来。原来 `_write_log` 在循环之后，
+                # 一步抛异常就整轮无痕 —— 而任务表那边 `plan_repair` /
+                # `repair_local` 已经写进 job history 了。两份记录对不上，
+                # 事后根本分不清「当前产物是第几轮修复的结果」。
+                outcomes.append(RepairOutcome(step, False, f"执行时出错：{redact(str(exc))}"))
+                raise
+    finally:
+        _write_log(store, plan, outcomes)
     return outcomes
+
+
+def _execute_step(
+    store: ArtifactStore, step: RepairStep, config: Config, *, allow_api: bool
+) -> RepairOutcome:
+    if step.action is RepairAction.REPROCESS:
+        return _reprocess(store, step)
+    if step.action is RepairAction.REGENERATE_GRID:
+        return _regenerate(store, step, config, allow_api=allow_api)
+    return RepairOutcome(step, False, "需要人工介入，未自动执行")
 
 
 def _reprocess(store: ArtifactStore, step: RepairStep) -> RepairOutcome:
@@ -207,18 +219,28 @@ def _settle_reprocess(store: ArtifactStore, step: RepairStep, event: JobEvent, d
     store.save_job_table(table)
 
 
+def _load_history(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        loaded: list[dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ProcessingError(f"{path} 不是合法 JSON") from None
+    return loaded
+
+
 def _write_log(store: ArtifactStore, plan: RepairPlan, outcomes: list[RepairOutcome]) -> None:
     path = store.root / REPAIR_LOG_FILE
-    history: list[dict[str, Any]] = []
-    if path.exists():
-        try:
-            history = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            history = []
+    try:
+        history = _load_history(path)
+    except ProcessingError:
+        history = []  # 日志坏了不该连累这次修复留痕，重开一份
 
     history.append(
         {
-            "round": plan.rounds_used + 1,
+            # 第几次**执行修复计划**，与预算轮次不是一回事：只看不修的那几次
+            # 也在这儿留档（见 `rounds_used`）。
+            "round": len(history) + 1,
             "max_rounds": plan.max_rounds,
             "outcomes": [o.to_dict() for o in outcomes],
         }
@@ -227,11 +249,20 @@ def _write_log(store: ArtifactStore, plan: RepairPlan, outcomes: list[RepairOutc
 
 
 def rounds_used(asset_dir: str | Path) -> int:
-    """已用的修复轮次。用于 ``max_repair_rounds`` 判定。"""
-    path = Path(asset_dir) / REPAIR_LOG_FILE
-    if not path.exists():
-        return 0
-    try:
-        return len(json.loads(path.read_text(encoding="utf-8")))
-    except json.JSONDecodeError:
-        raise ProcessingError(f"{path} 不是合法 JSON") from None
+    """已用的修复轮次 —— 只数**真的动过手**的那几轮。
+
+    预算这条闸门拦的是"反复自动重生成掩盖系统性问题"，所以它该数的是动作，
+    不是次数。原来数的是日志条数，于是：
+
+        repair（不加 --allow-api，只想看看计划）→ rounds_used 1
+        再看一次                                → rounds_used 2
+        这下真想修了                            → RepairLimitExceededError
+
+    实测如上，**一次都没修过就把预算烧光了**。判据改成"这一轮里有没有任何一步
+    真的执行了"；日志照样每次都写（Sprint 5 门槛要的是留痕，不是计数）。
+    """
+    return sum(
+        1
+        for entry in _load_history(Path(asset_dir) / REPAIR_LOG_FILE)
+        if any(outcome.get("performed") for outcome in entry.get("outcomes", []))
+    )

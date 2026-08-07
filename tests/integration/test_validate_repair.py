@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -221,7 +222,11 @@ def test_regeneration_is_withheld_without_explicit_consent(
 
 
 def test_every_repair_is_logged(asset: ArtifactStore, config: Config) -> None:
-    """修复是"系统自己改自己的产物"，不留痕就分不清当前产物是第几轮的结果。"""
+    """修复是"系统自己改自己的产物"，不留痕就分不清当前产物是第几轮的结果。
+
+    留痕与烧预算是两件事，这里各钉一半：这一轮什么都没执行（重生成没拿到
+    ``--allow-api``），日志照写，预算**不该**动。
+    """
     _corrupt(asset, "walk_down", lambda a: np.where(a == a, a, a))  # 无害改写，触发计划
     manifest = AssetManifest.load(asset.manifest_path)
     manifest.animations["walk_down"].frames = manifest.animations["walk_down"].frames[:5]
@@ -233,21 +238,87 @@ def test_every_repair_is_logged(asset: ArtifactStore, config: Config) -> None:
     log = json.loads((asset.root / "repair-log.json").read_text(encoding="utf-8"))
     assert log[0]["round"] == 1
     assert log[0]["outcomes"][0]["target"] == "walk_down"
-    assert rounds_used(asset.root) == 1
+    assert log[0]["outcomes"][0]["performed"] is False
+    assert rounds_used(asset.root) == 0, "一步都没执行的一轮不该烧预算"
 
 
-def test_repair_budget_is_enforced(asset: ArtifactStore, config: Config) -> None:
-    from pixel_asset_forge.errors import RepairLimitExceededError
+def test_a_failing_step_still_leaves_a_trace(asset: ArtifactStore, config: Config) -> None:
+    """抛异常那一步也得进日志 —— 否则任务表说修过、repair-log 说没修过。
 
+    实测旧行为：``_write_log`` 在循环之后，一步抛异常整轮无痕，而 job history
+    里 ``plan_repair`` / ``repair_local`` 已经写下去了。
+    """
+    _inject_local_defect(asset, "walk_down")
+    plan = plan_repairs(run_validation(asset.root))
+    shutil.move(str(asset.source), str(asset.root / "source-moved"))  # 让本地重跑抛
+
+    with pytest.raises(ProcessingError):
+        execute_plan(asset.root, plan, config, allow_api=False)
+
+    log = json.loads((asset.root / "repair-log.json").read_text(encoding="utf-8"))
+    outcome = log[0]["outcomes"][0]
+    assert outcome["target"] == "walk_down"
+    assert outcome["performed"] is False
+    assert "出错" in outcome["outcome"]
+    assert rounds_used(asset.root) == 0, "没修成的一轮留痕但不烧预算"
+
+
+def test_looking_at_the_plan_does_not_burn_the_budget(
+    asset: ArtifactStore, config: Config
+) -> None:
+    """`repair` 不加 `--allow-api` 只是"看看计划" —— 看两次不该把预算看没。
+
+    实测旧行为：两次只看不修就 ``rounds_used == 2``，第三次真想修时被
+    ``RepairLimitExceededError`` 挡住，而**一次都没修过**。
+    """
     manifest = AssetManifest.load(asset.manifest_path)
     manifest.animations["walk_down"].frames = manifest.animations["walk_down"].frames[:5]
     manifest.save(asset.manifest_path)
 
-    report = validate_asset(asset.root)
-    for _ in range(2):
-        execute_plan(asset.root, plan_repairs(report), config, allow_api=False)
+    for _ in range(config.max_repair_rounds):
+        plan = plan_repairs(
+            validate_asset(asset.root),
+            rounds_used=rounds_used(asset.root),
+            max_rounds=config.max_repair_rounds,
+        )
+        outcomes = execute_plan(asset.root, plan, config, allow_api=False)
+        assert [o.performed for o in outcomes] == [False]
 
-    exhausted = plan_repairs(report, rounds_used=2, max_rounds=2)
+    log = json.loads((asset.root / "repair-log.json").read_text(encoding="utf-8"))
+    assert [entry["round"] for entry in log] == [1, 2], "每次都要留档"
+    assert rounds_used(asset.root) == 0, "留档归留档，预算一轮没动"
+    assert not plan_repairs(
+        validate_asset(asset.root),
+        rounds_used=rounds_used(asset.root),
+        max_rounds=config.max_repair_rounds,
+    ).exhausted
+
+
+def test_repair_budget_is_enforced(asset: ArtifactStore, config: Config) -> None:
+    """真动过手的轮次照数不误 —— 预算这条闸门不能因为改了判据就失效。
+
+    每轮都重新注入同一个缺陷，让本地重跑**真的执行**，轮次由 ``rounds_used``
+    自己数出来，而不是测试硬塞一个 2 进去。
+    """
+    from pixel_asset_forge.errors import RepairLimitExceededError
+
+    for round_index in range(config.max_repair_rounds):
+        _inject_local_defect(asset, "walk_down")
+        plan = plan_repairs(
+            run_validation(asset.root),
+            rounds_used=rounds_used(asset.root),
+            max_rounds=config.max_repair_rounds,
+        )
+        outcomes = execute_plan(asset.root, plan, config, allow_api=False)
+        assert [o.performed for o in outcomes] == [True]
+        assert rounds_used(asset.root) == round_index + 1
+
+    _inject_local_defect(asset, "walk_down")
+    exhausted = plan_repairs(
+        run_validation(asset.root),
+        rounds_used=rounds_used(asset.root),
+        max_rounds=config.max_repair_rounds,
+    )
     assert exhausted.exhausted
     with pytest.raises(RepairLimitExceededError):
         execute_plan(asset.root, exhausted, config, allow_api=False)
