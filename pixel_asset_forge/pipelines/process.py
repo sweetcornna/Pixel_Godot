@@ -208,7 +208,6 @@ def _process_static(
     image = np.array(Image.open(source_path).convert("RGB"))
     source_size = (image.shape[1], image.shape[0])
     final_size = (manifest.canvas.width, manifest.canvas.height)
-    inner_size = (max(1, final_size[0] - 2), max(1, final_size[1] - 2))
     palette = list(manifest.palette.colors) or (
         list(request.style.palette_colors)
         if request is not None and request.style.palette_colors is not None
@@ -217,7 +216,9 @@ def _process_static(
     options = ProcessOptions(
         key_color=manifest.background.key_color,
         key_threshold=existing.key_threshold if existing is not None else None,
-        target_size=inner_size,
+        # 与 `static_asset.create_static_asset` 同一口径：不再内缩 1px，
+        # 不裁切由等比缩放保证（那边的注释里有 A/B 实测数）。
+        target_size=final_size,
         max_colors=manifest.palette.max_colors,
         anchor=CENTER,
         crop_padding=1,

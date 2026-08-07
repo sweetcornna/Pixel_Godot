@@ -287,22 +287,28 @@ def create_static_asset(
             cell=(image.shape[1], image.shape[0]),
         )
         final_size = request.style.target_size
-        # 恒留 1px 边距。**这条把主体最长边锁死在 (边长-2)/边长 以下** ——
-        # 24px 画布上是 0.917，实测 6 张真实产出正好落在 0.83 ~ 0.92（顶到上限）。
+        # 这里曾经缩到 ``边长 - 2`` 再居中放回，等于恒留 1px 边距 ——
+        # **那把主体最长边锁死在 (边长-2)/边长 以下**（24px 画布上 0.917）。
+        # 参照是 Kenney Pixel Platformer 的 27 张独立精灵（CC0）：最长边中位 0.96、
+        # 21/27 张直接顶到画布边缘。内缩让我们画不出那种铺满构图。
         #
-        # 参照实测（Kenney Pixel Platformer 的 27 张独立精灵，商用 CC0）：
-        # 最长边中位 0.96、90 分位 1.00，**21/27 张主体直接顶到画布边缘**。
-        # 也就是说这个内缩让我们画不出参照资产那种铺满构图。
+        # 2026-08-07 拿真实产出做 A/B（6 张 gpt-image-2 原图，只改这一行离线重跑，
+        # 生成层零差异）：
         #
-        # 拆掉它是独立的一次改动，别顺手做：会改掉每一个既有静态资产的产出，
-        # 要有真实生成证据才谈得上。此处只记下代价，不动行为。
-        inner_size = (max(1, final_size[0] - 2), max(1, final_size[1] - 2))
+        #     最长边占画布   内缩 0.833 – 0.917（上限顶死）→ 拆掉 0.917 – 1.000
+        #     不透明占比     +0.05 ~ +0.10
+        #     验证           两组各 6 张全过，无一项变红
+        #
+        # 不裁切的保证并不来自这个内缩，而来自等比缩放本身：
+        # ``fit = min(画布宽/内容宽, 画布高/内容高)`` 保证内容完整落进画布，
+        # 顶边只意味着"刚好铺满"，不意味着被切掉（见 validation/engine.py 里
+        # content_bounds 那段）。所以拆掉它不放过任何裁切。
         processed = process_grid(
             image,
             layout,
             ProcessOptions(
                 key_color=background.color_used,
-                target_size=inner_size,
+                target_size=final_size,
                 max_colors=request.style.max_colors,
                 anchor=CENTER,
                 crop_padding=1,
