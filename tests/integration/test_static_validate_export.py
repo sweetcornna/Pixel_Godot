@@ -327,9 +327,11 @@ def test_content_bounds_cannot_fail_on_the_static_path(
     做法是喂最极端的反例：原图整张涂成不透明实心，主体铺满、四边全部顶到画布
     外沿。如果 content_bounds 在成品端还有一点判别力，这里必红。
 
-    它没红 —— 因为静态链在放回画布前先缩到 ``边长 - 2`` 再居中，产出包围盒恒为
-    (1,1)-(边长-2,边长-2)。同一趟里 ``cell_overflow`` 判 FAIL：真正的裁切信号在
-    **原图**上，那里顶不顶边由模型决定，检查才有内容。
+    它没红。**拆掉那 1px 内缩（2026-08-07）之后，这个反例更狠了**：产出真的
+    顶满四边（0,0)-(边长-1,边长-1)，而检查照样不动 —— 因为顶边在静态链上只
+    意味着"刚好铺满"，等比缩放保证内容完整落在画布内，从不意味着被切掉。
+    真正的裁切信号在**原图**上，那里顶不顶边由模型决定，所以同一趟里
+    ``cell_overflow`` 判 FAIL，检查才有内容。
 
     这个测试同时是把关的：哪天有人把 content_bounds 改回 PASS/FAIL，它会红，
     并指向"你得先证明它能失败"。
@@ -341,14 +343,39 @@ def test_content_bounds_cannot_fail_on_the_static_path(
 
     frame = np.array(Image.open(static_store.frames / "static.png").convert("RGBA"))
     ys, xs = np.where(frame[..., 3] > 128)
-    # 铺满的原图进去，出来仍恒留 1px —— 边距是我们加的，不是模型给的。
-    assert (xs.min(), ys.min(), xs.max(), ys.max()) == (1, 1, canvas - 2, canvas - 2)
+    # 铺满的原图进去，出来就是铺满 —— 不再有我们自己塞的那 1px 留白。
+    assert (xs.min(), ys.min(), xs.max(), ys.max()) == (0, 0, canvas - 1, canvas - 1)
 
     checks = {check.id: check for check in validate_asset(static_store.root).checks}
     assert checks["content_bounds"].result is CheckResult.SKIP
     assert checks["content_bounds"].skip_reason == "guaranteed_by_construction"
     # 真正有判别力的那一条必须逮住它，否则这次跳过就是净损失。
     assert checks["cell_overflow"].result is CheckResult.FAIL
+
+
+def test_static_content_may_reach_the_canvas_edge_without_being_cropped(
+    static_store: ArtifactStore,
+) -> None:
+    """顶满画布与"被画布切掉"是两回事，这里把两件事分开钉住。
+
+    喂一个宽高 1.75:1 的实心块（四周留够，原图自己不顶边）：产出必须**横向顶满**
+    —— 拆掉 1px 内缩之前这里恒为 1，够不着 0 —— 同时**纵向留白**，长宽比与原图
+    一致。内容是被等比缩进画布的，不是被画布裁的。
+    """
+    source = static_store.source_path("static")
+    art = np.full((256, 256, 3), (255, 0, 255), dtype=np.uint8)  # 键控色背景
+    art[64:192, 16:240] = (200, 40, 40)  # 224×128 的实心块，1.75:1
+    Image.fromarray(art).save(source)
+    run_process(static_store.root)
+
+    frame = np.array(Image.open(static_store.frames / "static.png").convert("RGBA"))
+    canvas = frame.shape[0]
+    ys, xs = np.where(frame[..., 3] > 128)
+
+    assert (xs.min(), xs.max()) == (0, canvas - 1), "长边该顶满画布"
+    assert ys.min() > 0 and ys.max() < canvas - 1, "短边该留白 —— 顶满不是拉伸"
+    aspect = (xs.max() - xs.min() + 1) / (ys.max() - ys.min() + 1)
+    assert abs(aspect - 224 / 128) < 0.2, f"长宽比被改了：{aspect:.2f}"
 
 
 def test_static_manifest_without_image_records_dependency_skips(
