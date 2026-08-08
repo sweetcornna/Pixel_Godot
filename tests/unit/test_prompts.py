@@ -319,9 +319,40 @@ def test_negative_rules_cover_the_costly_failures(knight) -> None:
 def test_seed_prompt_describes_the_subject_and_composition(knight) -> None:
     prompt = compile_seed_prompt(knight, key_color="#FF00FF")
     assert prompt.size == (1024, 1024)
+    assert "Pixel art character sprite, a single subject." in prompt.text
+    assert "Body orientation" in prompt.text
     assert "forest knight" in prompt.text
     assert "full body is visible" in prompt.text
     assert f"{PROMPT_MARGIN_PERCENT}% empty background margin" in prompt.text
+
+
+@pytest.mark.parametrize("request_kind", ["spell", "projectile"])
+def test_effect_seed_prompt_never_asks_for_a_character_body(
+    examples_dir, request_kind
+) -> None:
+    request = (
+        load_pack(examples_dir / "spell_bundle.yaml").expand_requests()[0]
+        if request_kind == "spell"
+        else load_request(examples_dir / "fireball.yaml")
+    )
+
+    prompt = compile_seed_prompt(request, key_color="#FF00FF").text
+
+    assert "Pixel art effect sprite, one single isolated non-humanoid effect." in prompt
+    assert "Effect orientation" in prompt
+    assert "no caster, wielder or character present" in prompt
+    assert "no face, eyes, head, torso, clothing, arms, hands, legs or feet" in prompt
+    for forbidden in (
+        "Pixel art character sprite",
+        "Body orientation",
+        "full body is visible",
+        "standing in a neutral idle stance",
+        "feet near the bottom",
+        "both eyes visible",
+        "the nose pointing straight at the camera",
+        "shoulders square to the viewer",
+    ):
+        assert forbidden not in prompt
 
 
 def test_seed_prompt_reflects_style_choices(minimal_request) -> None:

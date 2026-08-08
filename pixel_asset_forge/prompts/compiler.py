@@ -385,21 +385,47 @@ def compile_seed_prompt(request: AssetRequest, *, key_color: str) -> CompiledPro
 
     layout = seed_layout()
     style = request.style
+    is_character = request.asset_type == "character"
+
+    if is_character:
+        subject = "Pixel art character sprite, a single subject."
+        orientation = _orientation_block("down", style.perspective)
+        composition = (
+            "Composition: the full body is visible and centred, standing in a neutral "
+            f"idle stance, the feet near the bottom, at least "
+            f"{PROMPT_MARGIN_PERCENT}% empty background margin on all four sides."
+        )
+    else:
+        directional = any(
+            animation.resolved_directions(request.asset_type)
+            for animation in request.animation_list()
+        )
+        subject = (
+            "Pixel art effect sprite, one single isolated non-humanoid effect. "
+            "It is not a character, creature or person."
+        )
+        orientation = _orientation_block(
+            "down" if directional else None,
+            style.perspective,
+            is_character=False,
+        )
+        composition = (
+            "Composition: the entire effect is visible and centred as one isolated "
+            "magical phenomenon, with no caster, wielder or character present. It has "
+            "no face, eyes, head, torso, clothing, arms, hands, legs or feet. Leave at "
+            f"least {PROMPT_MARGIN_PERCENT}% empty background margin on all four sides."
+        )
 
     text = "\n\n".join(
         [
-            "Pixel art character sprite, a single subject.",
-            _orientation_block("down", style.perspective),
+            subject,
+            orientation,
             f"Subject: {request.description.strip()}",
             _style_block(request),
-            (
-                "Composition: the full body is visible and centred, standing in a neutral "
-                f"idle stance, the feet near the bottom, at least "
-                f"{PROMPT_MARGIN_PERCENT}% empty background margin on all four sides."
-            ),
+            composition,
             _background_block(key_color),
             "Do not include any of the following:\n"
-            + negative_block(character=request.asset_type == "character"),
+            + negative_block(character=is_character),
         ]
     )
     return CompiledPrompt(text=text, key_color=key_color, size=layout.size)
