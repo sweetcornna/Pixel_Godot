@@ -244,7 +244,11 @@ def create_static_asset(
     if job.status is JobStatus.PROCESSING:
         job.fire(JobEvent.RECOVER_GENERATED, detail="从不可变原图幂等重跑处理")
         store.save_job_table(table)
-    if job.status is JobStatus.PROCESSED:
+    if job.status in (
+        JobStatus.PROCESSED,
+        JobStatus.VALIDATED,
+        JobStatus.EXPORTED,
+    ):
         manifest = ensure_manifest(
             store,
             request,
@@ -253,10 +257,14 @@ def create_static_asset(
             model=config.model,
         )
         if manifest.static_image is None:
-            raise ProcessingError(f"{job.id} 为 processed，但 Manifest 没有 static_image")
+            raise ProcessingError(
+                f"{job.id} 为 {job.status.value}，但 Manifest 没有 static_image"
+            )
         image_path = store.root / manifest.static_image.image
         if not image_path.exists():
-            raise ProcessingError(f"{job.id} 为 processed，但成品缺失：{image_path}")
+            raise ProcessingError(
+                f"{job.id} 为 {job.status.value}，但成品缺失：{image_path}"
+            )
         return StaticAssetResult(
             asset_id=request.asset_id,
             source_path=source_path,

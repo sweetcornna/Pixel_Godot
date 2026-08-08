@@ -20,7 +20,9 @@ from pixel_asset_forge.cli import (
 from pixel_asset_forge.config import Config
 from pixel_asset_forge.models import AssetManifest
 from pixel_asset_forge.models.job import JobKind, JobStatus
+from pixel_asset_forge.pipelines.export import run_export
 from pixel_asset_forge.pipelines.static_asset import create_static_asset
+from pixel_asset_forge.pipelines.validation import run_validation
 from pixel_asset_forge.providers import MockImageProvider
 from pixel_asset_forge.storage import ArtifactStore
 
@@ -113,6 +115,53 @@ def test_create_asset_runs_static_request_to_export_without_saved_plan(
     assert jobs[0].status is JobStatus.EXPORTED
     generation_log = json.loads(store.generation_log_path.read_text(encoding="utf-8"))
     assert len(generation_log) == 1
+
+
+@pytest.mark.parametrize("completed_status", [JobStatus.VALIDATED, JobStatus.EXPORTED])
+def test_create_asset_reuses_completed_asset_without_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    completed_status: JobStatus,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = _write_config(tmp_path / "mock.yaml")
+    request_path = tmp_path / "completed_prop.yaml"
+    request_path.write_text(
+        yaml.safe_dump(_static_request("completed_prop", "prop"), sort_keys=False),
+        encoding="utf-8",
+    )
+    config = Config(
+        provider="mock",
+        model="configured-model",
+        output_dir=tmp_path / "outputs",
+        cache_dir=tmp_path / "cache",
+    )
+    create_static_asset(
+        request_path,
+        config,
+        provider=MockImageProvider("configured-model"),
+    )
+    store = ArtifactStore.for_asset(config.output_dir, "completed_prop")
+    assert run_validation(store.root).passed
+    if completed_status is JobStatus.EXPORTED:
+        run_export(store.root, targets=["generic-json"])
+
+    generation_log = store.generation_log_path.read_bytes()
+    source = store.source_path("static").read_bytes()
+
+    resumed = runner.invoke(
+        app,
+        ["create-asset", str(request_path), "--config", str(config_path)],
+    )
+
+    assert resumed.exit_code == EXIT_OK
+    assert "验证" in resumed.stdout
+    assert "通过" in resumed.stdout
+    assert store.generation_log_path.read_bytes() == generation_log
+    assert store.source_path("static").read_bytes() == source
+    table = store.load_job_table()
+    assert table is not None
+    assert next(iter(table)).status is JobStatus.EXPORTED
 
 
 @pytest.mark.parametrize("request_kind", ["character", "static_with_animations"])
